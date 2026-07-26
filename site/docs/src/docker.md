@@ -26,14 +26,38 @@ docker pull razzaru/nightingale:latest
 
 ## Quick start (Docker Compose)
 
-From a checkout of the repo:
+Copy and paste this on your NAS or Docker host. Change `/path/to/your/music` to the host path containing your music library:
 
 ```bash
-# edit docker/compose.yaml first: point the /songs bind mount at your music
-docker compose -f docker/compose.yaml up -d
+mkdir -p nightingale && cd nightingale
+
+cat > compose.yaml <<'YAML'
+services:
+  nightingale:
+    image: razzaru/nightingale:latest
+    container_name: nightingale
+    restart: unless-stopped
+    ports:
+      - "64448:8080"
+    volumes:
+      - nightingale-data:/data
+      - /path/to/your/music:/songs:ro
+
+volumes:
+  nightingale-data:
+YAML
+
+docker compose pull
+docker compose up -d
 ```
 
-Then open `http://<host>:8080` and follow the setup wizard.
+Then open `http://<host>:64448` and follow the setup wizard. Port `64448` spells **NIGHT** on a phone keypad and avoids common self-hosted app defaults. The CPU image supports both AMD64 and ARM64 NAS devices. To use GHCR instead, change `image` to `ghcr.io/rzru/nightingale:latest`.
+
+If you already cloned the repository and want to build locally, edit the music path in `docker/compose.yaml`, then run:
+
+```bash
+docker compose -f docker/compose.yaml up -d --build
+```
 
 ## Quick start (docker run)
 
@@ -42,7 +66,7 @@ docker build -f docker/Dockerfile -t nightingale .
 
 docker run -d \
   --name nightingale \
-  -p 8080:8080 \
+  -p 64448:8080 \
   -v nightingale-data:/data \
   -v /path/to/your/music:/songs:ro \
   nightingale
@@ -50,7 +74,7 @@ docker run -d \
 
 ## First launch
 
-1. Open `http://<host>:8080`.
+1. Open `http://<host>:64448`.
 2. Continue through the setup wizard. The data folder is fixed to the `/data` volume (the container sets `NIGHTINGALE_DATA_PATH=/data`), so the wizard skips the data-folder step entirely.
 3. Wait while Nightingale downloads ffmpeg, Python, PyTorch, WhisperX, Demucs, and the UVR models into `/data/vendor`. This is several GB and only happens once — as long as you keep the volume.
 4. Your library is already configured: the image pins it to `/songs`, so the folder you mounted is scanned on startup. Add or change songs on the host, then hit **Rescan** in the sidebar.
@@ -79,7 +103,7 @@ docker build -f docker/Dockerfile \
 docker run -d \
   --name nightingale-gpu \
   --gpus all \
-  -p 8080:8080 \
+  -p 64448:8080 \
   -v nightingale-data:/data \
   -v /path/to/your/music:/songs:ro \
   nightingale:cuda
@@ -103,7 +127,7 @@ Keep the `nightingale-data` volume across upgrades. Deleting it forces the multi
 
 ## Microphone and HTTPS
 
-Browsers only allow microphone capture in a secure context. `http://<host>:8080` is **not** secure, so mic scoring is disabled there — but browsing, playback, queues, and analysis all work fine over plain HTTP.
+Browsers only allow microphone capture in a secure context. `http://<host>:64448` is **not** secure, so mic scoring is disabled there — but browsing, playback, queues, and analysis all work fine over plain HTTP.
 
 To enable mic scoring, terminate TLS in front of the container. Two common options:
 
@@ -112,7 +136,15 @@ To enable mic scoring, terminate TLS in front of the container. Two common optio
 
 ## Updating
 
-Rebuild (or pull) the image and recreate the container:
+Pull the current cloud image and recreate the container:
+
+```bash
+cd nightingale
+docker compose pull
+docker compose up -d
+```
+
+For a local checkout using `docker/compose.yaml`, rebuild instead:
 
 ```bash
 docker compose -f docker/compose.yaml up -d --build

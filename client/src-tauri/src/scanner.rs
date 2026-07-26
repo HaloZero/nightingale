@@ -1,7 +1,7 @@
 use app_core::{
     AnalysisQueue, AppConfig, JellyfinHealth, JellyfinLoginResult, LibraryMenuItems, LibrarySource,
     LoadSongsParams, NavidromeHealth, NavidromeLoginResult, PlexHealth, PlexPinPollResult,
-    PlexPinStart, PlexServer, SongsMeta, SongsStore,
+    PlexPinStart, PlexServer, Song, SongsMeta, SongsStore,
 };
 
 #[tauri::command]
@@ -84,6 +84,11 @@ pub fn plex_ping() -> PlexHealth {
 #[tauri::command]
 pub fn load_songs(params: LoadSongsParams) -> SongsStore {
     SongsStore::load(&params)
+}
+
+#[tauri::command]
+pub fn load_songs_by_hashes(file_hashes: Vec<String>) -> Vec<Song> {
+    SongsStore::load_by_hashes(&file_hashes)
 }
 
 #[tauri::command]

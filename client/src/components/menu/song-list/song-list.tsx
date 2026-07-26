@@ -153,7 +153,7 @@ export const SongList = () => {
           <div
             ref={setScrollContainer}
             data-song-layout={view}
-            className="song-table-shell min-h-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            className="themed-scrollbar song-table-shell min-h-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto pb-[max(0.75rem,env(safe-area-inset-bottom))]"
           >
             {view === "table" ? (
               <SongTable songs={songs} getItemProps={getItemProps} />

@@ -3,7 +3,7 @@
 #   CPU:   docker compose -f docker/compose.yaml up -d
 #   GPU:   docker compose -f docker/compose.yaml --profile gpu up -d nightingale-gpu
 #
-# Then open http://<host>:8080 and follow the setup wizard. The data folder is
+# Then open http://<host>:64448 and follow the setup wizard. The data folder is
 # fixed to the /data volume and the music library is fixed to NIGHTINGALE_LIBRARY_PATH
 # below, so there's nothing to pick in the browser — just mount your music at
 # that path.
@@ -11,7 +11,7 @@
 # First launch downloads several GB of ML dependencies into the nightingale-data
 # volume; keep that volume to avoid re-downloading on recreate.
 #
-# Microphone scoring needs a secure context (HTTPS). Plain http://<host>:8080
+# Microphone scoring needs a secure context (HTTPS). Plain http://<host>:64448
 # works for everything else; put a TLS reverse proxy in front for mic support.
 
 services:
@@ -26,7 +26,7 @@ services:
     container_name: nightingale
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "64448:8080"
     volumes:
       - nightingale-data:/data
       # Point this at your music library on the host. The image already pins the
@@ -49,7 +49,7 @@ services:
     container_name: nightingale-gpu
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "64448:8080"
     volumes:
       - nightingale-data:/data
       - /path/to/your/music:/songs:ro

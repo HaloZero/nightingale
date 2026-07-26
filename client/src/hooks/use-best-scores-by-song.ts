@@ -17,8 +17,8 @@ export function useBestScoresBySongForActiveProfile(): Map<string, number> {
         continue;
       }
 
-      const prev = map.get(r.song_hash) ?? 0;
-      if (r.score > prev) {
+      const prev = map.get(r.song_hash);
+      if (prev === undefined || r.score > prev) {
         map.set(r.song_hash, r.score);
       }
     }

@@ -176,7 +176,11 @@ pub fn parse_lrc(text: &str) -> Result<ParsedLrc, String> {
 
         let word_tokens = if content.contains('<') {
             let tokens = parse_word_tokens(&content);
-            if tokens.is_empty() { None } else { Some(tokens) }
+            if tokens.is_empty() {
+                None
+            } else {
+                Some(tokens)
+            }
         } else {
             None
         };
@@ -204,7 +208,11 @@ pub fn parse_lrc(text: &str) -> Result<ParsedLrc, String> {
         return Err("No timestamped lyric lines found in the provided LRC".to_string());
     }
 
-    entries.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    entries.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // A segment's highlight ends at the earliest boundary after its start: the
     // next line's start or an empty-timestamp marker, whichever comes first.

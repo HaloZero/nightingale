@@ -13,6 +13,7 @@ import { SongDetailsHeader } from "./details/song-details-header";
 import { useSongDetailsNav } from "./details/use-song-details-nav";
 import { getSongStatusInfo } from "./shared/song-status";
 import type { ShiftType } from "./shifts";
+import { useBestScoresBySongForActiveProfile } from "@/hooks/use-best-scores-by-song";
 
 interface SongDetailsSidebarProps {
   song: Song;
@@ -23,6 +24,7 @@ interface SongDetailsSidebarProps {
 export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSidebarProps) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const bestScores = useBestScoresBySongForActiveProfile();
   const { detailsRef, closeDetails } = useSongDetailsNav(onClose);
   const [shifting, setShifting] = useState<Record<ShiftType, boolean>>({
     tempo: false,
@@ -55,7 +57,12 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
       className="flex min-h-0 min-w-0 flex-1 flex-col border-l bg-background [&_[data-song-details-focused=true]]:z-10 [&_[data-song-details-focused=true]]:ring-2 [&_[data-song-details-focused=true]]:ring-primary xl:w-96 xl:flex-none"
       aria-label="Song details"
     >
-      <SongDetailsHeader song={song} queueStatus={queueStatus} onClose={closeDetails} />
+      <SongDetailsHeader
+        song={song}
+        queueStatus={queueStatus}
+        bestScore={bestScores.get(song.file_hash)}
+        onClose={closeDetails}
+      />
 
       <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">
         <KeyTempoSection

@@ -28,6 +28,7 @@ import {
   HeartIcon,
   InfoIcon,
   RefreshCcwDotIcon,
+  TrophyIcon,
   UserIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -191,6 +192,10 @@ export const Actions = ({ registerCallback, focusedSidebarIndex }: ActionsProps)
               >
                 <UserIcon />
                 Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setMode("leaderboards")}>
+                <TrophyIcon />
+                Leaderboards
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {

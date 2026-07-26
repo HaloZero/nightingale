@@ -38,6 +38,10 @@ impl SongsStore {
         })
     }
 
+    pub fn load_by_hashes(file_hashes: &[String]) -> Vec<crate::song::Song> {
+        library_db::load_songs_by_hashes(file_hashes).unwrap_or_default()
+    }
+
     pub fn load_meta() -> SongsMeta {
         library_db::load_meta_sql().unwrap_or_default()
     }

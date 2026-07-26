@@ -13,6 +13,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  color-scheme: light;
   --titlebar-offset: 0px;
   /* Theme::light() — sRGB matches Rust Color::srgb */
   --background: color(srgb 0.955 0.955 0.97);
@@ -50,6 +51,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   /* Theme::dark() */
   --background: color(srgb 0.05 0.05 0.085);
   --foreground: color(srgb 0.96 0.96 0.98);
@@ -248,6 +250,31 @@
 }
 
 @layer utilities {
+  .themed-scrollbar {
+    scrollbar-color: color-mix(in srgb, var(--foreground) 28%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+
+  .themed-scrollbar::-webkit-scrollbar {
+    width: 0.625rem;
+  }
+
+  .themed-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .themed-scrollbar::-webkit-scrollbar-thumb {
+    min-height: 2.5rem;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--foreground) 28%, transparent);
+    background-clip: padding-box;
+  }
+
+  .themed-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--foreground) 42%, transparent);
+  }
+
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;

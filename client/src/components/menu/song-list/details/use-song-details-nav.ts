@@ -34,6 +34,7 @@ export function useSongDetailsNav(onClose: () => void) {
     itemCount: focusableCount,
     stops: navigationStops,
     containerRef: detailsRef,
+    resetOnOpen: false,
     onBack: closeDetails,
     onAction: (segment, slot, action) => {
       setFocus((previous) => ({ ...previous, active: true, source: "nav" }));

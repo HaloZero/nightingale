@@ -174,10 +174,11 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
                 client_id: Option<String>,
             }
             let args: Args = deserialize(payload)?;
-            let result = tokio::task::spawn_blocking(move || app_core::plex_begin_pin(args.client_id))
-                .await
-                .map_err(blocking_task_err)?
-                .map_err(|error| ApiError::bad_request(error.to_string()))?;
+            let result =
+                tokio::task::spawn_blocking(move || app_core::plex_begin_pin(args.client_id))
+                    .await
+                    .map_err(blocking_task_err)?
+                    .map_err(|error| ApiError::bad_request(error.to_string()))?;
             Ok(serde_json::to_value(result).map_err(serde_err)?)
         }
         "plex_poll_pin" => {
@@ -227,6 +228,18 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             }
             let args: Args = deserialize(payload)?;
             Ok(serde_json::to_value(SongsStore::load(&args.params)).map_err(serde_err)?)
+        }
+        "load_songs_by_hashes" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                file_hashes: Vec<String>,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(
+                serde_json::to_value(SongsStore::load_by_hashes(&args.file_hashes))
+                    .map_err(serde_err)?,
+            )
         }
         "load_songs_meta" => Ok(serde_json::to_value(SongsStore::load_meta()).map_err(serde_err)?),
         "load_analysis_queue" => {

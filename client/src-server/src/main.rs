@@ -68,7 +68,12 @@ async fn main() {
         std::process::exit(1);
     }
 
-    if let Some(library) = args.library.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(library) = args
+        .library
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         pin_folder_library(library);
     }
 
@@ -126,7 +131,10 @@ fn pin_folder_library(path: &str) {
     config.last_folder = None;
     config.save();
 
-    tracing::info!(path, "pinned library to folder from NIGHTINGALE_LIBRARY_PATH");
+    tracing::info!(
+        path,
+        "pinned library to folder from NIGHTINGALE_LIBRARY_PATH"
+    );
     app_core::start_scan();
 }
 
