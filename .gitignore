@@ -12,3 +12,6 @@ latest.json
 
 # Local-only release/updater notes (not for the public repo)
 RELEASING.md
+
+# mac only
+**.DS_STORE
