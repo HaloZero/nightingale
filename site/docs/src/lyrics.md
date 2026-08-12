@@ -17,11 +17,15 @@ This produces word-level timing information that drives the karaoke highlighting
 
 ## Choosing the ASR Engine
 
-Two ASR engines are available, switchable from **Settings → Analysis**:
+Three ASR engines are available, switchable from **Settings → Analysis**:
 
 ### Whisper (default)
 
-Uses [WhisperX](https://github.com/m-bain/whisperX) with the `large-v3` model. Broad language coverage, robust on noisy or multilingual material. This is the default and the recommended choice for most users.
+Uses [WhisperX](https://github.com/m-bain/whisperX) with the `large-v3` model. Broad language coverage, robust on noisy or multilingual material. This is the default and the recommended choice for most users. On Apple Silicon Macs, WhisperX's CTranslate2 backend has no Metal kernel, so this path runs on CPU — see Whisper MLX below for a GPU-accelerated alternative.
+
+### Whisper MLX (experimental)
+
+Runs the same Whisper model sizes natively on Apple Silicon's GPU via [MLX](https://github.com/ml-explore/mlx-examples/tree/main/whisper) instead of falling back to CPU. Produces word-level timestamps directly, so — like Parakeet — it skips the wav2vec2 forced-alignment step. Apple Silicon only; on any other platform (or if the mlx packages fail to load) Nightingale transparently falls back to the regular Whisper path for that file.
 
 ### Parakeet v3 (experimental)
 

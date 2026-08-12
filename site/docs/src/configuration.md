@@ -48,11 +48,11 @@ Toggle between dark and light themes from the sidebar. The theme preference is s
 
 | Key | Purpose |
 |---|---|
-| `asr_engine` | Selects the transcription engine. `whisper` (default) or `parakeet`. See [Lyrics & Transcription](./lyrics.md#choosing-the-asr-engine). |
+| `asr_engine` | Selects the transcription engine. `whisper` (default), `parakeet`, or `whisper_mlx`. See [Lyrics & Transcription](./lyrics.md#choosing-the-asr-engine). |
 | `align_backend` | Forced-alignment backend. `whisperx` (default, Python Viterbi), `ctc` (torchaudio `forced_align` C++/CUDA kernel; faster), or `qwen` (Qwen3-ForcedAligner-0.6B; 11 languages incl. CJK, runs on CUDA/MPS/CPU). All non-default backends fall back to WhisperX on error or unsupported input. See [Lyrics & Transcription](./lyrics.md#choosing-the-forced-alignment-backend). |
 | `separator` | Stem separation model: `karaoke` (UVR, default) or `demucs`. |
 | `vocal_detection_threshold_pct` | RMS threshold (fraction of the loudest window, `0.0`–`1.0`, default `0.15`) that marks where vocals start and end. Lower values keep more quiet intros/outros and soft singing; higher values trim more silence. Shown in Settings as **Vocal detection sensitivity** (0–60%). |
-| `whisper_model` | Whisper model size: `large-v3` (default), `large-v3-turbo`, `medium`, `small`, `base`, `tiny`. Ignored when `asr_engine` is `parakeet`. |
+| `whisper_model` | Whisper model size: `large-v3` (default), `large-v3-turbo`, `medium`, `small`, `base`, `tiny`. Used by both `whisper` and `whisper_mlx`; ignored when `asr_engine` is `parakeet`. |
 | `beam_size` / `batch_size` | Decoder beam width and batch size for Whisper. Higher values are more accurate but slower and use more VRAM. |
 | `mic_monitor_gain` | Live monitor gain when mic monitoring is on. Range `0.0`–`2.0` (slider shown as 0–200%). Configs from older builds that used `mic_mirror_gain` are read transparently and migrated on next save. |
 | `mic_latency_compensation_sec` | Speaker-to-mic latency compensation for pitch scoring. Tune manually or use the Settings latency test. |

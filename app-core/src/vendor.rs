@@ -705,6 +705,12 @@ pub fn step_install_packages() -> Result<(), String> {
         pkg_args.push("torchaudio<2.3");
     }
 
+    // Apple Silicon only: gives Whisper a real GPU path via Metal instead of the
+    // CPU-only fallback WhisperX's CTranslate2 backend is stuck with on `mps`.
+    if gpu.device == "mps" {
+        pkg_args.push("mlx-whisper>=0.4.0");
+    }
+
     pkg_args.push("--python");
     pkg_args.push(&py_str);
 

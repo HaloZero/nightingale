@@ -360,6 +360,30 @@ export const SettingsPage = () => {
               </Field>
 
               <Field>
+                <Label>Timing diagnostics</Label>
+                <Hint>
+                  Log how long each analysis stage takes and record it in a local table, tagged with
+                  the settings used, for troubleshooting slow analyses
+                </Hint>
+                <ButtonGroup>
+                  <Button
+                    variant={config?.track_analysis_timings === false ? "default" : "outline"}
+                    onClick={() => mutate({ track_analysis_timings: false })}
+                    className={getFocusClassName(analysisNav.trackTimings, 0)}
+                  >
+                    Off
+                  </Button>
+                  <Button
+                    variant={config?.track_analysis_timings === false ? "outline" : "default"}
+                    onClick={() => mutate({ track_analysis_timings: true })}
+                    className={getFocusClassName(analysisNav.trackTimings, 1)}
+                  >
+                    On
+                  </Button>
+                </ButtonGroup>
+              </Field>
+
+              <Field>
                 <Label>Vocal detection sensitivity</Label>
                 <Hint>
                   How loud the vocals must be to count as the song's start and end. Lower it if

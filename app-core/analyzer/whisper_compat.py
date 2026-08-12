@@ -1,5 +1,7 @@
 """PyTorch / device compatibility helpers for Nightingale analyzer."""
 
+import time
+
 import torch
 
 from gpu import hard_free_gpu, log_vram, reset_peak_stats, vram_snapshot, gpu_model
@@ -29,6 +31,25 @@ def set_progress_sink(fn):
 
 def progress(pct: int, msg: str):
     _progress_sink(pct, msg)
+
+
+def _default_timing_sink(stage: str, ms: int):
+    print(f"[nightingale:TIMING] stage={stage} ms={ms}", flush=True)
+
+
+_timing_sink = _default_timing_sink
+
+
+def set_timing_sink(fn):
+    global _timing_sink
+    _timing_sink = fn or _default_timing_sink
+
+
+def timing(stage: str, started_at: float):
+    """Report the elapsed time (ms) for `stage` since `started_at`
+    (a `time.perf_counter()` reading taken when the stage began)."""
+    ms = int((time.perf_counter() - started_at) * 1000)
+    _timing_sink(stage, ms)
 
 
 _align_backend = "whisperx"

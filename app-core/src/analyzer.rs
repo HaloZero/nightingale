@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -80,6 +80,14 @@ use crate::vendor::{analyzer_dir, ffmpeg_path, python_path, silent_command};
 // ─── Server process ──────────────────────────────────────────────────
 
 static SERVER_PID: AtomicU32 = AtomicU32::new(0);
+
+/// Device string from the most recent server handshake (e.g. "cuda", "mps",
+/// "cpu"); recorded for the analysis-timing log.
+static LAST_DEVICE: Mutex<Option<String>> = Mutex::new(None);
+
+fn last_device() -> Option<String> {
+    LAST_DEVICE.lock().unwrap().clone()
+}
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -270,6 +278,7 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
     } else {
         info!("[analyzer] Handshake ok: port={}", handshake.port);
     }
+    *LAST_DEVICE.lock().unwrap() = handshake.device.clone();
 
     let (reader, writer) = match connect_and_authenticate(handshake.port, &handshake.token) {
         Ok(pair) => pair,
@@ -723,8 +732,14 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         }
 
         let server = guard.as_mut().unwrap();
+        let attempt_start = Instant::now();
         match send_and_monitor(server, &json_str, Some(file_hash)) {
-            Ok(SongResult::Done) => {
+            Ok(SongResult::Done(stage_timings)) => {
+                let total_ms = attempt_start.elapsed().as_millis() as u64;
+                info!("[analyzer:timing] hash={file_hash} stage=total ms={total_ms}");
+                if config.track_analysis_timings() {
+                    record_analysis_timing(file_hash, &config, &stage_timings, total_ms);
+                }
                 finalize_song(file_hash, cache);
                 return;
             }
@@ -887,7 +902,7 @@ fn run_key_pass(
         let server = guard.as_mut().unwrap();
         // `None` progress hash keeps this off the status pipe (no queue rows).
         match send_and_monitor(server, &json_str, None) {
-            Ok(SongResult::Done) => return Ok(()),
+            Ok(SongResult::Done(_)) => return Ok(()),
             Ok(SongResult::Oom) | Err(_) => {
                 *guard = None;
                 if !retried {
@@ -965,7 +980,7 @@ fn prepare_audio_for_analysis(
 // ─── Server communication ────────────────────────────────────────────
 
 enum SongResult {
-    Done,
+    Done(Vec<(String, u64)>),
     Oom,
     Error(String),
 }
@@ -978,6 +993,10 @@ enum ServerEvent {
         #[serde(default)]
         msg: String,
     },
+    Timing {
+        stage: String,
+        ms: u64,
+    },
     Done,
     Error {
         #[serde(default)]
@@ -987,6 +1006,41 @@ enum ServerEvent {
     },
     #[serde(other)]
     Unknown,
+}
+
+/// Persist one analysis run's per-stage timings + the settings that produced
+/// them, gated on `AppConfig::track_analysis_timings`.
+fn record_analysis_timing(
+    file_hash: &str,
+    config: &AppConfig,
+    stage_timings: &[(String, u64)],
+    total_ms: u64,
+) {
+    let stage_ms = |name: &str| -> Option<u64> {
+        stage_timings
+            .iter()
+            .find(|(stage, _)| stage == name)
+            .map(|(_, ms)| *ms)
+    };
+    let device = last_device();
+    let row = library_db::AnalysisTimingRow {
+        file_hash,
+        device: device.as_deref(),
+        whisper_model: config.whisper_model(),
+        beam_size: config.beam_size(),
+        batch_size: config.batch_size(),
+        separator: config.separator(),
+        asr_engine: config.asr_engine(),
+        align_backend: config.align_backend(),
+        vocal_detection_threshold_pct: config.vocal_detection_threshold_pct(),
+        key_detect_ms: stage_ms("key_detect"),
+        separation_ms: stage_ms("separation"),
+        transcribe_or_align_ms: stage_ms("transcribe_or_align"),
+        total_ms,
+    };
+    if let Err(e) = library_db::insert_analysis_timing(&row) {
+        warn!("[analyzer] Failed to record analysis timing: {e}");
+    }
 }
 
 fn send_and_monitor(
@@ -999,6 +1053,7 @@ fn send_and_monitor(
     server.writer.flush()?;
 
     let mut line_buf = String::new();
+    let mut stage_timings: Vec<(String, u64)> = Vec::new();
     loop {
         line_buf.clear();
         let bytes = server.reader.read_line(&mut line_buf)?;
@@ -1029,7 +1084,14 @@ fn send_and_monitor(
                     update_queue_status(hash, QueuedStatus::Analyzing(pct as usize));
                 }
             }
-            ServerEvent::Done { .. } => return Ok(SongResult::Done),
+            ServerEvent::Timing { stage, ms } => {
+                match progress_hash {
+                    Some(hash) => info!("[analyzer:timing] hash={hash} stage={stage} ms={ms}"),
+                    None => info!("[analyzer:timing] stage={stage} ms={ms}"),
+                }
+                stage_timings.push((stage, ms));
+            }
+            ServerEvent::Done { .. } => return Ok(SongResult::Done(stage_timings)),
             ServerEvent::Error { kind, msg } => {
                 let kind_s = kind.as_deref().unwrap_or("generic");
                 if kind_s == "oom" {

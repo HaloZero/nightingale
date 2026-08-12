@@ -16,6 +16,7 @@ Wire protocol (NDJSON over TCP, one JSON object per line):
   Server -> client:
     {"type":"hello_ack"}
     {"type":"progress","pct":N,"msg":"..."}
+    {"type":"timing","stage":"key_detect"|"separation"|"transcribe_or_align","ms":N}
     {"type":"done","hash":"..."}
     {"type":"error","kind":"oom"|"generic","msg":"..."}
 """
@@ -33,7 +34,13 @@ if os.name == "nt":
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gpu import end_of_song_cleanup, hard_free_gpu, log_vram, reset_peak_stats, vram_snapshot
-from whisper_compat import detect_device, is_oom, set_align_backend, set_progress_sink
+from whisper_compat import (
+    detect_device,
+    is_oom,
+    set_align_backend,
+    set_progress_sink,
+    set_timing_sink,
+)
 from audio import set_vocal_threshold_pct
 from pipeline import run_pipeline
 
@@ -127,6 +134,7 @@ def main():
     _send(wfile, {"type": "hello_ack"})
 
     set_progress_sink(lambda pct, msg: _send(wfile, {"type": "progress", "pct": int(pct), "msg": str(msg)}))
+    set_timing_sink(lambda stage, ms: _send(wfile, {"type": "timing", "stage": str(stage), "ms": int(ms)}))
 
     try:
         for line in rfile:

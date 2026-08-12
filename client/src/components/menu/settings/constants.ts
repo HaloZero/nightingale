@@ -38,6 +38,12 @@ export const ASR_ENGINES: SettingsOption[] = [
     description:
       "Much faster and produces its own word timings (skipping alignment), but only covers 25 European languages. Whisper takes over for anything else.",
   },
+  {
+    value: "whisper_mlx",
+    label: "Whisper MLX (Experimental)",
+    description:
+      "Runs Whisper natively on Apple Silicon's GPU via MLX instead of the CPU-only fallback WhisperX is stuck with on Mac. Same model sizes below. Apple Silicon only — falls back to Whisper elsewhere.",
+  },
 ];
 
 export const ALIGN_BACKENDS: SettingsOption[] = [
@@ -85,6 +91,7 @@ export const DEFAULTS = {
   mic_monitor_gain: 0.65,
   mic_latency_compensation_sec: DEFAULT_MIC_LATENCY_COMPENSATION_SEC,
   auto_analyze: false,
+  track_analysis_timings: true,
   lyrics_vertical_position: "bottom",
   lyrics_horizontal_position: "center",
 } satisfies Pick<
@@ -99,6 +106,7 @@ export const DEFAULTS = {
   | "mic_monitor_gain"
   | "mic_latency_compensation_sec"
   | "auto_analyze"
+  | "track_analysis_timings"
   | "lyrics_vertical_position"
   | "lyrics_horizontal_position"
 >;
@@ -139,8 +147,9 @@ export function getAnalysisNav(isParakeet: boolean) {
         beamSize: -1,
         alignBackend: 3,
         autoAnalyze: 4,
-        vocalThreshold: 5,
-        batchSize: 6,
+        trackTimings: 5,
+        vocalThreshold: 6,
+        batchSize: 7,
       }
     : {
         separator: 1,
@@ -149,8 +158,9 @@ export function getAnalysisNav(isParakeet: boolean) {
         beamSize: 4,
         alignBackend: 5,
         autoAnalyze: 6,
-        vocalThreshold: 7,
-        batchSize: 8,
+        trackTimings: 7,
+        vocalThreshold: 8,
+        batchSize: 9,
       };
 }
 
@@ -160,6 +170,6 @@ export function getSettingsStops(tab: SettingsTab, isParakeet: boolean) {
   }
 
   return isParakeet
-    ? [2, 1, 1, 1, 2, 1, NUMBER_PICKER_SIZE, 2]
-    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 1, NUMBER_PICKER_SIZE, 2];
+    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2]
+    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2];
 }

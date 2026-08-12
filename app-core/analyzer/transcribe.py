@@ -75,6 +75,22 @@ def transcribe_vocals(
             return _build_result_from_words(payload, language, duration_secs, engine_used)
 
         raw_segments = payload
+    elif engine == "whisper_mlx":
+        payload, language, engine_used = _transcribe_whisper_mlx_or_fallback(
+            audio=audio,
+            full_audio=full_audio,
+            vocal_start=vocal_start,
+            device=device,
+            compute_type=compute_type,
+            model_name=model_name,
+            beam_size=beam_size,
+            batch_size=batch_size,
+            language_override=language_override,
+        )
+        if engine_used == "whisper_mlx":
+            return _build_result_from_words(payload, language, duration_secs, engine_used)
+
+        raw_segments = payload
     else:
         raw_segments, language = _transcribe_whisper(
             audio=audio,
@@ -281,6 +297,43 @@ def _transcribe_parakeet_or_fallback(
 
     engine_used = "onnx-cpu-fallback" if backend == "onnx-cpu-fallback" else "parakeet"
     return words, language, engine_used
+
+
+def _transcribe_whisper_mlx_or_fallback(
+    *, audio, full_audio, vocal_start, device, compute_type,
+    model_name, beam_size, batch_size, language_override,
+) -> tuple[list[dict], str, str]:
+    """Try Whisper MLX (Apple Silicon); fall back to regular Whisper on any failure."""
+    import whisper_mlx
+
+    def _fallback_to_whisper(reason: str) -> tuple[list[dict], str, str]:
+        print(f"[nightingale:LOG] Whisper MLX unavailable ({reason}); falling back to Whisper", flush=True)
+        raw_segments, language = _transcribe_whisper(
+            audio=audio, full_audio=full_audio, vocal_start=vocal_start,
+            device=device, compute_type=compute_type,
+            model_name=model_name, beam_size=beam_size, batch_size=batch_size,
+            language_override=language_override,
+        )
+        return raw_segments, language, "whisper-fallback"
+
+    if not whisper_mlx.is_available():
+        return _fallback_to_whisper("mlx not importable on this machine")
+
+    try:
+        words, language = whisper_mlx.transcribe(
+            audio, model_name=model_name, beam_size=beam_size, language=language_override,
+        )
+    except Exception as e:
+        return _fallback_to_whisper(str(e))
+
+    if not words:
+        return _fallback_to_whisper("produced no words")
+
+    for w in words:
+        w["start"] = round(w["start"] + vocal_start, 3)
+        w["end"] = round(w["end"] + vocal_start, 3)
+
+    return words, language, "whisper_mlx"
 
 
 def _filter_hallucinations(raw_segments: list[dict], duration_secs: float) -> list[dict]:

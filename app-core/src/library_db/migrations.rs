@@ -24,7 +24,7 @@ use crate::song::{Song, SongOrigin};
 use super::connection::{with_conn, with_conn_mut};
 use super::songs::{append_songs, update_library_meta};
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 static MIGRATION_TOTAL: AtomicUsize = AtomicUsize::new(0);
@@ -122,6 +122,31 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
                 ON playlist_songs(playlist_id, position);
             CREATE INDEX IF NOT EXISTS idx_playlist_songs_song
                 ON playlist_songs(song_id);
+        ",
+        )?;
+    }
+    if v < 3 {
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS analysis_timings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                device TEXT,
+                whisper_model TEXT NOT NULL,
+                beam_size INTEGER NOT NULL,
+                batch_size INTEGER NOT NULL,
+                separator TEXT NOT NULL,
+                asr_engine TEXT NOT NULL,
+                align_backend TEXT NOT NULL,
+                vocal_detection_threshold_pct REAL NOT NULL,
+                key_detect_ms INTEGER,
+                separation_ms INTEGER,
+                transcribe_or_align_ms INTEGER,
+                total_ms INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_analysis_timings_file_hash
+                ON analysis_timings(file_hash);
         ",
         )?;
     }

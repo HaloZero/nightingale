@@ -202,6 +202,7 @@ pub struct AppConfig {
     pub align_backend: Option<String>,
     pub vocal_detection_threshold_pct: Option<f64>,
     pub auto_analyze: Option<bool>,
+    pub track_analysis_timings: Option<bool>,
     pub song_list_view: Option<String>,
     pub language_overrides: Option<HashMap<String, String>>,
 }
@@ -237,6 +238,7 @@ impl Default for AppConfig {
             align_backend: None,
             vocal_detection_threshold_pct: None,
             auto_analyze: None,
+            track_analysis_timings: None,
             song_list_view: None,
             language_overrides: None,
         }
@@ -394,6 +396,10 @@ impl AppConfig {
 
     pub fn auto_analyze(&self) -> bool {
         self.auto_analyze.unwrap_or(false)
+    }
+
+    pub fn track_analysis_timings(&self) -> bool {
+        self.track_analysis_timings.unwrap_or(true)
     }
 
     pub fn mic_monitor_gain(&self) -> f32 {
