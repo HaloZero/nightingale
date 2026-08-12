@@ -26,6 +26,9 @@ from whisper_compat import compute_type_for, detect_device  # noqa: E402
 DEVICE = detect_device()
 COMPUTE_TYPE = compute_type_for(DEVICE)
 ALIGN_DEVICE = "cpu" if DEVICE == "mps" else DEVICE
+# CTranslate2 (whisperx's CT2 backend) has no MPS support -- only cpu/cuda.
+# transcribe.py downgrades the same way before loading a CT2 model.
+CT2_DEVICE = "cpu" if DEVICE == "mps" else DEVICE
 
 # Matches bench_analyze.py's MODEL_SIZES and the languages the 4 benchmark
 # songs actually use (3 English + 1 Japanese, Gundam Wing).
@@ -52,7 +55,7 @@ def warm_whisper_ct2() -> None:
 
     for size in MODEL_SIZES:
         def _load(size=size):
-            model = whisperx.load_model(size, DEVICE, compute_type=COMPUTE_TYPE, task="transcribe")
+            model = whisperx.load_model(size, CT2_DEVICE, compute_type=COMPUTE_TYPE, task="transcribe")
             del model
 
         attempt(f"whisper CT2 model: {size}", _load)
