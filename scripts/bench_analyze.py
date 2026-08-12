@@ -432,7 +432,12 @@ def run_one(
             lines.append(line)
             last_activity = time.perf_counter()
             last_activity_wall = datetime.now().astimezone()
-            if "[nightingale:TIMING]" in line or "[nightingale:PROGRESS:2]" in line or "falling back" in line.lower():
+            if (
+                "[nightingale:TIMING]" in line
+                or "Using device:" in line
+                or "Transcribing:" in line
+                or "falling back" in line.lower()
+            ):
                 print(f"     [{last_activity_wall.strftime('%H:%M:%S %Z')}] {line.rstrip()}")
             if not saw_done and "[nightingale:PROGRESS:100]" in line:
                 saw_done = True

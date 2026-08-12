@@ -218,12 +218,23 @@ def _transcribe_whisper(
         print(f"[nightingale:LOG] Model ready for lang={language}", flush=True)
 
         progress(60, "Transcribing vocals...")
+        # WhisperX processes every VAD-detected segment in one blocking call
+        # with no output in between by default -- for a full song on CPU
+        # (forced whenever device == "mps"; ctranslate2 has no MPS kernel)
+        # with a large model/high beam size, that gap can run long enough to
+        # look indistinguishable from a hang to anything watching stdout
+        # (e.g. bench_analyze.py's idle timeout). progress_callback gives us
+        # a flushed line per segment so real progress is visible throughout.
+        def _log_transcribe_progress(pct: float) -> None:
+            print(f"[nightingale:LOG] Transcribing: {pct:.1f}%", flush=True)
+
         result = model.transcribe(
             audio,
             batch_size=batch_size,
             task="transcribe",
             language=language,
             chunk_size=30,
+            progress_callback=_log_transcribe_progress,
         )
 
     raw_segments = result.get("segments", [])
