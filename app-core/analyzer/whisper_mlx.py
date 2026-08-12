@@ -61,13 +61,20 @@ def transcribe(
     repo = _repo_for(model_name)
 
     with gpu_model(f"whisper-mlx:{model_name}"):
+        # mlx_whisper has no beam search decoder (raises NotImplementedError
+        # for any beam_size), so we ask for best_of instead: same first pass
+        # (greedy at temperature=0) with the same knob repurposed to control
+        # how many candidates get sampled if that first pass looks bad enough
+        # to trigger mlx_whisper's own temperature-fallback retry. Keeps this
+        # on the MLX/Metal path instead of raising and falling back to the
+        # much slower CPU whisper path.
         result = mlx_whisper.transcribe(
             audio,
             path_or_hf_repo=repo,
             language=language,
             task="transcribe",
             word_timestamps=True,
-            beam_size=beam_size,
+            best_of=beam_size,
             initial_prompt=_INITIAL_PROMPT,
         )
 
