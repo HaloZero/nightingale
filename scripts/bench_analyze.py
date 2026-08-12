@@ -290,6 +290,10 @@ IDLE_TIMEOUT_S = 30 * 60
 # leftover thread/grandchild holding stdout open and force-kill it. Losing a
 # properly-completed run to a stuck exit would be silly, so this is short.
 DONE_EXIT_GRACE_S = 30
+# How often to print a "still running, last output was at HH:MM:SS" line
+# during quiet stretches, so a tailed log always shows a recent, live
+# timestamp instead of going silent for up to IDLE_TIMEOUT_S.
+HEARTBEAT_INTERVAL_S = 60
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
@@ -394,23 +398,37 @@ def run_one(
     saw_done = False
     done_deadline: float | None = None
     killed_reason = ""
+    last_activity = time.perf_counter()
+    last_activity_wall = datetime.now().astimezone()  # device-local timezone
     try:
         while True:
-            timeout = IDLE_TIMEOUT_S if done_deadline is None else max(0.0, done_deadline - time.perf_counter())
+            idle_deadline = done_deadline if done_deadline is not None else last_activity + IDLE_TIMEOUT_S
+            remaining = max(0.0, idle_deadline - time.perf_counter())
+            poll = min(remaining, HEARTBEAT_INTERVAL_S)
             try:
-                line = line_q.get(timeout=timeout)
+                line = line_q.get(timeout=poll)
             except queue.Empty:
-                killed_reason = (
-                    f"child didn't exit within {DONE_EXIT_GRACE_S}s of printing DONE"
-                    if saw_done else
-                    f"no output for {IDLE_TIMEOUT_S}s"
-                )
-                break
+                if time.perf_counter() >= idle_deadline:
+                    killed_reason = (
+                        f"child didn't exit within {DONE_EXIT_GRACE_S}s of printing DONE"
+                        if saw_done else
+                        f"no output for {IDLE_TIMEOUT_S}s"
+                    )
+                    break
+                # Still within budget -- just a quiet stretch (e.g. transcribe
+                # running with no interim progress lines). Print a heartbeat
+                # so "how long has this been sitting here" is answerable at a
+                # glance instead of a guess.
+                idle_s = int(time.perf_counter() - last_activity)
+                print(f"     ... last output at {last_activity_wall.strftime('%H:%M:%S %Z')} ({idle_s}s ago, still running)")
+                continue
             if line is None:
                 break  # real EOF -- process (and anything else holding the pipe) is gone
             lines.append(line)
+            last_activity = time.perf_counter()
+            last_activity_wall = datetime.now().astimezone()
             if "[nightingale:TIMING]" in line or "[nightingale:PROGRESS:2]" in line or "falling back" in line.lower():
-                print(f"     {line.rstrip()}")
+                print(f"     [{last_activity_wall.strftime('%H:%M:%S %Z')}] {line.rstrip()}")
             if not saw_done and "[nightingale:PROGRESS:100]" in line:
                 saw_done = True
                 done_deadline = time.perf_counter() + DONE_EXIT_GRACE_S
