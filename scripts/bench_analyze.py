@@ -84,10 +84,13 @@ import argparse
 import csv
 import hashlib
 import os
+import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -279,6 +282,40 @@ def song_hash(slug: str) -> str:
     return hashlib.blake2b(slug.encode(), digest_size=8).hexdigest()
 
 
+# If the child produces no output at all for this long, something is
+# genuinely wedged mid-run (not just a slow transcribe) -- kill it.
+IDLE_TIMEOUT_S = 30 * 60
+# Once we've seen PROGRESS:100 (DONE), the pipeline's own work is done --
+# give the process this long to actually exit before we conclude it's a
+# leftover thread/grandchild holding stdout open and force-kill it. Losing a
+# properly-completed run to a stuck exit would be silly, so this is short.
+DONE_EXIT_GRACE_S = 30
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Kill proc and everything in its process group (grandchildren included).
+
+    proc is launched with start_new_session=True so it's its own group
+    leader -- this is what lets us reap a stray child (e.g. a lingering
+    worker thread/process holding the stdout pipe open) that plain
+    proc.terminate() would miss, since that only signals the direct child.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def run_one(
     cfg: dict,
     song: dict,
@@ -330,18 +367,68 @@ def run_one(
     proc = subprocess.Popen(
         cmd, cwd=str(REPO_ROOT), env=build_env(data_dir),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        start_new_session=True,  # own process group -- see _kill_process_group
     )
+
+    # Read stdout on a background thread rather than iterating proc.stdout
+    # directly on the main thread: a plain `for line in proc.stdout` only
+    # unblocks on pipe EOF, which requires *every* fd referencing the pipe's
+    # write end to close. If a grandchild/lingering thread outlives the
+    # child and keeps that fd open, the main thread would hang forever even
+    # though the pipeline itself already finished and printed DONE. Running
+    # the read on a thread lets the main loop enforce timeouts instead.
+    line_q: "queue.Queue[str | None]" = queue.Queue()
+
+    def _pump() -> None:
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line_q.put(line)
+        finally:
+            line_q.put(None)  # sentinel: reader hit real EOF
+
+    reader = threading.Thread(target=_pump, daemon=True)
+    reader.start()
+
     lines: list[str] = []
+    saw_done = False
+    done_deadline: float | None = None
+    killed_reason = ""
     try:
-        assert proc.stdout is not None
-        for line in proc.stdout:
+        while True:
+            timeout = IDLE_TIMEOUT_S if done_deadline is None else max(0.0, done_deadline - time.perf_counter())
+            try:
+                line = line_q.get(timeout=timeout)
+            except queue.Empty:
+                killed_reason = (
+                    f"child didn't exit within {DONE_EXIT_GRACE_S}s of printing DONE"
+                    if saw_done else
+                    f"no output for {IDLE_TIMEOUT_S}s"
+                )
+                break
+            if line is None:
+                break  # real EOF -- process (and anything else holding the pipe) is gone
             lines.append(line)
             if "[nightingale:TIMING]" in line or "[nightingale:PROGRESS:2]" in line or "falling back" in line.lower():
                 print(f"     {line.rstrip()}")
-        exit_code = proc.wait()
+            if not saw_done and "[nightingale:PROGRESS:100]" in line:
+                saw_done = True
+                done_deadline = time.perf_counter() + DONE_EXIT_GRACE_S
+
+        if killed_reason:
+            print(f"     !! {killed_reason} -- killing process group (pid {proc.pid})")
+            _kill_process_group(proc)
+            reader.join(timeout=5)
+
+        try:
+            exit_code = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # _kill_process_group already escalated to SIGKILL and waited;
+            # if the process is still unreaped here (e.g. stuck in
+            # uninterruptible D-state), don't let that wedge the sweep too.
+            exit_code = -9
     except KeyboardInterrupt:
-        proc.terminate()
-        proc.wait()
+        _kill_process_group(proc)
         raise
     wall_ms = int((time.perf_counter() - started) * 1000)
 
@@ -351,10 +438,22 @@ def run_one(
 
     parsed = parse_log(full_log)
 
-    error = ""
-    if exit_code != 0:
+    if killed_reason and saw_done:
+        # The pipeline itself completed (we saw DONE and have a full parsed
+        # log) -- only the child's *exit* was wedged. Don't punish good data
+        # with a FAILED row; just leave a breadcrumb.
+        exit_code = 0
+        error = f"note: {killed_reason}"
+    elif exit_code != 0 or killed_reason:
         tail = full_log[-500:].strip()
-        error = f"exit_code={exit_code}: {tail}"
+        reason = killed_reason or f"exit_code={exit_code}"
+        error = f"{reason}: {tail}"
+        if killed_reason and exit_code == 0:
+            # Kill signal didn't register as a non-zero code (edge case) --
+            # force it so main()'s exit_code==0 check doesn't call this OK.
+            exit_code = -9
+    else:
+        error = ""
 
     transcript_path = ""
     if transcript_in_work_dir.is_file():
