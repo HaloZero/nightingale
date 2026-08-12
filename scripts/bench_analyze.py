@@ -124,6 +124,11 @@ SONGS = [
         "path": "songs/Lily Allen & Mumford and Sons/Internet Mashup/Not Fair Lion Man.mp3",
         "note": "mashup of two songs",
     },
+    {
+        "slug": "sexy_gonna_do_it",
+        "path": "songs/Rachel Bloom/Crazy Ex Girlfriend/21 Sexy gonna do it song.mp3",
+        "note": "fast, dense comedic lyrics",
+    },
 ]
 
 # ─── Config matrix ─────────────────────────────────────────────────────
