@@ -16,4 +16,9 @@ RELEASING.md
 # mac only
 **.DS_STORE
 
+**/__pycache__
+
 songs*
+
+# Analyzer benchmark output (scripts/bench_analyze.py)
+bench_out/
