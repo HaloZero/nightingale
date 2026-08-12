@@ -34,7 +34,9 @@ def progress(pct: int, msg: str):
 
 
 def _default_timing_sink(stage: str, ms: int):
-    print(f"[nightingale:TIMING] stage={stage} ms={ms}", flush=True)
+    s = round(ms / 1000)
+    m = ms / 60000
+    print(f"[nightingale:TIMING] stage={stage} ms={ms} s={s} m={m:.1f}", flush=True)
 
 
 _timing_sink = _default_timing_sink
