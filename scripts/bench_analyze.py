@@ -105,6 +105,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 SONGS = [
     {
+        "slug": "sexy_gonna_do_it",
+        "path": "songs/Rachel Bloom/Crazy Ex Girlfriend/21 Sexy gonna do it song.mp3",
+        "note": "fast, dense comedic lyrics",
+    },
+    {
         "slug": "one_week",
         "path": "songs/Barenaked Ladies/All Their Greatest Hits/One Week.m4a",
         "note": "fast, dense lyrics",
@@ -123,11 +128,6 @@ SONGS = [
         "slug": "not_fair_lion_man",
         "path": "songs/Lily Allen & Mumford and Sons/Internet Mashup/Not Fair Lion Man.mp3",
         "note": "mashup of two songs",
-    },
-    {
-        "slug": "sexy_gonna_do_it",
-        "path": "songs/Rachel Bloom/Crazy Ex Girlfriend/21 Sexy gonna do it song.mp3",
-        "note": "fast, dense comedic lyrics",
     },
 ]
 
