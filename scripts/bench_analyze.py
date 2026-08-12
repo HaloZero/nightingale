@@ -138,7 +138,7 @@ MODEL_SIZES = ["large-v3", "large-v3-turbo", "medium"]
 ALIGN_BACKENDS = ["whisperx", "ctc", "qwen"]
 ENGINES = ["whisper", "whisper_mlx", "parakeet"]
 
-NOT_APPLICABLE = "n/a"
+NOT_APPLICABLE = "na"
 
 
 def build_matrix(engines: list[str] | None = None) -> list[dict]:
