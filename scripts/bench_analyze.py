@@ -108,6 +108,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import sync_vendor_analyzer
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ─── Songs ─────────────────────────────────────────────────────────────
@@ -740,6 +742,7 @@ def main() -> None:
     parser.add_argument("--smoke-test", action="store_true", help="Run exactly one small config on one song, to verify the harness end-to-end before a full sweep")
     parser.add_argument("--warm-separation", action="store_true", help="Pre-populate the stems cache for the selected songs (key detection + separation only, no transcription, no CSV row) and exit without running the config sweep -- run this once before a fresh sweep so every config's separation_ms reflects a cache hit instead of whichever config happens to run first for a song paying the real cost")
     parser.add_argument("--skip-lyrics-align", action="store_true", help="Don't run lyrics-alignment configs (lyrics_align_<backend>) even for songs that have a .lrc source")
+    parser.add_argument("--skip-vendor-sync-check", action="store_true", help="Don't check that <data-dir>/vendor/analyzer/*.py matches app-core/analyzer/*.py before running -- by default a mismatch (e.g. local edits not yet synced via sync_vendor_analyzer.py) aborts the sweep so results can't silently come from stale code")
     args = parser.parse_args()
 
     songs = SONGS
@@ -785,6 +788,18 @@ def main() -> None:
         return
 
     check_vendor_ready(args.data_dir)
+
+    if not args.skip_vendor_sync_check:
+        out_of_sync, _, missing = sync_vendor_analyzer.check_sync(args.data_dir)
+        if out_of_sync or missing:
+            lines = [f"  OUT OF SYNC  {n}" for n in out_of_sync] + [f"  !! missing source  {n}" for n in missing]
+            sys.exit(
+                f"Vendor analyzer scripts at {args.data_dir}/vendor/analyzer don't match app-core/analyzer/ "
+                "-- results would be measuring stale code:\n"
+                + "\n".join(lines)
+                + f"\n\nRun `python3 {Path(__file__).parent / 'sync_vendor_analyzer.py'} --data-dir {args.data_dir}` "
+                "first, or pass --skip-vendor-sync-check to bench the vendor's current code anyway."
+            )
 
     out_dir: Path = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
