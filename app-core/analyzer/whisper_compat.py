@@ -33,6 +33,25 @@ def progress(pct: int, msg: str):
     _progress_sink(pct, msg)
 
 
+def _default_starting_sink(stage: str):
+    print(f"[nightingale:STARTING] stage={stage}", flush=True)
+
+
+_starting_sink = _default_starting_sink
+
+
+def set_starting_sink(fn):
+    global _starting_sink
+    _starting_sink = fn or _default_starting_sink
+
+
+def starting(stage: str):
+    """Announce that `stage` is about to begin -- pairs with the matching
+    `timing(stage, ...)` call once it finishes, so logs show both ends of a
+    stage instead of only the completion popping up with no lead-in."""
+    _starting_sink(stage)
+
+
 def _default_timing_sink(stage: str, ms: int):
     s = round(ms / 1000)
     m = ms / 60000

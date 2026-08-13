@@ -7,7 +7,7 @@ import tempfile
 import time
 
 from gpu import hard_free_gpu, log_vram
-from whisper_compat import progress, timing
+from whisper_compat import progress, timing, starting
 from key_detect import detect_key
 from stems import separate_stems, separate_stems_uvr
 from transcribe import transcribe_vocals
@@ -168,6 +168,7 @@ def run_pipeline(
 
     try:
         log_vram("phase:start")
+        starting("key_detect")
         t0 = time.perf_counter()
         detected_key = detect_key(audio_path)
         timing("key_detect", t0)
@@ -175,6 +176,7 @@ def run_pipeline(
 
         vocals_path = None
         if not skip_separation:
+            starting("separation")
             t0 = time.perf_counter()
             vocals_path = separate_and_cache(
                 audio_path, output_dir, file_hash, separator, device,
@@ -204,6 +206,7 @@ def run_pipeline(
         if callable(whisper_model):
             whisper_model = whisper_model()
 
+        starting("transcribe_or_align")
         t0 = time.perf_counter()
         transcript = transcribe_or_align(
             vocals_path, audio_path, device,

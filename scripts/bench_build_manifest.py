@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Build bench_out/player_manifest.json for scripts/bench_player.html.
+
+The player is a static page served by `python3 -m http.server` from the repo
+root -- it can't list directories itself, so this script is the one place
+that knows how to turn "whatever transcripts happen to exist on disk" into
+the JSON the page fetches.
+
+song_path/song_note come from the results CSVs (the actual historical
+record of what ran), not from bench_analyze.py's SONGS -- that list is the
+*next* sweep to run and can move on without leaving the player unable to
+find audio for transcripts that already exist from a past sweep. Re-run
+this after any bench_analyze.py run adds new transcripts.
+
+Usage:
+    python3 scripts/bench_build_manifest.py
+"""
+
+import csv
+import json
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+OUT_DIR = REPO_ROOT / "bench_out"
+
+
+def load_song_info() -> dict[str, dict]:
+    """slug -> {"note": ..., "path": ...}, from the newest CSV row per slug."""
+    info: dict[str, dict] = {}
+    for csv_path in sorted(OUT_DIR.glob("results-*.csv")):
+        with csv_path.open(newline="") as f:
+            for row in csv.DictReader(f):
+                slug = row.get("song_slug")
+                if slug and row.get("song_path"):
+                    info[slug] = {"note": row.get("song_note", ""), "path": row["song_path"]}
+    return info
+
+
+def main() -> None:
+    song_info = load_song_info()
+    transcripts_root = OUT_DIR / "transcripts"
+
+    songs = []
+    for slug_dir in sorted(p for p in transcripts_root.iterdir() if p.is_dir()) if transcripts_root.is_dir() else []:
+        slug = slug_dir.name
+        configs = sorted(p.stem for p in slug_dir.glob("*.json"))
+        if not configs:
+            continue
+        info = song_info.get(slug)
+        if not info:
+            print(f"  !! {slug}: transcripts exist but no CSV row has its song_path -- skipping")
+            continue
+        audio_path = REPO_ROOT / info["path"]
+        songs.append(
+            {
+                "slug": slug,
+                "note": info["note"],
+                "audio_url": "/" + info["path"],
+                "audio_exists": audio_path.is_file(),
+                "configs": configs,
+            }
+        )
+
+    manifest_path = OUT_DIR / "player_manifest.json"
+    manifest_path.write_text(json.dumps({"songs": songs}, indent=2))
+    print(f"Wrote {manifest_path} ({len(songs)} song(s))")
+    for s in songs:
+        flag = "" if s["audio_exists"] else "  !! audio file missing"
+        print(f"  {s['slug']:25s} {len(s['configs'])} config(s){flag}")
+
+
+if __name__ == "__main__":
+    main()

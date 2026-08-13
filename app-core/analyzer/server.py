@@ -39,6 +39,7 @@ from whisper_compat import (
     is_oom,
     set_align_backend,
     set_progress_sink,
+    set_starting_sink,
     set_timing_sink,
 )
 from audio import set_vocal_threshold_pct
@@ -135,6 +136,7 @@ def main():
 
     set_progress_sink(lambda pct, msg: _send(wfile, {"type": "progress", "pct": int(pct), "msg": str(msg)}))
     set_timing_sink(lambda stage, ms: _send(wfile, {"type": "timing", "stage": str(stage), "ms": int(ms)}))
+    set_starting_sink(lambda stage: _send(wfile, {"type": "starting", "stage": str(stage)}))
 
     try:
         for line in rfile:

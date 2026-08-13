@@ -1,13 +1,14 @@
 """WhisperX / Parakeet transcription: full-audio transcription of vocals with forced alignment."""
 
 import re
+import time
 
 import cjk
 from audio import detect_vocal_region, highpass_filter, normalize_rms
 from gpu import gpu_model, hard_free_gpu
 from hallucination import is_hallucination, remove_hallucinated_words
 from language import detect_language_multiwindow
-from whisper_compat import progress, align_with_fallback, get_align_backend
+from whisper_compat import progress, align_with_fallback, get_align_backend, timing, starting
 
 
 def transcribe_vocals(
@@ -194,6 +195,8 @@ def _transcribe_whisper(
     _, no_vad_asr = _whisper_asr_options(beam_size)
 
     with gpu_model(f"whisper:{model_name}") as held:
+        starting("model_load")
+        t0 = time.perf_counter()
         if language_override:
             language = language_override
             print(f"[nightingale:LOG] Using language override: '{language}'", flush=True)
@@ -204,6 +207,7 @@ def _transcribe_whisper(
                 asr_options=no_vad_asr,
             )
             held.append(model)
+            timing("model_load", t0)
         else:
             progress(58, "Detecting language from vocals (multi-window)...")
             model = whisperx.load_model(
@@ -211,6 +215,7 @@ def _transcribe_whisper(
                 task="transcribe", asr_options=no_vad_asr,
             )
             held.append(model)
+            timing("model_load", t0)
             language = detect_language_multiwindow(model, full_audio)
             print(f"[nightingale:LOG] Final detected language: '{language}'", flush=True)
             progress(59, f"Detected language: {language}")

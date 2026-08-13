@@ -13,18 +13,18 @@ whether the app itself is installed/running there.
 
 Engine, Whisper model size, and forced-alignment backend are the three
 factors under test for this pass; beam size (16, the settings UI's max) and
-batch size (8, the default) are held fixed -- see BASELINE below. The matrix
-is pruned to skip combinations that are no-ops for a given engine:
+batch size (8, the default) are held fixed -- see BASELINE below. Parakeet is
+excluded entirely (it kept silently falling back to Whisper internally, even
+on English input, so it wasn't testing what it claimed to). The matrix is
+pruned to skip combinations that are no-ops for a given engine:
 
-  - Parakeet ignores both model size and align backend -- it produces its own
-    word timings from a transducer decode (see `parakeet.py`) -> 1 config.
   - Whisper MLX ignores align backend -- it derives word timings via DTW over
     its own cross-attention (see `whisper_mlx.py`) but IS affected by model
     size -> 3 configs (one per model size).
   - Whisper is affected by both -> 3 model sizes x 3 align backends = 9
     configs.
 
-Total: 13 configs x N songs.
+Total: 12 configs x N songs.
 
 ## Stem-separation caching -- read this before comparing `total_wall_ms`
 
@@ -46,13 +46,11 @@ column flags this explicitly; the fair per-config comparison metric is
 `transcribe_or_align_ms` (the only stage that actually varies with
 engine/model/align_backend), not `total_wall_ms`.
 
-Some of those 13 configs will *silently fall back* at runtime regardless of
-what was requested -- e.g. Parakeet doesn't support Japanese, so on the
-Gundam Wing song it always falls back to Whisper internally. That's real
-signal, not noise, so every run's log is scanned for the engine actually
-used and for fallback messages; both land in the CSV (`effective_engine`,
-`fallback_detected`) so those rows can be told apart from a "real" run of
-the requested engine during analysis.
+A config can still *silently fall back* at runtime regardless of what was
+requested -- that's real signal, not noise, so every run's log is scanned
+for the engine actually used and for fallback messages; both land in the
+CSV (`effective_engine`, `fallback_detected`) so those rows can be told
+apart from a "real" run of the requested engine during analysis.
 
 ## Accuracy
 
@@ -98,36 +96,36 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ─── Songs ─────────────────────────────────────────────────────────────
-# Picked to cover different failure modes: fast/dense lyrics, non-English
-# (which also exercises the Parakeet -> Whisper language fallback), a
-# baseline "regular" song, and a mashup (two songs' worth of vocals/tempo
-# changes back to back).
+# Picked to cover different artist/genre types, all English, no mashups,
+# no TV themes/soundtrack cues -- all mainstream studio releases with a
+# definitive, citable source of lyrics (for WER scoring against a
+# reference transcript).
 
 SONGS = [
     {
-        "slug": "sexy_gonna_do_it",
-        "path": "songs/Rachel Bloom/Crazy Ex Girlfriend/21 Sexy gonna do it song.mp3",
-        "note": "fast, dense comedic lyrics",
+        "slug": "in_the_end",
+        "path": "songs/Linkin Park/Hybrid Theory/In The End.m4a",
+        "note": "nu-metal/rock",
+    },
+    {
+        "slug": "dog_days_are_over",
+        "path": "songs/Florence And The Machine/Lungs/Dog Days Are Over.m4a",
+        "note": "indie/alt-pop",
+    },
+    {
+        "slug": "whats_my_age_again",
+        "path": "songs/Blink 182/Enema of the State/What's My Age Again.mp3",
+        "note": "pop-punk",
+    },
+    {
+        "slug": "surrender",
+        "path": "songs/Kasey Chambers/Carnival/Surrender.m4a",
+        "note": "country/folk",
     },
     {
         "slug": "one_week",
         "path": "songs/Barenaked Ladies/All Their Greatest Hits/One Week.m4a",
         "note": "fast, dense lyrics",
-    },
-    {
-        "slug": "rhythm_emotion",
-        "path": "songs/Gundam Wing/Gundam Wing/Rhythm Emotion.mp3",
-        "note": "non-English (Japanese) -- Parakeet always falls back here",
-    },
-    {
-        "slug": "dancing_round_the_clock",
-        "path": "songs/Happy Days/Happy Days/Dancing Round The Clock.m4a",
-        "note": "regular baseline song",
-    },
-    {
-        "slug": "not_fair_lion_man",
-        "path": "songs/Lily Allen & Mumford and Sons/Internet Mashup/Not Fair Lion Man.mp3",
-        "note": "mashup of two songs",
     },
 ]
 
@@ -139,9 +137,9 @@ BASELINE = {
     "separator": "karaoke",  # UI default; not swept in this pass
 }
 
-MODEL_SIZES = ["large-v3", "large-v3-turbo", "medium"]
+MODEL_SIZES = ["large-v3"]
 ALIGN_BACKENDS = ["whisperx", "ctc", "qwen"]
-ENGINES = ["whisper", "whisper_mlx", "parakeet"]
+ENGINES = ["whisper", "whisper_mlx"]
 
 NOT_APPLICABLE = "na"
 
@@ -158,9 +156,6 @@ def build_matrix(engines: list[str] | None = None) -> list[dict]:
     if "whisper_mlx" in engines:
         for model in MODEL_SIZES:
             configs.append({"engine": "whisper_mlx", "model": model, "align_backend": NOT_APPLICABLE})
-
-    if "parakeet" in engines:
-        configs.append({"engine": "parakeet", "model": NOT_APPLICABLE, "align_backend": NOT_APPLICABLE})
 
     for cfg in configs:
         cfg.update(BASELINE)
@@ -236,18 +231,15 @@ def check_vendor_ready(data_dir: Path) -> None:
 # ─── Log parsing ────────────────────────────────────────────────────────
 
 TIMING_RE = re.compile(r"\[nightingale:TIMING\] stage=(\S+) ms=(\d+)")
-DEVICE_RE = re.compile(r"Using device: (\S+)")
 ENGINE_USED_RE = re.compile(r"\[nightingale:LOG\] Transcription \((\S+)\):")
 FALLBACK_RE = re.compile(r"falling back", re.IGNORECASE)
 
 
 def parse_log(text: str) -> dict:
     timings = {stage: int(ms) for stage, ms in TIMING_RE.findall(text)}
-    device_match = DEVICE_RE.search(text)
     engine_used_matches = ENGINE_USED_RE.findall(text)
     return {
         "timings": timings,
-        "device": device_match.group(1) if device_match else "",
         "effective_engine": engine_used_matches[-1] if engine_used_matches else "",
         "fallback_detected": bool(FALLBACK_RE.search(text)),
     }
@@ -259,7 +251,6 @@ CSV_FIELDS = [
     "run_id",
     "song_slug",
     "song_note",
-    "song_path",
     "config_id",
     "requested_engine",
     "effective_engine",
@@ -267,11 +258,10 @@ CSV_FIELDS = [
     "align_backend",
     "beam_size",
     "batch_size",
-    "separator",
-    "device",
     "key_detect_ms",
     "separation_ms",
     "separation_cached",
+    "model_load_ms",
     "transcribe_or_align_ms",
     "total_wall_ms",
     "fallback_detected",
@@ -289,7 +279,7 @@ def song_hash(slug: str) -> str:
 
 # If the child produces no output at all for this long, something is
 # genuinely wedged mid-run (not just a slow transcribe) -- kill it.
-IDLE_TIMEOUT_S = 30 * 60
+IDLE_TIMEOUT_S = 60 * 60
 # Once we've seen PROGRESS:100 (DONE), the pipeline's own work is done --
 # give the process this long to actually exit before we conclude it's a
 # leftover thread/grandchild holding stdout open and force-kill it. Losing a
@@ -298,7 +288,7 @@ DONE_EXIT_GRACE_S = 30
 # How often to print a "still running, last output was at HH:MM:SS" line
 # during quiet stretches, so a tailed log always shows a recent, live
 # timestamp instead of going silent for up to IDLE_TIMEOUT_S.
-HEARTBEAT_INTERVAL_S = 60
+HEARTBEAT_INTERVAL_S = 120
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
@@ -325,53 +315,12 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
             continue
 
 
-def run_one(
-    cfg: dict,
-    song: dict,
-    data_dir: Path,
-    out_dir: Path,
-    run_id: str,
-) -> dict:
-    work_dir = out_dir / "work" / song["slug"]
-    work_dir.mkdir(parents=True, exist_ok=True)
-    transcripts_dir = out_dir / "transcripts" / song["slug"]
-    transcripts_dir.mkdir(parents=True, exist_ok=True)
-    logs_dir = out_dir / "logs" / song["slug"]
-    logs_dir.mkdir(parents=True, exist_ok=True)
-
-    audio_path = REPO_ROOT / song["path"]
-    file_hash = song_hash(song["slug"])
-    transcript_in_work_dir = work_dir / f"{file_hash}_transcript.json"
-    # Detected *before* running: whether this song's stems were already on
-    # disk going in, so `separation_ms` reflects a cache hit rather than a
-    # fresh separation. Key/tempo aren't known ahead of time (they're
-    # detected inside the pipeline), so glob rather than build the exact
-    # filename -- tempo is always 1.0 and key is deterministic per song, so
-    # this glob is unambiguous in practice (one match once separated).
-    stems_cached_going_in = any(work_dir.glob(f"{file_hash}_vocals_*.mp3"))
-
-    cmd = [
-        str(python_bin(data_dir)),
-        str(analyze_py_path(data_dir)),
-        str(audio_path),
-        str(work_dir),
-        "--hash", file_hash,
-        "--model", cfg["model"] if cfg["model"] != NOT_APPLICABLE else "large-v3",
-        "--beam-size", str(cfg["beam_size"]),
-        "--batch-size", str(cfg["batch_size"]),
-        "--separator", cfg["separator"],
-        "--engine", cfg["engine"],
-        "--align-backend", cfg["align_backend"] if cfg["align_backend"] != NOT_APPLICABLE else "whisperx",
-    ]
-
-    print(f"  -> {song['slug']} / {cfg['config_id']}")
-    if not audio_path.is_file():
-        return _row(
-            run_id, cfg, song, device="", timings={}, effective_engine="", fallback=False,
-            wall_ms=0, exit_code=-1, error=f"audio file not found: {audio_path}",
-            transcript_path="", log_path="", stems_cached_going_in=False,
-        )
-
+def _run_analyze(cmd: list[str], data_dir: Path) -> tuple[str, int, str, int]:
+    """Spawn an analyze.py invocation, stream its output with the idle-timeout
+    / DONE-detection machinery, and return (full_log, exit_code, killed_reason,
+    wall_ms). Shared by run_one() and the separation warm-up path -- both are
+    "run analyze.py, watch stdout, don't hang forever" with the only
+    difference being which CLI args get passed in."""
     started = time.perf_counter()
     proc = subprocess.Popen(
         cmd, cwd=str(REPO_ROOT), env=build_env(data_dir),
@@ -433,7 +382,8 @@ def run_one(
             last_activity = time.perf_counter()
             last_activity_wall = datetime.now().astimezone()
             if (
-                "[nightingale:TIMING]" in line
+                "[nightingale:STARTING]" in line
+                or "[nightingale:TIMING]" in line
                 or "Using device:" in line
                 or "Transcribing:" in line
                 or "falling back" in line.lower()
@@ -461,10 +411,113 @@ def run_one(
     wall_ms = int((time.perf_counter() - started) * 1000)
 
     full_log = "".join(lines)
+    return full_log, exit_code, killed_reason, wall_ms
+
+
+def warm_song(song: dict, data_dir: Path, out_dir: Path) -> None:
+    """Pre-populate this song's stems cache (key detection + separation only,
+    no transcription) so every config's real run in the sweep gets a cache
+    hit on separation, instead of whichever config happens to run first for
+    a song paying the real ~14-90s cost. Not part of the timed sweep -- no
+    CSV row is written."""
+    work_dir = out_dir / "work" / song["slug"]
+    work_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = REPO_ROOT / song["path"]
+    file_hash = song_hash(song["slug"])
+
+    if not audio_path.is_file():
+        print(f"  !! {song['slug']}: audio file not found: {audio_path}")
+        return
+
+    if any(work_dir.glob(f"{file_hash}_vocals_*.mp3")):
+        print(f"  -> {song['slug']}: stems already cached, nothing to warm")
+        return
+
+    print(f"  -> {song['slug']}: warming stems cache...")
+    cmd = [
+        str(python_bin(data_dir)),
+        str(analyze_py_path(data_dir)),
+        str(audio_path),
+        str(work_dir),
+        "--hash", file_hash,
+        "--separator", BASELINE["separator"],
+        "--skip-transcription",
+    ]
+    full_log, exit_code, killed_reason, wall_ms = _run_analyze(cmd, data_dir)
+
+    # --skip-transcription still makes run_pipeline() write a stub
+    # {hash}_transcript.json (key/tempo only, no words -- see pipeline.py's
+    # skip_transcription branch). Left in place, the first *real* config run
+    # for this song would see transcript_exists=True and hit run_pipeline's
+    # "already analyzed, skipping" short-circuit, silently producing no
+    # transcript at all. Delete it now, same as run_one() does after every
+    # real run, so the sweep's own runs start from a clean slate.
+    stub_transcript = work_dir / f"{file_hash}_transcript.json"
+    if stub_transcript.is_file():
+        stub_transcript.unlink()
+
+    if exit_code != 0 or killed_reason:
+        reason = killed_reason or f"exit_code={exit_code}"
+        tail = full_log[-300:].strip()
+        print(f"     !! warm-up failed ({reason}): {tail}")
+    else:
+        print(f"     done in {wall_ms}ms")
+
+
+def run_one(
+    cfg: dict,
+    song: dict,
+    data_dir: Path,
+    out_dir: Path,
+    run_id: str,
+) -> dict:
+    work_dir = out_dir / "work" / song["slug"]
+    work_dir.mkdir(parents=True, exist_ok=True)
+    transcripts_dir = out_dir / "transcripts" / song["slug"]
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = out_dir / "logs" / song["slug"]
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    audio_path = REPO_ROOT / song["path"]
+    file_hash = song_hash(song["slug"])
+    transcript_in_work_dir = work_dir / f"{file_hash}_transcript.json"
+    # Detected *before* running: whether this song's stems were already on
+    # disk going in, so `separation_ms` reflects a cache hit rather than a
+    # fresh separation. Key/tempo aren't known ahead of time (they're
+    # detected inside the pipeline), so glob rather than build the exact
+    # filename -- tempo is always 1.0 and key is deterministic per song, so
+    # this glob is unambiguous in practice (one match once separated).
+    stems_cached_going_in = any(work_dir.glob(f"{file_hash}_vocals_*.mp3"))
+
+    cmd = [
+        str(python_bin(data_dir)),
+        str(analyze_py_path(data_dir)),
+        str(audio_path),
+        str(work_dir),
+        "--hash", file_hash,
+        "--model", cfg["model"] if cfg["model"] != NOT_APPLICABLE else "large-v3",
+        "--beam-size", str(cfg["beam_size"]),
+        "--batch-size", str(cfg["batch_size"]),
+        "--separator", cfg["separator"],
+        "--engine", cfg["engine"],
+        "--align-backend", cfg["align_backend"] if cfg["align_backend"] != NOT_APPLICABLE else "whisperx",
+    ]
+
+    print(f"  -> {song['slug']} / {cfg['config_id']}")
+    if not audio_path.is_file():
+        return _row(
+            run_id, cfg, song, timings={}, effective_engine="", fallback=False,
+            wall_ms=0, exit_code=-1, error=f"audio file not found: {audio_path}",
+            transcript_path="", log_path="", stems_cached_going_in=False,
+        )
+
+    full_log, exit_code, killed_reason, wall_ms = _run_analyze(cmd, data_dir)
+
     log_path = logs_dir / f"{cfg['config_id']}.log"
     log_path.write_text(full_log, encoding="utf-8")
 
     parsed = parse_log(full_log)
+    saw_done = "[nightingale:PROGRESS:100]" in full_log
 
     if killed_reason and saw_done:
         # The pipeline itself completed (we saw DONE and have a full parsed
@@ -498,7 +551,7 @@ def run_one(
 
     return _row(
         run_id, cfg, song,
-        device=parsed["device"], timings=parsed["timings"],
+        timings=parsed["timings"],
         effective_engine=parsed["effective_engine"], fallback=parsed["fallback_detected"],
         wall_ms=wall_ms, exit_code=exit_code, error=error,
         transcript_path=transcript_path, log_path=str(log_path.relative_to(out_dir)),
@@ -506,12 +559,11 @@ def run_one(
     )
 
 
-def _row(run_id, cfg, song, *, device, timings, effective_engine, fallback, wall_ms, exit_code, error, transcript_path, log_path, stems_cached_going_in) -> dict:
+def _row(run_id, cfg, song, *, timings, effective_engine, fallback, wall_ms, exit_code, error, transcript_path, log_path, stems_cached_going_in) -> dict:
     return {
         "run_id": run_id,
         "song_slug": song["slug"],
         "song_note": song["note"],
-        "song_path": song["path"],
         "config_id": cfg["config_id"],
         "requested_engine": cfg["engine"],
         "effective_engine": effective_engine,
@@ -519,11 +571,10 @@ def _row(run_id, cfg, song, *, device, timings, effective_engine, fallback, wall
         "align_backend": cfg["align_backend"],
         "beam_size": cfg["beam_size"],
         "batch_size": cfg["batch_size"],
-        "separator": cfg["separator"],
-        "device": device,
         "key_detect_ms": timings.get("key_detect", ""),
         "separation_ms": timings.get("separation", ""),
         "separation_cached": stems_cached_going_in,
+        "model_load_ms": timings.get("model_load", ""),
         "transcribe_or_align_ms": timings.get("transcribe_or_align", ""),
         "total_wall_ms": wall_ms,
         "fallback_detected": fallback,
@@ -583,6 +634,7 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="Print the planned matrix and exit without running anything")
     parser.add_argument("--force", action="store_true", help="Re-run (song, config) pairs already present in the CSV")
     parser.add_argument("--smoke-test", action="store_true", help="Run exactly one small config on one song, to verify the harness end-to-end before a full sweep")
+    parser.add_argument("--warm-separation", action="store_true", help="Pre-populate the stems cache for the selected songs (key detection + separation only, no transcription, no CSV row) and exit without running the config sweep -- run this once before a fresh sweep so every config's separation_ms reflects a cache hit instead of whichever config happens to run first for a song paying the real cost")
     args = parser.parse_args()
 
     songs = SONGS
@@ -616,6 +668,15 @@ def main() -> None:
 
     out_dir: Path = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.warm_separation:
+        print(f"Data dir:  {args.data_dir}")
+        print(f"Out dir:   {out_dir}")
+        print(f"Warming stems cache for {len(songs)} song(s)...\n")
+        for song in songs:
+            warm_song(song, args.data_dir, out_dir)
+        return
+
     csv_path = args.csv or (out_dir / default_csv_filename())
 
     completed = set() if args.force else load_completed(csv_path)
@@ -637,7 +698,7 @@ def main() -> None:
             return
         append_row(csv_path, row)
         status = "OK" if row["exit_code"] == 0 else f"FAILED ({row['error'][:120]})"
-        print(f"     total={row['total_wall_ms']}ms device={row['device']} effective_engine={row['effective_engine']} {status}\n")
+        print(f"     total={row['total_wall_ms']}ms effective_engine={row['effective_engine']} {status}\n")
 
     print(f"Done. {len(plan)} run(s) written to {csv_path}")
 

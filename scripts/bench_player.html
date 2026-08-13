@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nightingale Transcript Player</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.4;
+  }
+  h1 { font-size: 1.2rem; margin-bottom: 1rem; }
+  .field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .field label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.65; }
+  .controls {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 1rem;
+  }
+  select, input[type=range] { font-size: 0.95rem; padding: 0.3rem; }
+  .note { opacity: 0.6; font-size: 0.85rem; margin-bottom: 0.75rem; }
+  audio { width: 100%; margin-bottom: 0.5rem; }
+  .sources {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+  .source-col { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+  .transcript {
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 8px;
+    padding: 0.75rem;
+    height: 55vh;
+    overflow-y: auto;
+    font-size: 0.9rem;
+  }
+  .segment {
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 0.15rem;
+  }
+  .segment:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+  .segment.active { background: color-mix(in srgb, DodgerBlue 25%, transparent); }
+  .word { cursor: pointer; }
+  .word.active { font-weight: 700; text-decoration: underline; }
+  .empty, .error { opacity: 0.6; font-style: italic; padding: 1rem; }
+  .error { color: #c0392b; }
+  @media (max-width: 900px) {
+    .sources { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Nightingale Transcript Player</h1>
+
+<div class="controls">
+  <div class="field">
+    <label for="songSelect">Song</label>
+    <select id="songSelect"></select>
+  </div>
+</div>
+<div class="note" id="songNote"></div>
+
+<audio id="audio" controls></audio>
+
+<div class="sources" id="sources">
+  <!-- 3 source columns injected by JS -->
+</div>
+
+<script>
+const songSelect = document.getElementById('songSelect');
+const songNote = document.getElementById('songNote');
+const audio = document.getElementById('audio');
+const sourcesEl = document.getElementById('sources');
+
+const NUM_SOURCES = 3;
+let manifest = null;
+
+// One entry per visible column: its own <select>, its own transcript pane,
+// its own segments/active-index, all driven by the single shared <audio>.
+const tracks = Array.from({ length: NUM_SOURCES }, (_, i) => ({ index: i, segments: [], activeIdx: -1 }));
+
+function buildSourceColumns() {
+  sourcesEl.innerHTML = tracks.map(t => `
+    <div class="source-col">
+      <div class="field">
+        <label for="configSelect-${t.index}">Transcription Source ${t.index + 1}</label>
+        <select id="configSelect-${t.index}"></select>
+      </div>
+      <div class="transcript" id="transcript-${t.index}"><div class="empty">Pick a song.</div></div>
+    </div>
+  `).join('');
+  tracks.forEach(t => {
+    t.selectEl = document.getElementById(`configSelect-${t.index}`);
+    t.transcriptEl = document.getElementById(`transcript-${t.index}`);
+    t.selectEl.addEventListener('change', () => loadTrack(t));
+  });
+}
+
+async function loadManifest() {
+  buildSourceColumns();
+  if (location.protocol === 'file:') {
+    showGlobalError(`
+      This page needs to be served over HTTP, not opened directly as a file --
+      browsers block loading local JSON/audio via <code>fetch()</code> from
+      <code>file://</code> pages.<br><br>
+      From the repo root, run:<br>
+      <code>python3 -m http.server 8787</code><br>
+      then open <code>http://localhost:8787/scripts/bench_player.html</code>.
+    `);
+    return;
+  }
+  try {
+    const res = await fetch('/bench_out/player_manifest.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status} -- did you run scripts/bench_build_manifest.py?`);
+    manifest = await res.json();
+  } catch (err) {
+    showGlobalError(`Couldn't load /bench_out/player_manifest.json: ${err.message}`);
+    return;
+  }
+  if (!manifest.songs.length) {
+    showGlobalError('No songs in the manifest yet -- run scripts/bench_build_manifest.py after a bench sweep.');
+    return;
+  }
+  songSelect.innerHTML = manifest.songs
+    .map(s => `<option value="${s.slug}">${s.slug}${s.audio_exists ? '' : '  (audio missing)'}</option>`)
+    .join('');
+  onSongChange();
+}
+
+function showGlobalError(html) {
+  tracks.forEach(t => { t.transcriptEl.innerHTML = `<div class="error">${html}</div>`; });
+}
+
+function currentSong() {
+  return manifest.songs.find(s => s.slug === songSelect.value);
+}
+
+function onSongChange() {
+  const song = currentSong();
+  if (!song) return;
+  songNote.textContent = song.note || '';
+  audio.src = song.audio_exists ? encodeURI(song.audio_url) : '';
+
+  tracks.forEach((t, i) => {
+    t.selectEl.innerHTML = song.configs.map(c => `<option value="${c}">${c}</option>`).join('');
+    // Default each column to a different config where possible, so picking
+    // a song immediately shows 3 distinct sources side by side.
+    if (song.configs[i]) t.selectEl.value = song.configs[i];
+    loadTrack(t);
+  });
+}
+
+async function loadTrack(t) {
+  const song = currentSong();
+  if (!song) return;
+  const config = t.selectEl.value;
+  t.transcriptEl.innerHTML = '<div class="empty">Loading transcript…</div>';
+  try {
+    const res = await fetch(`/bench_out/transcripts/${encodeURIComponent(song.slug)}/${encodeURIComponent(config)}.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    t.segments = data.segments || [];
+    t.activeIdx = -1;
+    renderTrack(t);
+  } catch (err) {
+    t.segments = [];
+    t.transcriptEl.innerHTML = `<div class="error">Couldn't load transcript: ${err.message}</div>`;
+  }
+}
+
+function renderTrack(t) {
+  if (!t.segments.length) {
+    t.transcriptEl.innerHTML = '<div class="empty">No segments in this transcript.</div>';
+    return;
+  }
+  t.transcriptEl.innerHTML = t.segments.map((seg, i) => {
+    const words = seg.words || [];
+    // Degenerate word timing (e.g. qwen with no real alignment) collapses many
+    // words onto the same instant -- word-level highlighting would be
+    // misleading there, so only render word spans when each word has a
+    // genuine (non-zero-duration) span.
+    const hasWordTiming = words.length > 0 && words.every(w => w.end > w.start);
+    const inner = hasWordTiming
+      ? words.map(w => `<span class="word" data-start="${w.start}">${escapeHtml(w.word)}</span>`).join(' ')
+      : escapeHtml(seg.text || '');
+    return `<div class="segment" id="seg-${t.index}-${i}" data-start="${seg.start}">${inner}</div>`;
+  }).join('');
+
+  t.transcriptEl.querySelectorAll('.segment').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const wordEl = e.target.closest('.word');
+      const start = wordEl ? wordEl.dataset.start : el.dataset.start;
+      audio.currentTime = parseFloat(start);
+      audio.play();
+    });
+  });
+}
+
+function onTimeUpdate() {
+  const t_ = audio.currentTime;
+  tracks.forEach(track => updateTrackHighlight(track, t_));
+}
+
+function updateTrackHighlight(t, currentTime) {
+  if (!t.segments.length) return;
+  // Linear scan is fine here -- transcripts top out around a few hundred
+  // segments, and timeupdate fires only a few times a second, times 3 tracks.
+  let idx = t.segments.findIndex(s => currentTime >= s.start && currentTime < s.end);
+  if (idx === -1) {
+    // between/after segments (e.g. instrumental gap): stick with the last
+    // segment whose start has passed, so highlighting doesn't blank out.
+    for (let i = t.segments.length - 1; i >= 0; i--) {
+      if (t.segments[i].start <= currentTime) { idx = i; break; }
+    }
+  }
+  if (idx !== t.activeIdx) {
+    const prev = document.getElementById(`seg-${t.index}-${t.activeIdx}`);
+    if (prev) prev.classList.remove('active');
+    const next = document.getElementById(`seg-${t.index}-${idx}`);
+    if (next) {
+      next.classList.add('active');
+      next.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    t.activeIdx = idx;
+  }
+
+  const activeSegEl = document.getElementById(`seg-${t.index}-${idx}`);
+  if (activeSegEl) {
+    const words = activeSegEl.querySelectorAll('.word');
+    words.forEach(w => w.classList.toggle('active', parseFloat(w.dataset.start) <= currentTime));
+    // Only the last word satisfying start <= currentTime should stay highlighted.
+    const active = activeSegEl.querySelectorAll('.word.active');
+    active.forEach((w, i) => { if (i < active.length - 1) w.classList.remove('active'); });
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+songSelect.addEventListener('change', onSongChange);
+audio.addEventListener('timeupdate', onTimeUpdate);
+
+loadManifest();
+</script>
+</body>
+</html>

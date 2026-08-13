@@ -12,9 +12,10 @@ caller can swap engines without further changes downstream.
 import os
 import subprocess
 import tempfile
+import time
 
 from gpu import gpu_model, hard_free_gpu, log_vram
-from whisper_compat import progress, is_oom
+from whisper_compat import progress, is_oom, timing, starting
 
 PARAKEET_LANGS = {
     "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu",
@@ -156,8 +157,11 @@ def _load_nemo():
 
 def _transcribe_nemo(vocals_path: str, batch_size: int = 8) -> list[dict]:
     with gpu_model("parakeet-nemo") as held:
+        starting("model_load")
+        t0 = time.perf_counter()
         model = _load_nemo()
         held.append(model)
+        timing("model_load", t0)
 
         with tempfile.TemporaryDirectory(prefix="nightingale_parakeet_") as work_dir:
             wav_path = _ensure_wav_16k_mono(vocals_path, work_dir)
@@ -198,8 +202,11 @@ def _load_onnx():
 
 def _transcribe_onnx(vocals_path: str) -> list[dict]:
     with gpu_model("parakeet-onnx") as held:
+        starting("model_load")
+        t0 = time.perf_counter()
         model = _load_onnx()
         held.append(model)
+        timing("model_load", t0)
 
         with tempfile.TemporaryDirectory(prefix="nightingale_parakeet_") as work_dir:
             wav_path = _ensure_wav_16k_mono(vocals_path, work_dir)

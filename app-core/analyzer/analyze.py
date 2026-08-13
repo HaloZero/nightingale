@@ -58,6 +58,9 @@ def main():
                              "detection. Lower keeps more edge audio; default 0.15")
     parser.add_argument("--lyrics", help="Path to pre-fetched lyrics JSON (align-only mode)")
     parser.add_argument("--language", default=None, help="Override automatic language detection")
+    parser.add_argument("--skip-transcription", dest="skip_transcription", action="store_true",
+                        help="Only run key detection and stem separation; skip transcription "
+                             "entirely (e.g. to pre-warm the stems cache for a song)")
     args = parser.parse_args()
 
     audio_path = os.path.abspath(args.audio_path)
@@ -83,6 +86,7 @@ def main():
         engine=args.engine,
         lyrics_path=args.lyrics,
         language_override=args.language,
+        skip_transcription=args.skip_transcription,
     )
 
     progress(100, "DONE")
