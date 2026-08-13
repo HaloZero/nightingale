@@ -707,8 +707,17 @@ pub fn step_install_packages() -> Result<(), String> {
 
     // Apple Silicon only: gives Whisper a real GPU path via Metal instead of the
     // CPU-only fallback WhisperX's CTranslate2 backend is stuck with on `mps`.
+    //
+    // Installed from muaz978/mlx-examples#add-whisper-beam-search (upstream PR
+    // ml-explore/mlx-examples#1429, unmerged as of 2026-08-13) rather than the
+    // PyPI release: plain mlx-whisper raises NotImplementedError for beam_size,
+    // see whisper_mlx.py. Pinned to a commit for reproducibility.
+    let mlx_whisper_git = concat!(
+        "mlx-whisper @ git+https://github.com/muaz978/mlx-examples",
+        "@bfdc543b3a0e85bad226f7fff637617bd0aa3649#subdirectory=whisper",
+    );
     if gpu.device == "mps" {
-        pkg_args.push("mlx-whisper>=0.4.0");
+        pkg_args.push(mlx_whisper_git);
     }
 
     pkg_args.push("--python");
