@@ -137,8 +137,8 @@ BASELINE = {
     "separator": "karaoke",  # UI default; not swept in this pass
 }
 
-MODEL_SIZES = ["large-v3"]
-ALIGN_BACKENDS = ["whisperx", "ctc", "qwen"]
+MODEL_SIZES = ["large-v3", "large_v3_turbo"]
+ALIGN_BACKENDS = ["whisperx", "ctc"]
 ENGINES = ["whisper", "whisper_mlx"]
 
 NOT_APPLICABLE = "na"
