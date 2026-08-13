@@ -61,10 +61,10 @@ def transcribe(
     repo = _repo_for(model_name)
 
     with gpu_model(f"whisper-mlx:{model_name}"):
-        # Vendored mlx_whisper (0.4.3) is patched locally with the
-        # BeamSearchDecoder from ml-explore/mlx-examples#1429 (unmerged as of
-        # 2026-08-13) -- upstream still raises NotImplementedError for
-        # beam_size otherwise. See the patched decoding.py in the vendor venv.
+        # vendor.rs installs mlx-whisper from muaz978/mlx-examples's
+        # add-whisper-beam-search branch (upstream PR ml-explore/mlx-examples#1429,
+        # unmerged as of 2026-08-13), not the PyPI release -- plain mlx-whisper
+        # raises NotImplementedError for beam_size otherwise.
         result = mlx_whisper.transcribe(
             audio,
             path_or_hf_repo=repo,
