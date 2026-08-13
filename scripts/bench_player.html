@@ -31,6 +31,8 @@
     gap: 1rem;
   }
   .source-col { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+  .timing { font-size: 0.8rem; opacity: 0.7; }
+  .timing .ms-unknown { opacity: 0.6; font-style: italic; }
   .transcript {
     border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     border-radius: 8px;
@@ -94,11 +96,13 @@ function buildSourceColumns() {
         <label for="configSelect-${t.index}">Transcription Source ${t.index + 1}</label>
         <select id="configSelect-${t.index}"></select>
       </div>
+      <div class="timing" id="timing-${t.index}"></div>
       <div class="transcript" id="transcript-${t.index}"><div class="empty">Pick a song.</div></div>
     </div>
   `).join('');
   tracks.forEach(t => {
     t.selectEl = document.getElementById(`configSelect-${t.index}`);
+    t.timingEl = document.getElementById(`timing-${t.index}`);
     t.transcriptEl = document.getElementById(`transcript-${t.index}`);
     t.selectEl.addEventListener('change', () => loadTrack(t));
   });
@@ -150,21 +154,36 @@ function onSongChange() {
   audio.src = song.audio_exists ? encodeURI(song.audio_url) : '';
 
   tracks.forEach((t, i) => {
-    t.selectEl.innerHTML = song.configs.map(c => `<option value="${c}">${c}</option>`).join('');
+    t.selectEl.innerHTML = song.configs.map(c => `<option value="${c.id}">${c.id}${formatMs(c.ms) ? ' — ' + formatMs(c.ms) : ''}</option>`).join('');
     // Default each column to a different config where possible, so picking
     // a song immediately shows 3 distinct sources side by side.
-    if (song.configs[i]) t.selectEl.value = song.configs[i];
+    if (song.configs[i]) t.selectEl.value = song.configs[i].id;
     loadTrack(t);
   });
+}
+
+// ms of the "transcribe_or_align" stage -- the fair per-config speed metric
+// (see bench_analyze.py's docstring: unlike total_wall_ms it isn't skewed by
+// stem-separation caching). null when no CSV row recorded a timing for this
+// (song, config) pair yet.
+function formatMs(ms) {
+  if (ms == null) return null;
+  const s = ms / 1000;
+  return s >= 60 ? `${(s / 60).toFixed(1)}m` : `${s.toFixed(1)}s`;
 }
 
 async function loadTrack(t) {
   const song = currentSong();
   if (!song) return;
-  const config = t.selectEl.value;
+  const configId = t.selectEl.value;
+  const configEntry = song.configs.find(c => c.id === configId);
+  const formatted = configEntry ? formatMs(configEntry.ms) : null;
+  t.timingEl.innerHTML = formatted
+    ? `⏱ transcribe/align: <strong>${formatted}</strong>`
+    : `<span class="ms-unknown">⏱ timing unknown</span>`;
   t.transcriptEl.innerHTML = '<div class="empty">Loading transcript…</div>';
   try {
-    const res = await fetch(`/bench_out/transcripts/${encodeURIComponent(song.slug)}/${encodeURIComponent(config)}.json`);
+    const res = await fetch(`/bench_out/transcripts/${encodeURIComponent(song.slug)}/${encodeURIComponent(configId)}.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     t.segments = data.segments || [];
