@@ -365,7 +365,7 @@ def song_hash(slug: str) -> str:
 
 # If the child produces no output at all for this long, something is
 # genuinely wedged mid-run (not just a slow transcribe) -- kill it.
-IDLE_TIMEOUT_S = 60 * 60
+IDLE_TIMEOUT_S = 10 * 60
 # Once we've seen PROGRESS:100 (DONE), the pipeline's own work is done --
 # give the process this long to actually exit before we conclude it's a
 # leftover thread/grandchild holding stdout open and force-kill it. Losing a
