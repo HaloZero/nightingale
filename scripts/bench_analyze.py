@@ -12,19 +12,32 @@ whether the app itself is installed/running there.
 ## Matrix
 
 Engine, Whisper model size, and forced-alignment backend are the three
-factors under test for this pass; beam size (16, the settings UI's max) and
-batch size (8, the default) are held fixed -- see BASELINE below. Parakeet is
-excluded entirely (it kept silently falling back to Whisper internally, even
-on English input, so it wasn't testing what it claimed to). The matrix is
-pruned to skip combinations that are no-ops for a given engine:
+factors under test for the ASR sweep; beam size (16, the settings UI's max)
+and batch size (8, the default) are held fixed -- see BASELINE below.
+Parakeet is excluded entirely (it kept silently falling back to Whisper
+internally, even on English input, so it wasn't testing what it claimed to).
+The matrix is pruned to skip combinations that are no-ops for a given engine:
 
   - Whisper MLX ignores align backend -- it derives word timings via DTW over
     its own cross-attention (see `whisper_mlx.py`) but IS affected by model
-    size -> 3 configs (one per model size).
-  - Whisper is affected by both -> 3 model sizes x 3 align backends = 9
+    size -> one config per MODEL_SIZES entry.
+  - Whisper is affected by both -> len(MODEL_SIZES) x len(ALIGN_BACKENDS)
     configs.
 
-Total: 12 configs x N songs.
+Total ASR configs per song: len(MODEL_SIZES) x len(ALIGN_BACKENDS) + len(MODEL_SIZES).
+
+## Lyrics-alignment configs
+
+Songs with a `.lrc` lyrics file (see the "lyrics" key on SONGS entries) also
+get one `lyrics_align_<backend>` config per ALIGN_BACKENDS entry. These
+bypass ASR entirely: analyze.py's `--lyrics` flag (see
+app-core/analyzer/align.py) forced-aligns the song's own known-correct lyrics
+text to the vocals instead of transcribing, so there's no --model/--engine
+choice to sweep -- just alignment backend. `transcribe_or_align_ms` for these
+rows is real alignment-only wall time and is directly comparable *in kind* to
+the ASR rows (same pipeline stage, same clock) but not in method: the text is
+never wrong (it's exactly the .lrc content), only its timestamps can be. Pass
+`--skip-lyrics-align` to omit them.
 
 ## Stem-separation caching -- read this before comparing `total_wall_ms`
 
@@ -64,9 +77,10 @@ blank as a placeholder.
 
     python3 scripts/bench_analyze.py --list          # show the matrix, don't run
     python3 scripts/bench_analyze.py --smoke-test     # 1 song x 1 small config
-    python3 scripts/bench_analyze.py                  # full sweep: 13 configs x 4 songs
+    python3 scripts/bench_analyze.py                  # full sweep, all songs/configs
     python3 scripts/bench_analyze.py --songs one_week rhythm_emotion
     python3 scripts/bench_analyze.py --engines whisper_mlx
+    python3 scripts/bench_analyze.py --skip-lyrics-align
     python3 scripts/bench_analyze.py --data-dir /path/to/.nightingale
 
 Safe to interrupt (Ctrl-C) and re-run: already-completed (song, config) pairs
@@ -81,6 +95,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import json
 import os
 import queue
 import re
@@ -101,31 +116,39 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # definitive, citable source of lyrics (for WER scoring against a
 # reference transcript).
 
+# "lyrics": a .lrc file next to the audio, used to build lyrics-alignment
+# configs (see build_lyrics_json/build_lyrics_configs below). None where no
+# .lrc exists for that song -- those songs only run the ASR matrix.
 SONGS = [
     {
         "slug": "in_the_end",
         "path": "songs/Linkin Park/Hybrid Theory/In The End.m4a",
         "note": "nu-metal/rock",
+        "lyrics": "songs/Linkin Park/Hybrid Theory/In The End.lrc",
     },
     {
         "slug": "dog_days_are_over",
         "path": "songs/Florence And The Machine/Lungs/Dog Days Are Over.m4a",
         "note": "indie/alt-pop",
+        "lyrics": "songs/Florence And The Machine/Lungs/Dog Days Are Over.lrc",
     },
     {
-        "slug": "whats_my_age_again",
-        "path": "songs/Blink 182/Enema of the State/What's My Age Again.mp3",
+        "slug": "all_the_small_things",
+        "path": "songs/Blink 182/Enema of the State/All The Small Thing.m4a",
         "note": "pop-punk",
+        "lyrics": "songs/Blink 182/Enema of the State/All The Small Thing.lrc",
     },
     {
         "slug": "surrender",
         "path": "songs/Kasey Chambers/Carnival/Surrender.m4a",
         "note": "country/folk",
+        "lyrics": None,
     },
     {
         "slug": "one_week",
         "path": "songs/Barenaked Ladies/All Their Greatest Hits/One Week.m4a",
         "note": "fast, dense lyrics",
+        "lyrics": "songs/Barenaked Ladies/All Their Greatest Hits/One Week.lrc",
     },
 ]
 
@@ -142,6 +165,11 @@ ALIGN_BACKENDS = ["whisperx", "ctc"]
 ENGINES = ["whisper", "whisper_mlx"]
 
 NOT_APPLICABLE = "na"
+
+# Sentinel `engine` value for lyrics-alignment configs: run_one() recognizes
+# it and swaps --engine/--model for --lyrics <path>, since these bypass ASR
+# entirely (see build_lyrics_configs/build_lyrics_json below).
+LYRICS_ENGINE = "lyrics_align"
 
 
 def build_matrix(engines: list[str] | None = None) -> list[dict]:
@@ -166,6 +194,51 @@ def build_matrix(engines: list[str] | None = None) -> list[dict]:
 
 def config_id(cfg: dict) -> str:
     return f"{cfg['engine']}_{cfg['model']}_{cfg['align_backend']}"
+
+
+def build_lyrics_configs() -> list[dict]:
+    """One config per ALIGN_BACKENDS entry (same backends the ASR sweep
+    tests), for songs that have a .lrc source. No --model/--engine choice
+    applies -- there's no ASR decoding, just forced-aligning known-correct
+    lyrics text to the vocals -- so trimming/growing ALIGN_BACKENDS trims/
+    grows this list too, same as it does for the whisper matrix above."""
+    configs = [{"engine": LYRICS_ENGINE, "model": NOT_APPLICABLE, "align_backend": align} for align in ALIGN_BACKENDS]
+    for cfg in configs:
+        cfg.update(BASELINE)
+        cfg["config_id"] = f"lyrics_align_{cfg['align_backend']}"
+    return configs
+
+
+_LRC_TIMESTAMP_RE = re.compile(r"^(\[\d+:\d+(?:\.\d+)?\])+")
+
+
+def build_lyrics_json(song: dict, out_dir: Path) -> Path:
+    """Convert this song's .lrc into the {"lines": [...]} JSON analyze.py's
+    --lyrics flag expects (see align.py's align_lyrics), caching it under
+    <out-dir>/lyrics/<slug>.json. Raises FileNotFoundError if the song has no
+    lyrics source configured or the .lrc is missing on disk -- callers should
+    only reach this for songs already filtered to have one (see
+    songs_with_lyrics in main())."""
+    lrc_rel = song.get("lyrics")
+    if not lrc_rel:
+        raise FileNotFoundError(f"{song['slug']}: no lyrics source configured")
+    lrc_path = REPO_ROOT / lrc_rel
+    if not lrc_path.is_file():
+        raise FileNotFoundError(f"{song['slug']}: lyrics source not found: {lrc_path}")
+
+    out_path = out_dir / "lyrics" / f"{song['slug']}.json"
+    if out_path.is_file():
+        return out_path
+
+    lines = []
+    for raw in lrc_path.read_text(encoding="utf-8").splitlines():
+        text = _LRC_TIMESTAMP_RE.sub("", raw).strip()
+        if text:
+            lines.append(text)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps({"lines": lines}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out_path
 
 
 # ─── Vendor environment (mirrors app-core/src/analyzer.rs::spawn_server) ──
@@ -232,15 +305,26 @@ def check_vendor_ready(data_dir: Path) -> None:
 
 TIMING_RE = re.compile(r"\[nightingale:TIMING\] stage=(\S+) ms=(\d+)")
 ENGINE_USED_RE = re.compile(r"\[nightingale:LOG\] Transcription \((\S+)\):")
+# align.py never logs the "Transcription (engine):" line ENGINE_USED_RE
+# matches -- it logs this instead when run_pipeline took the lyrics-align
+# branch, so lyrics-align rows still get a real effective_engine rather than
+# blank (see requested_engine == LYRICS_ENGINE elsewhere in this file).
+LYRICS_USED_RE = re.compile(r"\[nightingale:LOG\] Using pre-fetched lyrics:")
 FALLBACK_RE = re.compile(r"falling back", re.IGNORECASE)
 
 
 def parse_log(text: str) -> dict:
     timings = {stage: int(ms) for stage, ms in TIMING_RE.findall(text)}
     engine_used_matches = ENGINE_USED_RE.findall(text)
+    if engine_used_matches:
+        effective_engine = engine_used_matches[-1]
+    elif LYRICS_USED_RE.search(text):
+        effective_engine = LYRICS_ENGINE
+    else:
+        effective_engine = ""
     return {
         "timings": timings,
-        "effective_engine": engine_used_matches[-1] if engine_used_matches else "",
+        "effective_engine": effective_engine,
         "fallback_detected": bool(FALLBACK_RE.search(text)),
     }
 
@@ -489,6 +573,26 @@ def run_one(
     # this glob is unambiguous in practice (one match once separated).
     stems_cached_going_in = any(work_dir.glob(f"{file_hash}_vocals_*.mp3"))
 
+    print(f"  -> {song['slug']} / {cfg['config_id']}")
+    if not audio_path.is_file():
+        return _row(
+            run_id, cfg, song, timings={}, effective_engine="", fallback=False,
+            wall_ms=0, exit_code=-1, error=f"audio file not found: {audio_path}",
+            transcript_path="", log_path="", stems_cached_going_in=False,
+        )
+
+    is_lyrics = cfg["engine"] == LYRICS_ENGINE
+    lyrics_json_path = None
+    if is_lyrics:
+        try:
+            lyrics_json_path = build_lyrics_json(song, out_dir)
+        except FileNotFoundError as e:
+            return _row(
+                run_id, cfg, song, timings={}, effective_engine="", fallback=False,
+                wall_ms=0, exit_code=-1, error=str(e),
+                transcript_path="", log_path="", stems_cached_going_in=stems_cached_going_in,
+            )
+
     cmd = [
         str(python_bin(data_dir)),
         str(analyze_py_path(data_dir)),
@@ -499,17 +603,17 @@ def run_one(
         "--beam-size", str(cfg["beam_size"]),
         "--batch-size", str(cfg["batch_size"]),
         "--separator", cfg["separator"],
-        "--engine", cfg["engine"],
         "--align-backend", cfg["align_backend"] if cfg["align_backend"] != NOT_APPLICABLE else "whisperx",
     ]
-
-    print(f"  -> {song['slug']} / {cfg['config_id']}")
-    if not audio_path.is_file():
-        return _row(
-            run_id, cfg, song, timings={}, effective_engine="", fallback=False,
-            wall_ms=0, exit_code=-1, error=f"audio file not found: {audio_path}",
-            transcript_path="", log_path="", stems_cached_going_in=False,
-        )
+    # Lyrics-align configs bypass ASR entirely (--lyrics short-circuits
+    # transcribe_or_align() in pipeline.py before --engine is ever
+    # consulted), so --engine is omitted rather than passed a meaningless
+    # value that might not even be a valid argparse choice (LYRICS_ENGINE
+    # isn't one of analyze.py's --engine choices).
+    if is_lyrics:
+        cmd += ["--lyrics", str(lyrics_json_path)]
+    else:
+        cmd += ["--engine", cfg["engine"]]
 
     full_log, exit_code, killed_reason, wall_ms = _run_analyze(cmd, data_dir)
 
@@ -635,6 +739,7 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="Re-run (song, config) pairs already present in the CSV")
     parser.add_argument("--smoke-test", action="store_true", help="Run exactly one small config on one song, to verify the harness end-to-end before a full sweep")
     parser.add_argument("--warm-separation", action="store_true", help="Pre-populate the stems cache for the selected songs (key detection + separation only, no transcription, no CSV row) and exit without running the config sweep -- run this once before a fresh sweep so every config's separation_ms reflects a cache hit instead of whichever config happens to run first for a song paying the real cost")
+    parser.add_argument("--skip-lyrics-align", action="store_true", help="Don't run lyrics-alignment configs (lyrics_align_<backend>) even for songs that have a .lrc source")
     args = parser.parse_args()
 
     songs = SONGS
@@ -645,6 +750,11 @@ def main() -> None:
             sys.exit(f"Unknown song slug(s): {', '.join(sorted(unknown))}. Known: {', '.join(s['slug'] for s in SONGS)}")
 
     configs = build_matrix(args.engines)
+    lyrics_configs = [] if args.skip_lyrics_align else build_lyrics_configs()
+    songs_with_lyrics = [
+        s for s in songs
+        if lyrics_configs and s.get("lyrics") and (REPO_ROOT / s["lyrics"]).is_file()
+    ]
 
     if args.smoke_test:
         # Smallest real matrix entry: cheapest model size, default (fastest)
@@ -653,15 +763,25 @@ def main() -> None:
         # counts as real sweep data -- nothing is wasted.
         configs = [c for c in configs if c["config_id"] == "whisper_medium_whisperx"] or configs[:1]
         songs = songs[:1]
+        songs_with_lyrics = [s for s in songs_with_lyrics if s in songs]
 
     if args.list:
-        print(f"{len(songs)} song(s) x {len(configs)} config(s) = {len(songs) * len(configs)} runs\n")
+        asr_runs = len(songs) * len(configs)
+        lyrics_runs = len(songs_with_lyrics) * len(lyrics_configs)
+        print(f"{len(songs)} song(s) x {len(configs)} ASR config(s) = {asr_runs} runs, "
+              f"plus {len(songs_with_lyrics)} song(s) with lyrics x {len(lyrics_configs)} lyrics-align config(s) "
+              f"= {lyrics_runs} runs (total {asr_runs + lyrics_runs})\n")
         print("Songs:")
         for s in songs:
-            print(f"  {s['slug']:28s} {s['note']}")
-        print("\nConfigs:")
+            lyrics_flag = " [+lyrics]" if s in songs_with_lyrics else ""
+            print(f"  {s['slug']:28s} {s['note']}{lyrics_flag}")
+        print("\nASR configs:")
         for c in configs:
             print(f"  {c['config_id']:32s} engine={c['engine']:12s} model={c['model']:14s} align={c['align_backend']}")
+        if lyrics_configs:
+            print("\nLyrics-align configs (only for songs marked [+lyrics] above):")
+            for c in lyrics_configs:
+                print(f"  {c['config_id']:32s} engine={c['engine']:12s} align={c['align_backend']}")
         return
 
     check_vendor_ready(args.data_dir)
@@ -683,7 +803,12 @@ def main() -> None:
     run_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     plan = [(s, c) for s in songs for c in configs if (s["slug"], c["config_id"]) not in completed]
-    skipped = len(songs) * len(configs) - len(plan)
+    plan += [
+        (s, c) for s in songs_with_lyrics for c in lyrics_configs
+        if (s["slug"], c["config_id"]) not in completed
+    ]
+    total_possible = len(songs) * len(configs) + len(songs_with_lyrics) * len(lyrics_configs)
+    skipped = total_possible - len(plan)
     print(f"Data dir:  {args.data_dir}")
     print(f"Out dir:   {out_dir}")
     print(f"CSV:       {csv_path}")
