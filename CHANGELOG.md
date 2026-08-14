@@ -13,6 +13,8 @@ below.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-14
+
 ### Features
 
 - Leaderboards — open a global top-10 ranking across every profile and song from the profile menu, or open a song-specific leaderboard to compare each profile's personal best. Scored songs expose the per-song board directly from their details panel.
