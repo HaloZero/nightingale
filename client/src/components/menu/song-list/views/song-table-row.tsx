@@ -3,8 +3,12 @@ import { memo, type KeyboardEvent } from "react";
 import { SONG_COLUMNS } from "../song-columns";
 import type { SongItemProps } from "../types";
 
+interface SongTableRowProps extends SongItemProps {
+  bestScore?: number;
+}
+
 export const SongTableRow = memo(
-  ({ song, queueStatus, index, isFocused, isSelected, onSelect }: SongItemProps) => {
+  ({ song, queueStatus, index, isFocused, isSelected, onSelect, bestScore }: SongTableRowProps) => {
     const onKeyDown = (event: KeyboardEvent<HTMLTableRowElement>) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
@@ -25,7 +29,7 @@ export const SongTableRow = memo(
       >
         {SONG_COLUMNS.map((column) => (
           <td key={column.id} className={column.tdClassName}>
-            {column.cell(song, queueStatus)}
+            {column.cell(song, queueStatus, bestScore)}
           </td>
         ))}
       </tr>

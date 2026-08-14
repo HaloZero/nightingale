@@ -228,7 +228,13 @@ pub fn build_song(path: &Path, cache: &CacheDir, is_video: bool) -> Result<Song,
     let is_analyzed = cache.transcript_exists(&file_hash);
     let (transcript_source, language, key, tempo, no_stems) = if is_analyzed {
         let meta = read_transcript_meta(cache, &file_hash);
-        (Some(meta.source), meta.language, meta.key, meta.tempo, meta.no_stems)
+        (
+            Some(meta.source),
+            meta.language,
+            meta.key,
+            meta.tempo,
+            meta.no_stems,
+        )
     } else {
         (None, None, None, default_tempo(), false)
     };

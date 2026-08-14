@@ -2,6 +2,8 @@ import { Separator } from "@/components/ui/separator";
 import { useAnalysis } from "@/hooks/use-analysis";
 import { useDialog } from "@/hooks/use-dialog";
 import type { Song } from "@/types/Song";
+import { useProfiles } from "@/queries/use-profiles";
+import { TrophyIcon } from "lucide-react";
 import { Fragment } from "react";
 import { toast } from "sonner";
 import type { SongStatusInfo } from "../shared/song-status";
@@ -23,6 +25,8 @@ export const ActionsSection = ({
 }: ActionsSectionProps) => {
   const { setMode } = useDialog();
   const analysis = useAnalysis();
+  const { data: profiles } = useProfiles();
+  const hasScores = profiles?.scores.some((score) => score.song_hash === song.file_hash) ?? false;
 
   const run = (message: string, action: () => void | Promise<void>) => async () => {
     await action();
@@ -39,6 +43,17 @@ export const ActionsSection = ({
     onChangeLanguage: () => setMode({ mode: "language", song }),
     run,
   });
+
+  if (hasScores) {
+    groups.unshift([
+      {
+        icon: TrophyIcon,
+        title: "Leaderboard",
+        description: "View the best score from each profile.",
+        onClick: () => setMode({ mode: "song-leaderboard", song }),
+      },
+    ]);
+  }
 
   return (
     <section className="px-2 py-4" aria-labelledby="song-actions-heading">

@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { halfStarUnits } from "@/utils/playback/result";
 import { StarHalfIcon, StarIcon } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type Size = "sm" | "lg";
 
@@ -23,14 +24,25 @@ export const Stars = ({ score, size = "lg", className }: Props) => {
   const ic = sizeClass[size];
 
   return (
-    <div className={cn("flex flex-row items-center gap-1", className)} aria-hidden>
-      {Array.from({ length: filled }, (_, i) => (
-        <StarIcon key={`f-${i}`} className={cn(ic, "fill-primary text-primary")} />
-      ))}
-      {hasHalf ? <StarHalfIcon className={cn(ic, "fill-primary text-primary")} /> : null}
-      {Array.from({ length: empty }, (_, i) => (
-        <StarIcon key={`e-${i}`} className={cn(ic, "text-muted-foreground/25")} />
-      ))}
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className={cn("flex w-fit flex-row items-center gap-1", className)}
+          role="img"
+          aria-label={`Score ${score}`}
+        >
+          {Array.from({ length: filled }, (_, i) => (
+            <StarIcon key={`f-${i}`} className={cn(ic, "fill-primary text-primary")} />
+          ))}
+          {hasHalf ? <StarHalfIcon className={cn(ic, "fill-primary text-primary")} /> : null}
+          {Array.from({ length: empty }, (_, i) => (
+            <StarIcon key={`e-${i}`} className={cn(ic, "text-muted-foreground/25")} />
+          ))}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={4}>
+        Score: {score}
+      </TooltipContent>
+    </Tooltip>
   );
 };

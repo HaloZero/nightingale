@@ -16,8 +16,8 @@ export function topScoresForSong(
       continue;
     }
 
-    const prev = best.get(r.profile) ?? 0;
-    if (r.score > prev) {
+    const prev = best.get(r.profile);
+    if (prev === undefined || r.score > prev) {
       best.set(r.profile, r.score);
     }
   }

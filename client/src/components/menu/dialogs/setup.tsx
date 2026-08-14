@@ -186,10 +186,10 @@ interface ErrorStepProps {
 
 const ErrorStep = ({ error }: ErrorStepProps) => (
   <>
-    <AlertDialogHeader>
+    <AlertDialogHeader className="min-w-0 w-full">
       <AlertDialogTitle>Something went wrong</AlertDialogTitle>
-      <AlertDialogDescription>
-        <code>{error}</code>
+      <AlertDialogDescription className="max-h-[50svh] min-w-0 w-full overflow-y-auto text-left">
+        <code className="block whitespace-pre-wrap [overflow-wrap:anywhere]">{error}</code>
       </AlertDialogDescription>
     </AlertDialogHeader>
     {EXIT_SUPPORTED && (
@@ -438,7 +438,11 @@ export const Setup = () => {
 
   return (
     <AlertDialog open={shouldRunSetup}>
-      <AlertDialogContent data-nav-passthrough onEscapeKeyDown={(e) => e.preventDefault()}>
+      <AlertDialogContent
+        data-nav-passthrough
+        className="max-h-[calc(100svh-2rem)] overflow-y-auto"
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         <img src={logoSrc} width={80} height={80} />
         <Step />
       </AlertDialogContent>

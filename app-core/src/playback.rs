@@ -622,7 +622,14 @@ pub fn shift_key(
     }
     if song.no_stems {
         let target_tempo = normalize_tempo(song.tempo);
-        return no_stems_shift(&cache, file_hash, song, target_key, key_offset, target_tempo);
+        return no_stems_shift(
+            &cache,
+            file_hash,
+            song,
+            target_key,
+            key_offset,
+            target_tempo,
+        );
     }
     let target_tempo = normalize_tempo(song.tempo);
     if is_base_original_selection(&song, &target_key, target_tempo) {
@@ -718,10 +725,21 @@ pub fn shift_tempo(file_hash: &str, tempo: f64) -> Result<ShiftResult, Nightinga
     let cache = CacheDir::new();
     if song.no_stems {
         let key_offset = song.key_offset;
-        let key = song.override_key.clone().or(song.key.clone()).ok_or_else(|| {
-            NightingaleError::Other("Key detection still in progress; try again shortly".into())
-        })?;
-        return no_stems_shift(&cache, file_hash, song, key, key_offset, normalize_tempo(tempo));
+        let key = song
+            .override_key
+            .clone()
+            .or(song.key.clone())
+            .ok_or_else(|| {
+                NightingaleError::Other("Key detection still in progress; try again shortly".into())
+            })?;
+        return no_stems_shift(
+            &cache,
+            file_hash,
+            song,
+            key,
+            key_offset,
+            normalize_tempo(tempo),
+        );
     }
     let key = song
         .override_key
