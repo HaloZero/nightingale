@@ -411,6 +411,30 @@ export const SettingsPage = () => {
                   onChange={(batch_size) => mutate({ batch_size })}
                 />
               </Field>
+
+              <Field>
+                <Label>Use external lyrics</Label>
+                <Hint>
+                  When a song has a .lrc file or embedded lyrics tag (.lrc preferred), align that
+                  text to the vocals instead of transcribing it
+                </Hint>
+                <ButtonGroup>
+                  <Button
+                    variant={config?.use_external_lyrics === true ? "outline" : "default"}
+                    onClick={() => mutate({ use_external_lyrics: false })}
+                    className={getFocusClassName(analysisNav.useExternalLyrics, 0)}
+                  >
+                    Off
+                  </Button>
+                  <Button
+                    variant={config?.use_external_lyrics === true ? "default" : "outline"}
+                    onClick={() => mutate({ use_external_lyrics: true })}
+                    className={getFocusClassName(analysisNav.useExternalLyrics, 1)}
+                  >
+                    On
+                  </Button>
+                </ButtonGroup>
+              </Field>
             </FieldGroup>
           </TabsContent>
         </Tabs>

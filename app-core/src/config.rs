@@ -201,6 +201,15 @@ pub struct AppConfig {
     pub asr_engine: Option<String>,
     pub align_backend: Option<String>,
     pub vocal_detection_threshold_pct: Option<f64>,
+    /// Whether analysis prefers a song's local lyrics source (a `.lrc`
+    /// sidecar, else an embedded tag -- see `Song::has_external_lyrics`)
+    /// over ASR transcription when one is available: forced-align that text
+    /// to the separated vocals instead of transcribing. Off by default --
+    /// this silently changes what analysis output a song gets, so it's
+    /// opt-in rather than a surprise for existing installs. When off,
+    /// analysis behaves exactly as before this setting existed (LRCLIB
+    /// lookup, then ASR).
+    pub use_external_lyrics: Option<bool>,
     pub auto_analyze: Option<bool>,
     pub track_analysis_timings: Option<bool>,
     /// Whether a library scan/rescan re-checks `has_lrc_file`/
@@ -244,6 +253,7 @@ impl Default for AppConfig {
             asr_engine: None,
             align_backend: None,
             vocal_detection_threshold_pct: None,
+            use_external_lyrics: None,
             auto_analyze: None,
             track_analysis_timings: None,
             refresh_lyrics_on_scan: None,
@@ -400,6 +410,10 @@ impl AppConfig {
         self.vocal_detection_threshold_pct
             .unwrap_or(0.15)
             .clamp(0.0, 1.0)
+    }
+
+    pub fn use_external_lyrics(&self) -> bool {
+        self.use_external_lyrics.unwrap_or(false)
     }
 
     pub fn auto_analyze(&self) -> bool {

@@ -90,6 +90,7 @@ export const DEFAULTS = {
   batch_size: 8,
   mic_monitor_gain: 0.65,
   mic_latency_compensation_sec: DEFAULT_MIC_LATENCY_COMPENSATION_SEC,
+  use_external_lyrics: false,
   auto_analyze: false,
   track_analysis_timings: true,
   lyrics_vertical_position: "bottom",
@@ -105,6 +106,7 @@ export const DEFAULTS = {
   | "batch_size"
   | "mic_monitor_gain"
   | "mic_latency_compensation_sec"
+  | "use_external_lyrics"
   | "auto_analyze"
   | "track_analysis_timings"
   | "lyrics_vertical_position"
@@ -150,6 +152,7 @@ export function getAnalysisNav(isParakeet: boolean) {
         trackTimings: 5,
         vocalThreshold: 6,
         batchSize: 7,
+        useExternalLyrics: 8,
       }
     : {
         separator: 1,
@@ -161,6 +164,7 @@ export function getAnalysisNav(isParakeet: boolean) {
         trackTimings: 7,
         vocalThreshold: 8,
         batchSize: 9,
+        useExternalLyrics: 10,
       };
 }
 
@@ -169,7 +173,11 @@ export function getSettingsStops(tab: SettingsTab, isParakeet: boolean) {
     return [2, 2, 1, 1, 2, 1, 1, 2];
   }
 
+  // Trailing "2" is useExternalLyrics's own toggle -- appended after every
+  // existing field rather than inserted mid-sequence, so none of the
+  // indices above have to shift. footerSegment (Restore Defaults / Close)
+  // is derived as `stops.length - 1`, so it stays correct automatically.
   return isParakeet
-    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2]
-    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2];
+    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2]
+    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2];
 }

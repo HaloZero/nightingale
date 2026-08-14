@@ -679,13 +679,17 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
     let config = AppConfig::load();
     let skip_lrclib = stems_only || FORCE_TRANSCRIBE.lock().unwrap().remove(file_hash);
     // Local lyrics (a `.lrc` sidecar or a tag embedded in the file itself)
-    // take priority over the LRCLIB network lookup: whichever is found first
-    // is the one that lands in the shared lyrics cache, and the other check
-    // just sees it already there (see local_lyrics_path's doc comment).
+    // take priority over the LRCLIB network lookup when the user has opted
+    // in via `use_external_lyrics`: whichever is found first is the one
+    // that lands in the shared lyrics cache, and the other check just sees
+    // it already there (see local_lyrics_path's doc comment). Off, analysis
+    // behaves exactly as before this setting existed -- LRCLIB, then ASR.
     let lyrics_path = if skip_lrclib {
         None
-    } else {
+    } else if config.use_external_lyrics() {
         local_lyrics_path(&song, cache).or_else(|| fetch_lrclib_lyrics(&song, cache))
+    } else {
+        fetch_lrclib_lyrics(&song, cache)
     };
 
     let mut cmd_json = serde_json::json!({

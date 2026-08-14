@@ -35,6 +35,17 @@ export type AppConfig = {
   asr_engine: string | null;
   align_backend: string | null;
   vocal_detection_threshold_pct: number | null;
+  /**
+   * Whether analysis prefers a song's local lyrics source (a `.lrc`
+   * sidecar, else an embedded tag -- see `Song::has_external_lyrics`)
+   * over ASR transcription when one is available: forced-align that text
+   * to the separated vocals instead of transcribing. Off by default --
+   * this silently changes what analysis output a song gets, so it's
+   * opt-in rather than a surprise for existing installs. When off,
+   * analysis behaves exactly as before this setting existed (LRCLIB
+   * lookup, then ASR).
+   */
+  use_external_lyrics: boolean | null;
   auto_analyze: boolean | null;
   track_analysis_timings: boolean | null;
   /**
