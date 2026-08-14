@@ -89,6 +89,64 @@ fn last_device() -> Option<String> {
     LAST_DEVICE.lock().unwrap().clone()
 }
 
+/// 1-minute system load average via `sysctl vm.loadavg` (e.g. `{ 7.71 5.24
+/// 4.50 }`) -- a no-`sudo` proxy for other processes (Plex transcodes,
+/// downloads, ...) competing for CPU/GPU when an analysis run starts.
+fn load_avg_1m() -> Option<f64> {
+    let output = Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .find_map(|tok| tok.parse::<f64>().ok())
+}
+
+/// One system sample (GPU utilization/clock/temp, CPU utilization, memory
+/// pressure) via `macmon pipe -s 1` (https://github.com/vladkens/macmon).
+/// Unlike `powermetrics`, it needs no `sudo`, so it's safe to shell out to
+/// on every analysis run. Every field is `None` -- not an error -- if
+/// `macmon` isn't installed, isn't on `PATH`, or its output doesn't parse as
+/// expected; this is a best-effort diagnostic and must never block or fail
+/// an analysis run.
+struct MacmonSnapshot {
+    gpu_active_ratio: Option<f64>,
+    gpu_freq_mhz: Option<i64>,
+    gpu_temp_c: Option<f64>,
+    cpu_active_ratio: Option<f64>,
+    /// Fraction of physical RAM in use (`memory.ram_usage / ram_total`), as
+    /// a proxy for memory pressure -- macmon doesn't surface macOS's actual
+    /// Normal/Warn/Critical pressure level, only raw usage.
+    mem_pressure_ratio: Option<f64>,
+}
+
+fn macmon_snapshot() -> Option<MacmonSnapshot> {
+    let output = Command::new("macmon")
+        .args(["pipe", "-s", "1", "-i", "200"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let mem = json.get("memory");
+    let ram_usage = mem.and_then(|m| m.get("ram_usage")).and_then(|v| v.as_f64());
+    let ram_total = mem.and_then(|m| m.get("ram_total")).and_then(|v| v.as_f64());
+    Some(MacmonSnapshot {
+        gpu_active_ratio: json.get("gpu_active_ratio").and_then(|v| v.as_f64()),
+        gpu_freq_mhz: json.get("gpu_freq_mhz").and_then(|v| v.as_i64()),
+        gpu_temp_c: json
+            .get("temp")
+            .and_then(|t| t.get("gpu_temp_avg"))
+            .and_then(|v| v.as_f64()),
+        cpu_active_ratio: json.get("cpu_active_ratio").and_then(|v| v.as_f64()),
+        mem_pressure_ratio: match (ram_usage, ram_total) {
+            (Some(used), Some(total)) if total > 0.0 => Some(used / total),
+            _ => None,
+        },
+    })
+}
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct ServerProcess {
@@ -822,12 +880,21 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
 
         let server = guard.as_mut().unwrap();
         let attempt_start = Instant::now();
+        let load_avg_1m_at_start = load_avg_1m();
+        let macmon_at_start = macmon_snapshot();
         match send_and_monitor(server, &json_str, Some(file_hash)) {
             Ok(SongResult::Done(stage_timings)) => {
                 let total_ms = attempt_start.elapsed().as_millis() as u64;
                 info!("[analyzer:timing] hash={file_hash} stage=total ms={total_ms}");
                 if config.track_analysis_timings() {
-                    record_analysis_timing(file_hash, &config, &stage_timings, total_ms);
+                    record_analysis_timing(
+                        file_hash,
+                        &config,
+                        &stage_timings,
+                        load_avg_1m_at_start,
+                        macmon_at_start,
+                        total_ms,
+                    );
                 }
                 finalize_song(file_hash, cache);
                 return;
@@ -1103,6 +1170,8 @@ fn record_analysis_timing(
     file_hash: &str,
     config: &AppConfig,
     stage_timings: &[(String, u64)],
+    load_avg_1m_at_start: Option<f64>,
+    macmon_at_start: Option<MacmonSnapshot>,
     total_ms: u64,
 ) {
     let stage_ms = |name: &str| -> Option<u64> {
@@ -1124,7 +1193,14 @@ fn record_analysis_timing(
         vocal_detection_threshold_pct: config.vocal_detection_threshold_pct(),
         key_detect_ms: stage_ms("key_detect"),
         separation_ms: stage_ms("separation"),
-        transcribe_or_align_ms: stage_ms("transcribe_or_align"),
+        transcribe_ms: stage_ms("transcribe"),
+        align_ms: stage_ms("align"),
+        load_avg_1m: load_avg_1m_at_start,
+        gpu_active_ratio: macmon_at_start.as_ref().and_then(|m| m.gpu_active_ratio),
+        gpu_freq_mhz: macmon_at_start.as_ref().and_then(|m| m.gpu_freq_mhz),
+        gpu_temp_c: macmon_at_start.as_ref().and_then(|m| m.gpu_temp_c),
+        cpu_active_ratio: macmon_at_start.as_ref().and_then(|m| m.cpu_active_ratio),
+        mem_pressure_ratio: macmon_at_start.as_ref().and_then(|m| m.mem_pressure_ratio),
         total_ms,
     };
     if let Err(e) = library_db::insert_analysis_timing(&row) {

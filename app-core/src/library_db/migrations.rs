@@ -59,6 +59,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     // must run before the version early-return, since every DB already at
     // SCHEMA_VERSION would otherwise never reach it.
     ensure_lyrics_columns(conn)?;
+    ensure_analysis_timings_columns(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -150,6 +151,14 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
                 key_detect_ms INTEGER,
                 separation_ms INTEGER,
                 transcribe_or_align_ms INTEGER,
+                transcribe_ms INTEGER,
+                align_ms INTEGER,
+                load_avg_1m REAL,
+                gpu_active_ratio REAL,
+                gpu_freq_mhz INTEGER,
+                gpu_temp_c REAL,
+                cpu_active_ratio REAL,
+                mem_pressure_ratio REAL,
                 total_ms INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_analysis_timings_file_hash
@@ -194,6 +203,88 @@ fn ensure_lyrics_columns(conn: &Connection) -> rusqlite::Result<()> {
     if !existing.contains("has_embedded_lyrics") {
         conn.execute(
             "ALTER TABLE songs ADD COLUMN has_embedded_lyrics INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+/// Splits the old combined `transcribe_or_align_ms` timing into separate
+/// `transcribe_ms` / `align_ms` columns, so a row's stage timings alone show
+/// whether that run transcribed from scratch or aligned to known lyrics
+/// (exactly one of the two is populated; both are null for stems-only runs
+/// that skip transcription entirely). The old column is left in place --
+/// rather than migrated into the new ones, since a past combined duration
+/// can't be split after the fact -- so pre-migration rows keep their
+/// original value there and read as null in both new columns. Also adds
+/// `load_avg_1m` (a cheap same-machine signal, no `sudo` required unlike
+/// thermal pressure, for whether other processes were competing for
+/// CPU/GPU when a run started) and `gpu_active_ratio` / `gpu_freq_mhz` /
+/// `gpu_temp_c` / `cpu_active_ratio` / `mem_pressure_ratio` (all sampled via
+/// the sudo-free `macmon` CLI if installed, to confirm separation actually
+/// lands on the GPU, isn't thermal-throttled, and isn't contending with
+/// other processes for CPU or memory).
+fn ensure_analysis_timings_columns(conn: &Connection) -> rusqlite::Result<()> {
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'analysis_timings'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !table_exists {
+        return Ok(());
+    }
+
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('analysis_timings')")?;
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?
+    };
+
+    if !existing.contains("transcribe_ms") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN transcribe_ms INTEGER",
+            [],
+        )?;
+    }
+    if !existing.contains("align_ms") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN align_ms INTEGER",
+            [],
+        )?;
+    }
+    if !existing.contains("load_avg_1m") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN load_avg_1m REAL",
+            [],
+        )?;
+    }
+    if !existing.contains("gpu_active_ratio") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN gpu_active_ratio REAL",
+            [],
+        )?;
+    }
+    if !existing.contains("gpu_freq_mhz") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN gpu_freq_mhz INTEGER",
+            [],
+        )?;
+    }
+    if !existing.contains("gpu_temp_c") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN gpu_temp_c REAL",
+            [],
+        )?;
+    }
+    if !existing.contains("cpu_active_ratio") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN cpu_active_ratio REAL",
+            [],
+        )?;
+    }
+    if !existing.contains("mem_pressure_ratio") {
+        conn.execute(
+            "ALTER TABLE analysis_timings ADD COLUMN mem_pressure_ratio REAL",
             [],
         )?;
     }

@@ -206,7 +206,11 @@ def run_pipeline(
         if callable(whisper_model):
             whisper_model = whisper_model()
 
-        starting("transcribe_or_align")
+        # Distinct stage names so analysis_timings can tell forced alignment
+        # against known lyrics (fast) apart from full ASR transcription
+        # (slow) instead of lumping both under one combined duration.
+        stage_name = "align" if lyrics_path and os.path.isfile(lyrics_path) else "transcribe"
+        starting(stage_name)
         t0 = time.perf_counter()
         transcript = transcribe_or_align(
             vocals_path, audio_path, device,
@@ -219,8 +223,8 @@ def run_pipeline(
             whisper_model=whisper_model,
             pre_align_cleanup=pre_align_cleanup,
         )
-        timing("transcribe_or_align", t0)
-        log_vram("phase:after_transcribe_or_align")
+        timing(stage_name, t0)
+        log_vram(f"phase:after_{stage_name}")
 
         transcript["key"] = detected_key
         transcript["tempo"] = normalize_tempo(tempo)

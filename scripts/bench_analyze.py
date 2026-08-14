@@ -684,7 +684,11 @@ def _row(run_id, cfg, song, *, timings, effective_engine, fallback, wall_ms, exi
         "separation_ms": timings.get("separation", ""),
         "separation_cached": stems_cached_going_in,
         "model_load_ms": timings.get("model_load", ""),
-        "transcribe_or_align_ms": timings.get("transcribe_or_align", ""),
+        # pipeline.py now reports this stage as "transcribe" or "align"
+        # (whichever ran) instead of a combined "transcribe_or_align" --
+        # exactly one is present per run, so this stays the fair per-config
+        # comparison metric described in the module docstring above.
+        "transcribe_or_align_ms": timings.get("transcribe", timings.get("align", "")),
         "total_wall_ms": wall_ms,
         "fallback_detected": fallback,
         "exit_code": exit_code,
