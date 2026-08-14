@@ -13,6 +13,10 @@ below.
 
 ## [Unreleased]
 
+### Improvements
+
+- Change "AI generated" to "AI transcribed" in song list.
+
 ## [1.1.0] - 2026-08-14
 
 ### Features

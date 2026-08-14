@@ -14,7 +14,7 @@ export function formatTranscriptSource(source: Song["transcript_source"]): strin
   if (source === "Lyrics") return "AI aligned";
   if (source === "Usdx") return "USDX";
   if (source === "Lrc") return "LRC";
-  return "AI generated";
+  return "AI transcribed";
 }
 
 export function getSongStatusInfo(isAnalyzed: boolean, queueStatus?: QueuedStatus): SongStatusInfo {
