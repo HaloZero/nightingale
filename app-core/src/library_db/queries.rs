@@ -174,6 +174,9 @@ fn append_structural_filters(
             ),
             "videos" => where_parts.push("s.is_video = 1".to_string()),
             "usdx" => where_parts.push("s.transcript_source = 'usdx'".to_string()),
+            "has_external_lyrics" => {
+                where_parts.push("(s.has_lrc_file = 1 OR s.has_embedded_lyrics = 1)".to_string())
+            }
             _ => {}
         }
     }
@@ -368,7 +371,11 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             usdx_analysed,
             usdx_queued,
             usdx_analysing,
-        ): (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = c
+            external_lyrics_total,
+            external_lyrics_analysed,
+            external_lyrics_queued,
+            external_lyrics_analysing,
+        ): (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = c
             .query_row(
                 "SELECT
                     (SELECT COUNT(*) FROM songs),
@@ -382,7 +389,11 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
                     (SELECT COUNT(*) FROM songs WHERE transcript_source = 'usdx'),
                     (SELECT COUNT(*) FROM songs WHERE transcript_source = 'usdx' AND is_analyzed = 1),
                     (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE s.transcript_source = 'usdx' AND aq.status = 'queued'),
-                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE s.transcript_source = 'usdx' AND aq.status = 'analyzing')",
+                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE s.transcript_source = 'usdx' AND aq.status = 'analyzing'),
+                    (SELECT COUNT(*) FROM songs WHERE has_lrc_file = 1 OR has_embedded_lyrics = 1),
+                    (SELECT COUNT(*) FROM songs WHERE (has_lrc_file = 1 OR has_embedded_lyrics = 1) AND is_analyzed = 1),
+                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE (s.has_lrc_file = 1 OR s.has_embedded_lyrics = 1) AND aq.status = 'queued'),
+                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE (s.has_lrc_file = 1 OR s.has_embedded_lyrics = 1) AND aq.status = 'analyzing')",
                 [],
                 |r| {
                     Ok((
@@ -398,6 +409,10 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
                         r.get(9)?,
                         r.get(10)?,
                         r.get(11)?,
+                        r.get(12)?,
+                        r.get(13)?,
+                        r.get(14)?,
+                        r.get(15)?,
                     ))
                 },
             )?;
@@ -442,6 +457,14 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
                 queued_count: usdx_queued as u64,
                 analysing_count: usdx_analysing as u64,
                 count: usdx_total as u64,
+            },
+            LibraryMenuItem {
+                value: "has_external_lyrics".into(),
+                label: "External Lyrics".into(),
+                analysed_count: external_lyrics_analysed as u64,
+                queued_count: external_lyrics_queued as u64,
+                analysing_count: external_lyrics_analysing as u64,
+                count: external_lyrics_total as u64,
             },
         ];
 
