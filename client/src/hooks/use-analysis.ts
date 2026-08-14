@@ -6,10 +6,15 @@ import {
   enqueueAll,
   enqueueOne,
   realign,
+  realignAll,
+  reanalyzeAllForceTranscribe,
+  reanalyzeAllFull,
+  reanalyzeAllTranscript,
   reanalyzeForceTranscribe,
   reanalyzeFull,
   reanalyzeTranscript,
 } from "@/bridge/analysis";
+import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 import type { Song } from "@/types/Song";
 import type { SongsStore } from "@/types/SongsStore";
 import { type InfiniteData, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +39,16 @@ export const useAnalysis = () => {
   const { search } = useSearch();
 
   return useMemo(() => {
+    const currentFilters = (): LibraryMenuFilters => ({
+      artist,
+      album,
+      playlist,
+      query,
+      status,
+      transcript_source,
+      search: search || null,
+    });
+
     const invalidateQueue = () => {
       queryClient.invalidateQueries({ queryKey: ANALYSIS_QUEUE });
     };
@@ -74,21 +89,35 @@ export const useAnalysis = () => {
         }
       };
 
+    // Same as `wrap`, but for the bulk actions: they resolve with how many
+    // eligible songs got queued (ineligible ones -- not yet analyzed, USDX,
+    // etc. depending on the action -- are excluded server-side, never
+    // counted at all), so report that instead of a generic success.
+    const wrapBulk =
+      <A extends unknown[]>(
+        label: string,
+        handler: (...args: A) => Promise<number>,
+        invalidate: () => void,
+      ) =>
+      async (...args: A) => {
+        try {
+          const count = await handler(...args);
+          invalidate();
+          if (count > 0) {
+            toast.success(`Queued ${count} song${count === 1 ? "" : "s"} for ${label}`);
+          } else {
+            toast.info(`No eligible songs for ${label} in the current filter`);
+          }
+        } catch (error: unknown) {
+          toast.error(
+            `Error while running a bulk analysis action: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
+        }
+      };
+
     return {
       enqueueOne: wrap(enqueueOne, invalidateQueue),
-      enqueueAll: wrap(
-        () =>
-          enqueueAll({
-            artist,
-            album,
-            playlist,
-            query,
-            status,
-            transcript_source,
-            search: search || null,
-          }),
-        invalidateQueue,
-      ),
+      enqueueAll: wrap(() => enqueueAll(currentFilters()), invalidateQueue),
       deleteSongCache: wrap(async (fileHash: string) => {
         await deleteSongCache(fileHash);
         markSongCacheDeleted(fileHash);
@@ -97,6 +126,26 @@ export const useAnalysis = () => {
       reanalyzeFull: wrap(reanalyzeFull, invalidateSongs),
       realign: wrap(realign, invalidateSongs),
       reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
+      reanalyzeAllFull: wrapBulk(
+        "full reanalysis",
+        () => reanalyzeAllFull(currentFilters()),
+        invalidateSongs,
+      ),
+      reanalyzeAllTranscript: wrapBulk(
+        "refetching lyrics & aligning",
+        (language?: string) => reanalyzeAllTranscript(currentFilters(), language),
+        invalidateSongs,
+      ),
+      reanalyzeAllForceTranscribe: wrapBulk(
+        "force transcribing",
+        () => reanalyzeAllForceTranscribe(currentFilters()),
+        invalidateSongs,
+      ),
+      realignAll: wrapBulk(
+        "realigning",
+        (language?: string) => realignAll(currentFilters(), language),
+        invalidateSongs,
+      ),
     };
   }, [queryClient, artist, album, playlist, query, status, transcript_source, search]);
 };

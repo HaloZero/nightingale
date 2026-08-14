@@ -7,6 +7,7 @@ import { JellyfinConnectDialog } from "@/components/menu/dialogs/remote-source/j
 import { NavidromeConnectDialog } from "@/components/menu/dialogs/remote-source/navidrome-connect";
 import { PlexConnectDialog } from "@/components/menu/dialogs/remote-source/plex-connect";
 import { SelectLanguageDialog } from "@/components/menu/dialogs/language";
+import { BulkSelectLanguageDialog } from "@/components/menu/dialogs/bulk-language";
 import { CreateProfileDialog } from "@/components/menu/dialogs/profile/create";
 import { SelectProfileDialog } from "@/components/menu/dialogs/profile/select";
 import { Setup } from "@/components/menu/dialogs/setup";
@@ -72,6 +73,7 @@ export const MenuLayout = () => {
       <UpdateDialog />
       <DonateDialog />
       <SelectLanguageDialog />
+      <BulkSelectLanguageDialog />
       <EditLyricsDialog />
       <ClearCacheDialog />
       <JellyfinConnectDialog />

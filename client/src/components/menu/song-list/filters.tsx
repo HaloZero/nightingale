@@ -17,6 +17,7 @@ import { useSearch } from "@/hooks/use-search";
 import { cn } from "@/lib/utils";
 import { AudioLinesIcon, Grid2X2Icon, ListIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { BulkActionsMenu } from "./bulk-actions-menu";
 
 const DEBOUNCE_MS = 500;
 export type SongListView = "table" | "grid";
@@ -120,6 +121,7 @@ export const Filters = ({ view, onViewChange, isSavingView }: FiltersProps) => {
           <AudioLinesIcon />
           <span className="sr-only sm:not-sr-only">Analyze all</span>
         </Button>
+        <BulkActionsMenu />
         <div
           className="flex shrink-0 rounded-md border bg-input/20 p-0.5"
           role="group"

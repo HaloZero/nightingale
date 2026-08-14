@@ -30,6 +30,28 @@ export const reanalyzeForceTranscribe = async (fileHash: string): Promise<void> 
   return await invoke<void>("reanalyze_force_transcribe", { fileHash });
 };
 
+export const reanalyzeAllFull = async (filters: LibraryMenuFilters): Promise<number> => {
+  return await invoke<number>("reanalyze_all_full", { filters });
+};
+
+export const reanalyzeAllTranscript = async (
+  filters: LibraryMenuFilters,
+  language?: string,
+): Promise<number> => {
+  return await invoke<number>("reanalyze_all_transcript", { filters, language });
+};
+
+export const reanalyzeAllForceTranscribe = async (filters: LibraryMenuFilters): Promise<number> => {
+  return await invoke<number>("reanalyze_all_force_transcribe", { filters });
+};
+
+export const realignAll = async (
+  filters: LibraryMenuFilters,
+  language?: string,
+): Promise<number> => {
+  return await invoke<number>("realign_all", { filters, language });
+};
+
 export const shiftTempo = async (fileHash: string, tempo: number): Promise<void> => {
   return await invoke<void>("shift_tempo", { fileHash, tempo });
 };
