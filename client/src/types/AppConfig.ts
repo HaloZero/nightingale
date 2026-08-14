@@ -37,6 +37,15 @@ export type AppConfig = {
   vocal_detection_threshold_pct: number | null;
   auto_analyze: boolean | null;
   track_analysis_timings: boolean | null;
+  /**
+   * Whether a library scan/rescan re-checks `has_lrc_file`/
+   * `has_embedded_lyrics` for every already-known local song, not just
+   * brand-new ones (see `source::folder::refresh_lyrics_flags`). Off by
+   * default: it's a real per-song I/O cost (a stat + a tag read) added to
+   * every rescan, scaling with library size, so it's opt-in rather than
+   * silently changing rescan behavior/performance for every install.
+   */
+  refresh_lyrics_on_scan: boolean | null;
   song_list_view: string | null;
   language_overrides: { [key in string]: string } | null;
 };

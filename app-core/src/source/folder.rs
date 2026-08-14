@@ -9,9 +9,10 @@ use tracing::warn;
 use walkdir::WalkDir;
 
 use crate::cache::CacheDir;
+use crate::config::AppConfig;
 use crate::error::NightingaleError;
 use crate::library_db::{self, PlaylistDefinition, PlaylistSongKeyKind};
-use crate::song::{Song, build_song};
+use crate::song::{Song, SongOrigin, build_song, has_sidecar_lrc, tag_has_lyrics};
 use crate::usdx;
 
 use super::{MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, flush_batch};
@@ -59,8 +60,14 @@ impl MediaSource for FolderSource {
         let _ = library_db::delete_songs_not_in_paths(&paths);
         let _ = library_db::update_library_meta(&folder_label, media_files.len());
 
-        let already_processed: HashSet<String> =
-            library_db::load_song_path_strings().unwrap_or_default();
+        // Loaded once and reused below for both "what's new" (the `pending`
+        // filter) and the lyrics-flags refresh pass -- avoids a second
+        // full-library query.
+        let known_songs = library_db::load_all_songs().unwrap_or_default();
+        let already_processed: HashSet<String> = known_songs
+            .iter()
+            .map(|s| s.path.to_string_lossy().into_owned())
+            .collect();
 
         let pending: Vec<_> = media_files
             .into_iter()
@@ -91,6 +98,12 @@ impl MediaSource for FolderSource {
         }
 
         flush_batch(&mut batch, generation);
+
+        if library_db::scan_generation_is_current(generation)
+            && AppConfig::load().refresh_lyrics_on_scan()
+        {
+            refresh_lyrics_flags(&known_songs, generation);
+        }
 
         if library_db::scan_generation_is_current(generation) {
             sync_folder_playlists(&self.root);
@@ -125,6 +138,43 @@ fn classify_media_file(path: &Path) -> Option<MediaKind> {
         Some(MediaKind::Usdx)
     } else {
         None
+    }
+}
+
+/// A regular scan only calls `build_song` for brand-new paths (see the
+/// `already_processed` filter in `scan` above), so an already-known song is
+/// otherwise frozen at whatever was true the first time it was scanned.
+/// `has_lrc_file`/`has_embedded_lyrics` are the deliberate exception: a
+/// `.lrc` sidecar can show up, or tags can get edited, well after a song was
+/// first added, and both are cheap to re-check (a `stat` + one tag read) --
+/// so every scan/rescan re-derives them for every already-known local song
+/// and only writes a DB row when something actually changed. USDX songs are
+/// skipped: their lyrics come from the chart file itself, not a sidecar/tag
+/// next to it (see usdx.rs), so re-checking their `path` would be checking
+/// the wrong file. Remote-source songs are skipped too -- no local bytes to
+/// check at scan time.
+fn refresh_lyrics_flags(known_songs: &[Song], generation: u64) {
+    for song in known_songs {
+        if !library_db::scan_generation_is_current(generation) {
+            return;
+        }
+        if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
+            continue;
+        }
+        let has_lrc_file = has_sidecar_lrc(&song.path);
+        let has_embedded_lyrics = !song.is_video && tag_has_lyrics(&song.path);
+        if has_lrc_file == song.has_lrc_file && has_embedded_lyrics == song.has_embedded_lyrics {
+            continue;
+        }
+        let mut updated = song.clone();
+        updated.has_lrc_file = has_lrc_file;
+        updated.has_embedded_lyrics = has_embedded_lyrics;
+        if let Err(e) = library_db::update_song_fields(&song.file_hash, &updated) {
+            warn!(
+                "Failed to refresh lyrics flags for {}: {e}",
+                song.path.display()
+            );
+        }
     }
 }
 

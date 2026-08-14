@@ -203,6 +203,13 @@ pub struct AppConfig {
     pub vocal_detection_threshold_pct: Option<f64>,
     pub auto_analyze: Option<bool>,
     pub track_analysis_timings: Option<bool>,
+    /// Whether a library scan/rescan re-checks `has_lrc_file`/
+    /// `has_embedded_lyrics` for every already-known local song, not just
+    /// brand-new ones (see `source::folder::refresh_lyrics_flags`). Off by
+    /// default: it's a real per-song I/O cost (a stat + a tag read) added to
+    /// every rescan, scaling with library size, so it's opt-in rather than
+    /// silently changing rescan behavior/performance for every install.
+    pub refresh_lyrics_on_scan: Option<bool>,
     pub song_list_view: Option<String>,
     pub language_overrides: Option<HashMap<String, String>>,
 }
@@ -239,6 +246,7 @@ impl Default for AppConfig {
             vocal_detection_threshold_pct: None,
             auto_analyze: None,
             track_analysis_timings: None,
+            refresh_lyrics_on_scan: None,
             song_list_view: None,
             language_overrides: None,
         }
@@ -400,6 +408,10 @@ impl AppConfig {
 
     pub fn track_analysis_timings(&self) -> bool {
         self.track_analysis_timings.unwrap_or(true)
+    }
+
+    pub fn refresh_lyrics_on_scan(&self) -> bool {
+        self.refresh_lyrics_on_scan.unwrap_or(false)
     }
 
     pub fn mic_monitor_gain(&self) -> f32 {
