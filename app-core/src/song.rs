@@ -8,6 +8,7 @@ use lofty::{
     tag::Accessor,
 };
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 use ts_rs::TS;
 
 use blake3::Hasher;
@@ -321,6 +322,11 @@ pub fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo 
 }
 
 fn read_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) {
+    // Logged so lofty's own internal warnings (e.g. "Skipping empty \"data\"
+    // atom") -- which never carry a file path themselves, since that code is
+    // several layers below anything that has one -- can be attributed to a
+    // specific song by proximity in the log.
+    debug!("Reading tags: {}", path.display());
     let tagged = match lofty::read_from_path(path) {
         Ok(t) => t,
         Err(_) => return (String::new(), String::new(), String::new(), 0.0, None),
@@ -358,6 +364,7 @@ fn read_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) 
 /// rescan pass can reuse the exact same check for already-known songs, not
 /// just brand-new ones (see `Song::has_embedded_lyrics`).
 pub(crate) fn tag_has_lyrics(path: &Path) -> bool {
+    debug!("Reading tags: {}", path.display());
     let Ok(tagged) = lofty::read_from_path(path) else {
         return false;
     };

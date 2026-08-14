@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use ts_rs::TS;
 
 use crate::analyzer::{
@@ -388,6 +388,7 @@ fn read_sidecar_lrc(path: &Path) -> Option<String> {
 fn read_embedded_lyrics(path: &Path) -> Option<String> {
     use lofty::file::TaggedFileExt;
 
+    debug!("Reading tags: {}", path.display());
     let tagged = lofty::read_from_path(path).ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
     let text = tag.get_string(lofty::tag::ItemKey::Lyrics)?;
