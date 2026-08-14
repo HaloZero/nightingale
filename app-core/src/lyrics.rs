@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -333,4 +333,89 @@ pub(crate) fn fetch_lrclib_lyrics(song: &Song, cache: &CacheDir) -> Option<PathB
             None
         }
     }
+}
+
+/// Local lyrics sources, checked before falling back to the LRCLIB network
+/// lookup (`fetch_lrclib_lyrics`): a `.lrc` sidecar next to the audio file,
+/// then lyrics embedded directly in the file's own tags (ID3 `USLT` / MP4
+/// `©lyr`, via lofty's `ItemKey::Lyrics`). Local is treated as
+/// ground-truth-equivalent to the LRCLIB flow -- same shared cache file,
+/// same downstream forced-alignment path (`align_lyrics` in align.py) once
+/// `process_song` passes it through as `cmd_json["lyrics"]`.
+///
+/// Like `fetch_lrclib_lyrics`, this checks the shared cache first and reuses
+/// it if present -- which is also what makes "local always wins" work
+/// without extra bookkeeping: `process_song` calls this before
+/// `fetch_lrclib_lyrics`, so whichever source is found first is the one
+/// that gets cached, and the other call just sees the cache already there.
+pub(crate) fn local_lyrics_path(song: &Song, cache: &CacheDir) -> Option<PathBuf> {
+    let existing = cache.lyrics_path(&song.file_hash);
+    if existing.is_file() {
+        return Some(existing);
+    }
+
+    let (source, raw_text) = read_sidecar_lrc(&song.path)
+        .map(|text| ("sidecar .lrc", text))
+        .or_else(|| read_embedded_lyrics(&song.path).map(|text| ("embedded tag", text)))?;
+
+    let lines = lines_from_lyrics_text(&raw_text);
+    if lines.is_empty() {
+        return None;
+    }
+
+    info!(
+        "[local-lyrics] Found {} lines via {source} for {}",
+        lines.len(),
+        song.path.display()
+    );
+
+    match write_lyrics_file(cache, &song.file_hash, &lines) {
+        Ok(out) => {
+            info!("[local-lyrics] Lyrics saved to {}", out.display());
+            Some(out)
+        }
+        Err(e) => {
+            warn!("[local-lyrics] Failed to write lyrics: {e}");
+            None
+        }
+    }
+}
+
+fn read_sidecar_lrc(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path.with_extension("lrc")).ok()
+}
+
+fn read_embedded_lyrics(path: &Path) -> Option<String> {
+    use lofty::file::TaggedFileExt;
+
+    let tagged = lofty::read_from_path(path).ok()?;
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+    let text = tag.get_string(lofty::tag::ItemKey::Lyrics)?;
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+/// Plain lyric lines from raw text. Sidecar `.lrc` files are usually
+/// timestamped, so try `lrc::parse_lrc` first (it also strips word-level
+/// `<mm:ss.xx>` tags from Enhanced LRC); embedded tag lyrics are usually
+/// plain text, so fall back to treating every non-empty line as-is.
+fn lines_from_lyrics_text(text: &str) -> Vec<String> {
+    if let Ok(parsed) = lrc::parse_lrc(text) {
+        let lines: Vec<String> = parsed
+            .segments
+            .into_iter()
+            .map(|s| s.text)
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        if !lines.is_empty() {
+            return lines;
+        }
+    }
+    text.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }

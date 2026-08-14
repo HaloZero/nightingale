@@ -16,7 +16,7 @@ use crate::config::AppConfig;
 use crate::error::NightingaleError;
 use crate::library_db;
 use crate::library_model::LibraryMenuFilters;
-use crate::lyrics::{fetch_lrclib_lyrics, write_lyrics_file};
+use crate::lyrics::{fetch_lrclib_lyrics, local_lyrics_path, write_lyrics_file};
 use crate::song::{Song, SongOrigin, TranscriptSource, compute_file_hash, read_transcript_meta};
 use crate::source::active_source;
 
@@ -678,10 +678,14 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
 
     let config = AppConfig::load();
     let skip_lrclib = stems_only || FORCE_TRANSCRIBE.lock().unwrap().remove(file_hash);
+    // Local lyrics (a `.lrc` sidecar or a tag embedded in the file itself)
+    // take priority over the LRCLIB network lookup: whichever is found first
+    // is the one that lands in the shared lyrics cache, and the other check
+    // just sees it already there (see local_lyrics_path's doc comment).
     let lyrics_path = if skip_lrclib {
         None
     } else {
-        fetch_lrclib_lyrics(&song, cache)
+        local_lyrics_path(&song, cache).or_else(|| fetch_lrclib_lyrics(&song, cache))
     };
 
     let mut cmd_json = serde_json::json!({
