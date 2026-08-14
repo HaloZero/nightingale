@@ -57,7 +57,11 @@ def copy_if_needed(src: Path, dest: Path, dry_run: bool) -> str:
     if dry_run:
         return "copied"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    # copy2() also tries to preserve BSD file flags via chflags(), which
+    # exFAT (typical for portable drives) doesn't support and raises
+    # EINVAL. copy() skips that -- fine here since the skip-check above only
+    # compares size, not mtime.
+    shutil.copy(src, dest)
     return "copied"
 
 
