@@ -67,11 +67,13 @@ apart from a "real" run of the requested engine during analysis.
 
 ## Accuracy
 
-Not scored yet -- deliberately deferred. Every run's transcript.json is
-archived under `<out-dir>/transcripts/<song>/<config_id>.json` so a
-follow-up script can diff each variant against a chosen baseline/control
-once the accuracy metric is decided. The CSV's `accuracy` column is left
-blank as a placeholder.
+Every run's transcript.json is archived under
+`<out-dir>/transcripts/<song>/<config_id>.json`. This script leaves the
+CSV's `accuracy` column blank -- run `scripts/bench_score_accuracy.py`
+afterward to fill it in by scoring each transcript against the song's real
+lyrics (`<out-dir>/lyrics/<slug>.json`, built above for songs with a `.lrc`
+source). Songs without a lyrics source get no accuracy score, since there's
+no ground truth to compare against.
 
 ## Usage
 
@@ -82,6 +84,7 @@ blank as a placeholder.
     python3 scripts/bench_analyze.py --engines whisper_mlx
     python3 scripts/bench_analyze.py --skip-lyrics-align
     python3 scripts/bench_analyze.py --data-dir /path/to/.nightingale
+    python3 scripts/bench_score_accuracy.py           # after a sweep, fill in `accuracy`
 
 Safe to interrupt (Ctrl-C) and re-run: already-completed (song, config) pairs
 found in the existing CSV are skipped unless --force is passed. Runs are

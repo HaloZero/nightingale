@@ -31,8 +31,11 @@
     gap: 1rem;
   }
   .source-col { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
-  .timing { font-size: 0.8rem; opacity: 0.7; }
-  .timing .ms-unknown { opacity: 0.6; font-style: italic; }
+  .timing { font-size: 0.8rem; opacity: 0.7; display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .timing .ms-unknown, .timing .accuracy-unknown { opacity: 0.6; font-style: italic; }
+  .timing .accuracy-high { color: #2e7d32; }
+  .timing .accuracy-mid { color: #b8860b; }
+  .timing .accuracy-low { color: #c0392b; }
   .transcript {
     border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     border-radius: 8px;
@@ -154,7 +157,10 @@ function onSongChange() {
   audio.src = song.audio_exists ? encodeURI(song.audio_url) : '';
 
   tracks.forEach((t, i) => {
-    t.selectEl.innerHTML = song.configs.map(c => `<option value="${c.id}">${c.id}${formatMs(c.ms) ? ' — ' + formatMs(c.ms) : ''}</option>`).join('');
+    t.selectEl.innerHTML = song.configs.map(c => {
+      const parts = [formatMs(c.ms), formatAccuracy(c.accuracy)].filter(Boolean);
+      return `<option value="${c.id}">${c.id}${parts.length ? ' — ' + parts.join(', ') : ''}</option>`;
+    }).join('');
     // Default each column to a different config where possible, so picking
     // a song immediately shows 3 distinct sources side by side.
     if (song.configs[i]) t.selectEl.value = song.configs[i].id;
@@ -172,15 +178,36 @@ function formatMs(ms) {
   return s >= 60 ? `${(s / 60).toFixed(1)}m` : `${s.toFixed(1)}s`;
 }
 
+// Word accuracy vs. this song's real lyrics (bench_out/lyrics/<slug>.json),
+// filled in by scripts/bench_score_accuracy.py -- see its module docstring.
+// null when that script hasn't been run yet, or the song has no lyrics
+// reference to score against (no .lrc source).
+function formatAccuracy(accuracy) {
+  if (accuracy == null) return null;
+  return `${accuracy.toFixed(1)}%`;
+}
+
+function accuracyClass(accuracy) {
+  if (accuracy == null) return '';
+  if (accuracy >= 90) return 'accuracy-high';
+  if (accuracy >= 75) return 'accuracy-mid';
+  return 'accuracy-low';
+}
+
 async function loadTrack(t) {
   const song = currentSong();
   if (!song) return;
   const configId = t.selectEl.value;
   const configEntry = song.configs.find(c => c.id === configId);
-  const formatted = configEntry ? formatMs(configEntry.ms) : null;
-  t.timingEl.innerHTML = formatted
-    ? `⏱ transcribe/align: <strong>${formatted}</strong>`
+  const formattedMs = configEntry ? formatMs(configEntry.ms) : null;
+  const formattedAccuracy = configEntry ? formatAccuracy(configEntry.accuracy) : null;
+  const timingHtml = formattedMs
+    ? `⏱ transcribe/align: <strong>${formattedMs}</strong>`
     : `<span class="ms-unknown">⏱ timing unknown</span>`;
+  const accuracyHtml = formattedAccuracy
+    ? `🎯 lyric accuracy: <strong class="${accuracyClass(configEntry.accuracy)}">${formattedAccuracy}</strong>`
+    : `<span class="accuracy-unknown">🎯 accuracy unknown</span>`;
+  t.timingEl.innerHTML = `<span>${timingHtml}</span><span>${accuracyHtml}</span>`;
   t.transcriptEl.innerHTML = '<div class="empty">Loading transcript…</div>';
   try {
     const res = await fetch(`/bench_out/transcripts/${encodeURIComponent(song.slug)}/${encodeURIComponent(configId)}.json`);
