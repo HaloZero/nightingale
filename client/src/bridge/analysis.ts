@@ -52,6 +52,14 @@ export const realignAll = async (
   return await invoke<number>("realign_all", { filters, language });
 };
 
+export const refreshMetadata = async (fileHash: string): Promise<void> => {
+  return await invoke<void>("refresh_metadata", { fileHash });
+};
+
+export const refreshMetadataAll = async (filters: LibraryMenuFilters): Promise<number> => {
+  return await invoke<number>("refresh_metadata_all", { filters });
+};
+
 export const shiftTempo = async (fileHash: string, tempo: number): Promise<void> => {
   return await invoke<void>("shift_tempo", { fileHash, tempo });
 };

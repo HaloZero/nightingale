@@ -338,6 +338,19 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
                 args.language,
             )))
         }
+        "refresh_metadata" => {
+            let args: FileHashArgs = deserialize(payload)?;
+            app_core::refresh_metadata(&args.file_hash);
+            Ok(Value::Null)
+        }
+        "refresh_metadata_all" => {
+            #[derive(Deserialize)]
+            struct Args {
+                filters: LibraryMenuFilters,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::refresh_metadata_all(&args.filters)))
+        }
         "shift_key" => shift_key_cmd(events, payload),
         "shift_tempo" => shift_tempo_cmd(events, payload),
 

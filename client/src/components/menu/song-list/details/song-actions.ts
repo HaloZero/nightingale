@@ -2,6 +2,7 @@ import type { Song } from "@/types/Song";
 import {
   AlignLeftIcon,
   AudioLinesIcon,
+  ImageIcon,
   LanguagesIcon,
   MicIcon,
   PencilLineIcon,
@@ -20,6 +21,7 @@ interface AnalysisHandlers {
   reanalyzeTranscript: AnalysisHandler;
   realign: AnalysisHandler;
   reanalyzeForceTranscribe: AnalysisHandler;
+  refreshMetadata: AnalysisHandler;
 }
 
 interface BuildActionGroupsParams {
@@ -138,6 +140,24 @@ export function buildActionGroups({
           title: "Change language",
           description: "Set the language and choose how to reprocess.",
           onClick: onChangeLanguage,
+        },
+      ]);
+    }
+
+    // Independent of the analysis pipeline (title/artist/album/duration/
+    // cover/lyrics-source-flags, re-read straight from the file) -- not
+    // gated by transcript_source since it applies equally to LRC-provided
+    // songs. USDX songs get their metadata from the chart file, not audio
+    // tags, so there's nothing here to re-read for them.
+    if (!song.usdx) {
+      groups.push([
+        {
+          icon: ImageIcon,
+          title: "Refresh metadata",
+          description: "Re-read title, artist, album, cover art, and lyrics source from the file.",
+          onClick: run(`Refreshed metadata for "${song.title}"`, () =>
+            analysis.refreshMetadata(song.file_hash),
+          ),
         },
       ]);
     }

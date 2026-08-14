@@ -13,6 +13,8 @@ import {
   reanalyzeForceTranscribe,
   reanalyzeFull,
   reanalyzeTranscript,
+  refreshMetadata,
+  refreshMetadataAll,
 } from "@/bridge/analysis";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 import type { Song } from "@/types/Song";
@@ -115,6 +117,32 @@ export const useAnalysis = () => {
         }
       };
 
+    // Same shape as wrapBulk, but for actions that finish synchronously
+    // (refresh metadata doesn't touch the analysis queue at all) rather than
+    // queuing work -- "Queued N songs for..." would be misleading since the
+    // work is already done by the time this resolves.
+    const wrapBulkDone =
+      <A extends unknown[]>(
+        label: string,
+        handler: (...args: A) => Promise<number>,
+        invalidate: () => void,
+      ) =>
+      async (...args: A) => {
+        try {
+          const count = await handler(...args);
+          invalidate();
+          if (count > 0) {
+            toast.success(`${label} for ${count} song${count === 1 ? "" : "s"}`);
+          } else {
+            toast.info(`No eligible songs for ${label.toLowerCase()} in the current filter`);
+          }
+        } catch (error: unknown) {
+          toast.error(
+            `Error while running a bulk analysis action: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
+        }
+      };
+
     return {
       enqueueOne: wrap(enqueueOne, invalidateQueue),
       enqueueAll: wrap(() => enqueueAll(currentFilters()), invalidateQueue),
@@ -126,6 +154,12 @@ export const useAnalysis = () => {
       reanalyzeFull: wrap(reanalyzeFull, invalidateSongs),
       realign: wrap(realign, invalidateSongs),
       reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
+      refreshMetadata: wrap(refreshMetadata, invalidateSongs),
+      refreshMetadataAll: wrapBulkDone(
+        "Refreshed metadata",
+        () => refreshMetadataAll(currentFilters()),
+        invalidateSongs,
+      ),
       reanalyzeAllFull: wrapBulk(
         "full reanalysis",
         () => reanalyzeAllFull(currentFilters()),

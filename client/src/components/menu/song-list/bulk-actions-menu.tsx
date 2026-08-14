@@ -4,6 +4,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAnalysis } from "@/hooks/use-analysis";
@@ -12,21 +13,27 @@ import {
   AlignLeftIcon,
   AudioLinesIcon,
   EllipsisIcon,
+  ImageIcon,
   LanguagesIcon,
   MicIcon,
   RefreshCwIcon,
 } from "lucide-react";
 
 /** Bulk counterpart to the per-song "Realign / Refetch lyrics & align /
- * Force transcribe / Full reanalysis / Change language" actions in
- * song-actions.ts, applied to every song matching the current library
- * filter instead of one song at a time. Ineligible songs (not yet
- * analyzed, USDX, or -- for everything but full reanalysis -- LRC-provided)
- * are excluded server-side per action; see the eligibility queries in
- * app-core's library_db/queries.rs. */
+ * Force transcribe / Full reanalysis / Change language / Refresh metadata"
+ * actions in song-actions.ts, applied to every song matching the current
+ * library filter instead of one song at a time. Ineligible songs (not yet
+ * analyzed, USDX, or -- for everything but full reanalysis and refresh
+ * metadata -- LRC-provided) are excluded server-side per action; see the
+ * eligibility queries in app-core's library_db/queries.rs. */
 export const BulkActionsMenu = () => {
-  const { reanalyzeAllFull, reanalyzeAllTranscript, reanalyzeAllForceTranscribe, realignAll } =
-    useAnalysis();
+  const {
+    reanalyzeAllFull,
+    reanalyzeAllTranscript,
+    reanalyzeAllForceTranscribe,
+    realignAll,
+    refreshMetadataAll,
+  } = useAnalysis();
   const { setMode } = useDialog();
 
   return (
@@ -62,6 +69,11 @@ export const BulkActionsMenu = () => {
         <DropdownMenuItem onClick={() => setMode({ mode: "bulk-language" })}>
           <LanguagesIcon />
           Change language
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => refreshMetadataAll()}>
+          <ImageIcon />
+          Refresh metadata
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
