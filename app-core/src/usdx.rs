@@ -545,6 +545,11 @@ pub fn build_usdx_song(path: &Path, cache: &CacheDir) -> Result<Song, Nightingal
         usdx: Some(bundle),
         origin: crate::song::SongOrigin::LocalFile,
         no_stems: false,
+        // USDX bundles carry their own lyrics+timing via the .txt/note chart
+        // (see synthesize_transcript above), not a .lrc sidecar or embedded
+        // tag -- these track only the latter two sources.
+        has_lrc_file: false,
+        has_embedded_lyrics: false,
     };
 
     Ok(song)

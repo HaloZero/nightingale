@@ -121,6 +121,28 @@ pub struct Song {
     /// hidden. Defaults to `false` for stem-separated songs.
     #[serde(default)]
     pub no_stems: bool,
+    /// True when a `.lrc` sidecar sits next to the audio file (same
+    /// directory, same basename, `.lrc` extension). Always `false` for
+    /// remote-source songs (Jellyfin/Navidrome/Plex) -- their bytes aren't
+    /// local at scan time.
+    #[serde(default)]
+    pub has_lrc_file: bool,
+    /// True when the audio file's own tags carry non-empty lyrics (ID3
+    /// `USLT` / MP4 `©lyr`, via lofty's `ItemKey::Lyrics`). Always `false`
+    /// for video files (no tag read attempted) and remote-source songs.
+    #[serde(default)]
+    pub has_embedded_lyrics: bool,
+}
+
+impl Song {
+    /// Whether this song has a *known* lyrics source that isn't ASR
+    /// transcription -- a `.lrc` sidecar or an embedded tag, either one.
+    /// Drives the "External Lyrics" library filter and, at analyze time,
+    /// tells `process_song` to forced-align that text instead of
+    /// transcribing (see `lyrics::local_lyrics_path`).
+    pub fn has_external_lyrics(&self) -> bool {
+        self.has_lrc_file || self.has_embedded_lyrics
+    }
 }
 
 fn default_tempo() -> f64 {
@@ -181,6 +203,9 @@ impl Song {
             Some(cover_path)
         });
 
+        let has_lrc_file = has_sidecar_lrc(path);
+        let has_embedded_lyrics = !is_video && tag_has_lyrics(path);
+
         Self {
             path: path.to_path_buf(),
             file_hash,
@@ -200,6 +225,8 @@ impl Song {
             usdx,
             origin,
             no_stems: false,
+            has_lrc_file,
+            has_embedded_lyrics,
         }
     }
 }
@@ -322,6 +349,31 @@ fn read_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) 
     let album_art = tag.pictures().first().map(|pic| pic.data().to_vec());
 
     (title, artist, album, duration_secs, album_art)
+}
+
+/// Whether `path`'s own tags carry non-empty lyrics (ID3 `USLT` / MP4
+/// `©lyr`, whatever lofty maps to `ItemKey::Lyrics`). Re-reads the file
+/// rather than threading a 6th value through `read_metadata`'s tuple --
+/// clarity win over one extra open. `pub(crate)` so `source::folder`'s
+/// rescan pass can reuse the exact same check for already-known songs, not
+/// just brand-new ones (see `Song::has_embedded_lyrics`).
+pub(crate) fn tag_has_lyrics(path: &Path) -> bool {
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return false;
+    };
+    let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
+        return false;
+    };
+    tag.get_string(lofty::tag::ItemKey::Lyrics)
+        .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// Whether a `.lrc` sidecar sits next to `path` (same directory, same
+/// basename, `.lrc` extension) -- the other local lyrics source alongside
+/// embedded tags, checked regardless of `is_video`. `pub(crate)` for the
+/// same reason as `tag_has_lyrics`.
+pub(crate) fn has_sidecar_lrc(path: &Path) -> bool {
+    path.with_extension("lrc").is_file()
 }
 
 fn read_video_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) {

@@ -346,6 +346,10 @@ impl JellyfinSource {
                 cover_tag,
             },
             no_stems: false,
+            // Remote-sourced: bytes aren't local at listing time, so there's
+            // nothing to scan for a sidecar/embedded lyrics source yet.
+            has_lrc_file: false,
+            has_embedded_lyrics: false,
         })
     }
 

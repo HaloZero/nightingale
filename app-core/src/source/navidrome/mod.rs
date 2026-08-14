@@ -203,6 +203,8 @@ impl NavidromeSource {
                 cover_tag,
             },
             no_stems: false,
+            has_lrc_file: false,
+            has_embedded_lyrics: false,
         })
     }
 

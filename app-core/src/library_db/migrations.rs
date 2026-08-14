@@ -55,6 +55,11 @@ pub(super) fn configure(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    // Deliberately decoupled from SCHEMA_VERSION below (see its doc comment):
+    // must run before the version early-return, since every DB already at
+    // SCHEMA_VERSION would otherwise never reach it.
+    ensure_lyrics_columns(conn)?;
+
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
         return Ok(());
@@ -82,6 +87,8 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
                 language TEXT,
                 transcript_source TEXT,
                 is_video INTEGER NOT NULL,
+                has_lrc_file INTEGER NOT NULL DEFAULT 0,
+                has_embedded_lyrics INTEGER NOT NULL DEFAULT 0,
                 payload TEXT NOT NULL
             );
             CREATE INDEX idx_songs_file_hash ON songs(file_hash);
@@ -151,6 +158,45 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         )?;
     }
     conn.execute(&format!("PRAGMA user_version = {SCHEMA_VERSION}"), [])?;
+    Ok(())
+}
+
+/// Adds `has_lrc_file` / `has_embedded_lyrics` to `songs` if either is
+/// missing, without claiming a `SCHEMA_VERSION` bump. Deliberately decoupled
+/// from the version-gated migrations above: claiming a specific version
+/// number risks colliding with an unrelated migration landing around the
+/// same time, while a plain existence check is safe to run on every startup
+/// regardless of what version number the DB is actually on. No-ops on a
+/// brand-new DB where `songs` doesn't exist yet -- the `v == 0` branch above
+/// creates it with both columns already present.
+fn ensure_lyrics_columns(conn: &Connection) -> rusqlite::Result<()> {
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'songs'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !table_exists {
+        return Ok(());
+    }
+
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('songs')")?;
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?
+    };
+
+    if !existing.contains("has_lrc_file") {
+        conn.execute(
+            "ALTER TABLE songs ADD COLUMN has_lrc_file INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !existing.contains("has_embedded_lyrics") {
+        conn.execute(
+            "ALTER TABLE songs ADD COLUMN has_embedded_lyrics INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     Ok(())
 }
 

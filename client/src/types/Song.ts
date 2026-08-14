@@ -27,4 +27,17 @@ export type Song = {
    * hidden. Defaults to `false` for stem-separated songs.
    */
   no_stems: boolean;
+  /**
+   * True when a `.lrc` sidecar sits next to the audio file (same
+   * directory, same basename, `.lrc` extension). Always `false` for
+   * remote-source songs (Jellyfin/Navidrome/Plex) -- their bytes aren't
+   * local at scan time.
+   */
+  has_lrc_file: boolean;
+  /**
+   * True when the audio file's own tags carry non-empty lyrics (ID3
+   * `USLT` / MP4 `©lyr`, via lofty's `ItemKey::Lyrics`). Always `false`
+   * for video files (no tag read attempted) and remote-source songs.
+   */
+  has_embedded_lyrics: boolean;
 };
