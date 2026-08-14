@@ -15,6 +15,7 @@ export const useLibraryFilter = () => {
     status: filter.status,
     transcript_source: filter.transcript_source,
     search: filter.search,
+    language: filter.language,
     setLibraryFilter,
   };
 };

@@ -1,7 +1,13 @@
 import type { LibraryMenuItem } from "@/types/LibraryMenuItem";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 
-export type LibraryMenuSection = "hot" | "no_metadata" | "artists" | "albums" | "playlists";
+export type LibraryMenuSection =
+  | "hot"
+  | "no_metadata"
+  | "artists"
+  | "albums"
+  | "playlists"
+  | "languages";
 
 export const EMPTY_LIBRARY_FILTER: LibraryMenuFilters = {
   artist: null,
@@ -11,6 +17,7 @@ export const EMPTY_LIBRARY_FILTER: LibraryMenuFilters = {
   status: null,
   transcript_source: null,
   search: null,
+  language: null,
 };
 
 const HOT_FILTERS: Record<string, LibraryMenuFilters> = {
@@ -42,12 +49,18 @@ export function libraryFilterFromMenuSelection(
       return { ...EMPTY_LIBRARY_FILTER, album: item.value };
     case "playlists":
       return { ...EMPTY_LIBRARY_FILTER, playlist: item.value };
+    case "languages":
+      return { ...EMPTY_LIBRARY_FILTER, language: item.value };
   }
 }
 
 export function libraryFiltersEqual(a: LibraryMenuFilters, b: LibraryMenuFilters): boolean {
   return (
-    a.artist === b.artist && a.album === b.album && a.playlist === b.playlist && a.query === b.query
+    a.artist === b.artist &&
+    a.album === b.album &&
+    a.playlist === b.playlist &&
+    a.query === b.query &&
+    a.language === b.language
   );
 }
 

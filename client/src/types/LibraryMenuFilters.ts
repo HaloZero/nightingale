@@ -8,4 +8,11 @@ export type LibraryMenuFilters = {
   status: string | null;
   transcript_source: string | null;
   search: string | null;
+  /**
+   * ISO language code (e.g. "en"), or "unknown" for songs with no
+   * language set yet. `Song.language` is only ever populated
+   * post-analysis (it doubles as the Whisper language hint/override), so
+   * this only meaningfully narrows analyzed songs.
+   */
+  language: string | null;
 };

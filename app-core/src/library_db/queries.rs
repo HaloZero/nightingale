@@ -133,6 +133,7 @@ fn append_structural_filters(
     let status = filters.status.as_deref();
     let transcript_source = filters.transcript_source.as_deref();
     let search = filters.search.as_deref();
+    let language = filters.language.as_deref();
 
     // Keep playlist first: its bind is always ?1, allowing the same value to
     // drive both membership filtering and playlist-position ordering.
@@ -200,6 +201,20 @@ fn append_structural_filters(
     if let Some(source) = transcript_source.filter(|s| !s.is_empty()) {
         where_parts.push("s.transcript_source = ?".to_string());
         bind_strings.push(source.to_string());
+    }
+    // `language` lives only in the JSON payload (not a real column, unlike
+    // artist/album/transcript_source), same json_extract pattern already
+    // used elsewhere for payload-only fields.
+    if let Some(lang) = language.filter(|s| !s.is_empty()) {
+        if lang == "unknown" {
+            where_parts.push(
+                "(json_extract(s.payload, '$.language') IS NULL OR json_extract(s.payload, '$.language') = '')"
+                    .to_string(),
+            );
+        } else {
+            where_parts.push("json_extract(s.payload, '$.language') = ?".to_string());
+            bind_strings.push(lang.to_string());
+        }
     }
     if let Some(words) = search.and_then(search_words_from_query) {
         let (where_sql, mut search_binds) = songs_where_like_words(&words);
@@ -657,12 +672,47 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
+        // `language` is analysis-derived (see LibraryMenuFilters.language's
+        // doc comment) and lives only in the JSON payload, not a real
+        // column -- COALESCE/NULLIF folds "never set" and "set to empty
+        // string" into one "unknown" bucket, same sentinel the WHERE-clause
+        // side (append_structural_filters) already recognizes.
+        let mut stmt = c.prepare(
+            "SELECT COALESCE(NULLIF(json_extract(s.payload, '$.language'), ''), 'unknown') AS lang,
+                    COUNT(*) AS cnt,
+                    COALESCE(SUM(CASE WHEN s.is_analyzed = 1 THEN 1 ELSE 0 END), 0) AS analysed,
+                    COALESCE(SUM(CASE WHEN aq.status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
+                    COALESCE(SUM(CASE WHEN aq.status = 'analyzing' THEN 1 ELSE 0 END), 0) AS analysing
+             FROM songs s LEFT JOIN analysis_queue aq ON aq.file_hash = s.file_hash
+             GROUP BY lang
+             ORDER BY lang COLLATE NOCASE",
+        )?;
+        let languages: Vec<LibraryMenuItem> = stmt
+            .query_map([], |r| {
+                let lang: String = r.get(0)?;
+                let label = if lang == "unknown" {
+                    "Unknown Language".to_string()
+                } else {
+                    lang.clone()
+                };
+                Ok(LibraryMenuItem {
+                    value: lang,
+                    label,
+                    count: r.get::<_, i64>(1)? as u64,
+                    analysed_count: r.get::<_, i64>(2)? as u64,
+                    queued_count: r.get::<_, i64>(3)? as u64,
+                    analysing_count: r.get::<_, i64>(4)? as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(LibraryMenuItems {
             hot,
             no_metadata,
             artists,
             albums,
             playlists,
+            languages,
         })
     })
 }

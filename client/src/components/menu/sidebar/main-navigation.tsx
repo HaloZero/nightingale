@@ -15,6 +15,7 @@ import {
   Flame,
   FileQuestionMark,
   DiscIcon,
+  LanguagesIcon,
   ListMusicIcon,
   UserIcon,
   type LucideIcon,
@@ -54,6 +55,7 @@ const NAV_SECTIONS: NavSectionConfig[] = [
   { section: "no_metadata", label: "No Metadata", icon: FileQuestionMark },
   { section: "artists", label: "Artists", icon: UserIcon },
   { section: "albums", label: "Albums", icon: DiscIcon },
+  { section: "languages", label: "Languages", icon: LanguagesIcon },
   { section: "playlists", label: "Playlists", icon: ListMusicIcon },
 ];
 

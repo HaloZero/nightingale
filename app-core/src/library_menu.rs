@@ -23,6 +23,7 @@ pub struct LibraryMenuItems {
     pub artists: Vec<LibraryMenuItem>,
     pub albums: Vec<LibraryMenuItem>,
     pub playlists: Vec<LibraryMenuItem>,
+    pub languages: Vec<LibraryMenuItem>,
 }
 
 pub fn load_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {

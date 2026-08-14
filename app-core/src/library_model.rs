@@ -16,6 +16,12 @@ pub struct LibraryMenuFilters {
     pub transcript_source: Option<String>,
     #[serde(default)]
     pub search: Option<String>,
+    /// ISO language code (e.g. "en"), or "unknown" for songs with no
+    /// language set yet. `Song.language` is only ever populated
+    /// post-analysis (it doubles as the Whisper language hint/override), so
+    /// this only meaningfully narrows analyzed songs.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
