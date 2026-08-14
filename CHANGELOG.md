@@ -25,6 +25,7 @@ below.
 
 ### Fixes
 
+- Setup errors now wrap and scroll within the modal instead of overflowing the dialog.
 - UVR stem separation now converts source audio to WAV before loading it, preventing failures on input formats the separator cannot read directly.
 
 ## [1.0.0] - 2026-07-25
