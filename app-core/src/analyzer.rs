@@ -539,6 +539,54 @@ pub fn reanalyze_force_transcribe(file_hash: &str) {
     reanalyze(file_hash, false);
 }
 
+/// Bulk "Full reanalysis": every already-analyzed, non-USDX song matching
+/// `filters` (see `library_db::iter_file_hashes_filtered_full_reanalyzable`)
+/// -- songs that aren't yet analyzed at all are already covered by
+/// `enqueue_all`, and USDX songs never support reanalysis (see
+/// `reanalyze_full`'s own guard). Reuses `reanalyze_full` per song rather
+/// than duplicating its logic; safe to call in a loop since it only marks
+/// the song unanalyzed and pushes onto the single-worker queue via
+/// `enqueue_one` -- it doesn't spawn any work itself. Returns how many
+/// songs were queued.
+pub fn reanalyze_all_full(filters: &LibraryMenuFilters) -> usize {
+    let hashes = library_db::iter_file_hashes_filtered_full_reanalyzable(filters).unwrap_or_default();
+    for hash in &hashes {
+        reanalyze_full(hash);
+    }
+    hashes.len()
+}
+
+/// Bulk "Refetch lyrics & align" -- see `iter_file_hashes_filtered_realignable`
+/// for eligibility. `language` is `Some` only when called from the bulk
+/// "Change language" flow (mode = force); `None` for the plain refetch
+/// action, matching `reanalyze_transcript`'s own per-song signature.
+pub fn reanalyze_all_transcript(filters: &LibraryMenuFilters, language: Option<String>) -> usize {
+    let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
+    for hash in &hashes {
+        reanalyze_transcript(hash, language.clone());
+    }
+    hashes.len()
+}
+
+/// Bulk "Force transcribe" -- see `iter_file_hashes_filtered_realignable`.
+pub fn reanalyze_all_force_transcribe(filters: &LibraryMenuFilters) -> usize {
+    let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
+    for hash in &hashes {
+        reanalyze_force_transcribe(hash);
+    }
+    hashes.len()
+}
+
+/// Bulk "Realign" -- see `iter_file_hashes_filtered_realignable`. `language`
+/// is `Some` only from the bulk "Change language" flow (mode = realign).
+pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> usize {
+    let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
+    for hash in &hashes {
+        realign(hash, language.clone());
+    }
+    hashes.len()
+}
+
 fn reanalyze(file_hash: &str, full: bool) {
     let cache = CacheDir::new();
     if full {

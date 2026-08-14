@@ -305,6 +305,52 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             app_core::reanalyze_force_transcribe(&args.file_hash);
             Ok(Value::Null)
         }
+        "reanalyze_all_full" => {
+            #[derive(Deserialize)]
+            struct Args {
+                filters: LibraryMenuFilters,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::reanalyze_all_full(&args.filters)))
+        }
+        "reanalyze_all_transcript" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                filters: LibraryMenuFilters,
+                #[serde(default)]
+                language: Option<String>,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::reanalyze_all_transcript(
+                &args.filters,
+                args.language,
+            )))
+        }
+        "reanalyze_all_force_transcribe" => {
+            #[derive(Deserialize)]
+            struct Args {
+                filters: LibraryMenuFilters,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::reanalyze_all_force_transcribe(
+                &args.filters,
+            )))
+        }
+        "realign_all" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                filters: LibraryMenuFilters,
+                #[serde(default)]
+                language: Option<String>,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::realign_all(
+                &args.filters,
+                args.language,
+            )))
+        }
         "shift_key" => shift_key_cmd(events, payload),
         "shift_tempo" => shift_tempo_cmd(events, payload),
 

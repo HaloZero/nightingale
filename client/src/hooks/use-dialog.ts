@@ -15,6 +15,7 @@ export type DialogMode =
   | "navidrome-connect"
   | "plex-connect"
   | { mode: "language"; song: Song }
+  | { mode: "bulk-language" }
   | { mode: "edit-lyrics"; song: Song }
   | { mode: "song-leaderboard"; song: Song }
   | { mode: "clear-cache"; target: ClearCacheTarget }

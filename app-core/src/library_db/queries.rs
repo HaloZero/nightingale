@@ -316,10 +316,16 @@ pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore>
     })
 }
 
-pub fn iter_file_hashes_filtered_not_analyzed(
+/// Shared by `iter_file_hashes_filtered_not_analyzed` and the bulk-action
+/// eligibility queries below -- `extra_where_parts` is always non-empty for
+/// every current caller, so `build_song_where_clause` always returns
+/// `Some`; the `None` branch is kept only because that function's contract
+/// doesn't guarantee it (e.g. if a future caller passed an empty slice).
+fn iter_file_hashes_filtered(
     filters: &LibraryMenuFilters,
+    extra_where_parts: &[&str],
 ) -> rusqlite::Result<Vec<String>> {
-    let (where_sql, bind_strings) = build_song_where_clause(None, filters, &["s.is_analyzed = 0"]);
+    let (where_sql, bind_strings) = build_song_where_clause(None, filters, extra_where_parts);
 
     if let Some(where_sql) = where_sql {
         let playlist_order = if filters.playlist.as_deref().is_some_and(|p| !p.is_empty()) {
@@ -342,15 +348,47 @@ pub fn iter_file_hashes_filtered_not_analyzed(
         })
     } else {
         with_conn(|c| {
-            let mut stmt = c.prepare(
-                "SELECT file_hash FROM songs
-                 WHERE is_analyzed = 0
-                 ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE",
-            )?;
+            let mut stmt = c.prepare("SELECT file_hash FROM songs ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE")?;
             let rows = stmt.query_map([], |r| r.get(0))?;
             rows.collect()
         })
     }
+}
+
+pub fn iter_file_hashes_filtered_not_analyzed(
+    filters: &LibraryMenuFilters,
+) -> rusqlite::Result<Vec<String>> {
+    iter_file_hashes_filtered(filters, &["s.is_analyzed = 0"])
+}
+
+/// Songs eligible for the "restart the transcribe/align stage" bulk actions
+/// (realign, refetch lyrics & align, force transcribe, change language):
+/// already analyzed, and not USDX or user-provided LRC -- mirrors
+/// song-actions.ts's `supportsAnalysisActions` + `transcript_source` checks
+/// that gate the equivalent per-song menu items.
+pub fn iter_file_hashes_filtered_realignable(
+    filters: &LibraryMenuFilters,
+) -> rusqlite::Result<Vec<String>> {
+    iter_file_hashes_filtered(
+        filters,
+        &[
+            "s.is_analyzed = 1",
+            "s.transcript_source NOT IN ('usdx', 'lrc')",
+        ],
+    )
+}
+
+/// Songs eligible for bulk full reanalysis: already analyzed, not USDX.
+/// LRC-provided songs ARE included here (matching the per-song menu's
+/// "Analyze with AI" item, which replaces the LRC with a full AI pass) even
+/// though they're excluded from `iter_file_hashes_filtered_realignable`.
+pub fn iter_file_hashes_filtered_full_reanalyzable(
+    filters: &LibraryMenuFilters,
+) -> rusqlite::Result<Vec<String>> {
+    iter_file_hashes_filtered(
+        filters,
+        &["s.is_analyzed = 1", "s.transcript_source != 'usdx'"],
+    )
 }
 
 pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {

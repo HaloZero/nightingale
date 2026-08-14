@@ -1,6 +1,9 @@
 use app_core::{
     delete_cache as core_delete_cache, enqueue_all as core_enqueue_all,
-    enqueue_one as core_enqueue_one, realign as core_realign,
+    enqueue_one as core_enqueue_one, realign as core_realign, realign_all as core_realign_all,
+    reanalyze_all_force_transcribe as core_reanalyze_all_force_transcribe,
+    reanalyze_all_full as core_reanalyze_all_full,
+    reanalyze_all_transcript as core_reanalyze_all_transcript,
     reanalyze_force_transcribe as core_reanalyze_force_transcribe,
     reanalyze_full as core_reanalyze_full, reanalyze_transcript as core_reanalyze_transcript,
     shift_key_done_payload, shift_tempo_done_payload, LibraryMenuFilters,
@@ -40,6 +43,26 @@ pub fn realign(file_hash: String, language: Option<String>) {
 #[tauri::command]
 pub fn reanalyze_force_transcribe(file_hash: String) {
     core_reanalyze_force_transcribe(&file_hash);
+}
+
+#[tauri::command]
+pub fn reanalyze_all_full(filters: LibraryMenuFilters) -> usize {
+    core_reanalyze_all_full(&filters)
+}
+
+#[tauri::command]
+pub fn reanalyze_all_transcript(filters: LibraryMenuFilters, language: Option<String>) -> usize {
+    core_reanalyze_all_transcript(&filters, language)
+}
+
+#[tauri::command]
+pub fn reanalyze_all_force_transcribe(filters: LibraryMenuFilters) -> usize {
+    core_reanalyze_all_force_transcribe(&filters)
+}
+
+#[tauri::command]
+pub fn realign_all(filters: LibraryMenuFilters, language: Option<String>) -> usize {
+    core_realign_all(&filters, language)
 }
 
 #[tauri::command]
