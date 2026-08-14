@@ -22,6 +22,7 @@ below.
 
 ### Improvements
 
+- Instant key and tempo controls — stepper changes are now staged immediately, then prepared together when playback starts. The Play button shows preparation progress and enters playback only after the adjusted audio is ready.
 - Prebuilt Docker distribution — release tooling can publish multi-architecture CPU images and CUDA images to Docker Hub and GHCR. The Docker quick start now uses the published image, a persistent named data volume, and host port `64448`, while local builds remain supported.
 - Theme-aware scrollbars — scrollable app surfaces now use compact scrollbar colors that follow the active light or dark theme.
 

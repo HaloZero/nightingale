@@ -1,8 +1,11 @@
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Separator } from "@/components/ui/separator";
+import { useBestScoresBySongForActiveProfile } from "@/hooks/use-best-scores-by-song";
+import { usePreparePlaybackMutation } from "@/mutations/use-prepare-playback-mutation";
+import { SONGS } from "@/queries/keys";
 import type { QueuedStatus } from "@/types/QueuedStatus";
 import type { Song } from "@/types/Song";
-import { SONGS } from "@/queries/keys";
 import { useQueryClient } from "@tanstack/react-query";
 import { PlayIcon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -12,8 +15,6 @@ import { KeyTempoSection } from "./details/key-tempo-section";
 import { SongDetailsHeader } from "./details/song-details-header";
 import { useSongDetailsNav } from "./details/use-song-details-nav";
 import { getSongStatusInfo } from "./shared/song-status";
-import type { ShiftType } from "./shifts";
-import { useBestScoresBySongForActiveProfile } from "@/hooks/use-best-scores-by-song";
 
 interface SongDetailsSidebarProps {
   song: Song;
@@ -26,10 +27,9 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
   const queryClient = useQueryClient();
   const bestScores = useBestScoresBySongForActiveProfile();
   const { detailsRef, closeDetails } = useSongDetailsNav(onClose);
-  const [shifting, setShifting] = useState<Record<ShiftType, boolean>>({
-    tempo: false,
-    key: false,
-  });
+  const { mutate: preparePlayback, isLoading: preparingPlayback } = usePreparePlaybackMutation();
+  const [tempo, setTempo] = useState(song.tempo);
+  const [keyOffset, setKeyOffset] = useState(song.key_offset);
 
   const status = getSongStatusInfo(song.is_analyzed, queueStatus);
   const analysisBusy = queueStatus === "Queued" || Boolean(status.isAnalyzing);
@@ -51,6 +51,22 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
     return () => clearInterval(interval);
   }, [keyPending, queryClient]);
 
+  const handlePlay = () => {
+    const hasAdjustments = keyOffset !== song.key_offset || tempo !== song.tempo;
+
+    if (!hasAdjustments) {
+      navigate("/playback", { state: { song } });
+      return;
+    }
+
+    preparePlayback(
+      { song, tempo, keyOffset },
+      {
+        onSuccess: (preparedSong) => navigate("/playback", { state: { song: preparedSong } }),
+      },
+    );
+  };
+
   return (
     <aside
       ref={detailsRef}
@@ -68,8 +84,11 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
         <KeyTempoSection
           song={song}
           supportsShifts={supportsShifts}
-          shifting={shifting}
-          setShifting={setShifting}
+          tempo={tempo}
+          keyOffset={keyOffset}
+          disabled={preparingPlayback}
+          onTempoChange={setTempo}
+          onKeyOffsetChange={setKeyOffset}
         />
 
         <Separator />
@@ -85,11 +104,20 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
       <footer className="border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <Button
           size="lg"
-          className="h-8 w-full"
-          disabled={!status.isReady || shifting.key || shifting.tempo}
-          onClick={() => navigate("/playback", { state: { song } })}
+          className="h-8 w-full disabled:bg-primary/50 disabled:text-primary-foreground/45 disabled:opacity-100"
+          disabled={!status.isReady || preparingPlayback}
+          aria-busy={preparingPlayback}
+          onClick={handlePlay}
         >
-          <PlayIcon /> Play
+          {preparingPlayback ? (
+            <>
+              <Spinner className="size-4" /> Preparing playback…
+            </>
+          ) : (
+            <>
+              <PlayIcon /> Play
+            </>
+          )}
         </Button>
       </footer>
     </aside>
