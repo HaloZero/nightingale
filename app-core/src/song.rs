@@ -136,6 +136,61 @@ pub struct TranscriptMetaInfo {
     pub no_stems: bool,
 }
 
+/// File-derived fields -- everything `Song::from_path` reads straight from
+/// the audio file itself (tags + sidecar), as opposed to analysis-derived
+/// fields (key, tempo, transcript_source, ...) which live in the cache and
+/// are untouched by a metadata refresh.
+struct FileDerivedFields {
+    title: String,
+    artist: String,
+    album: String,
+    duration_secs: f64,
+    album_art_path: Option<PathBuf>,
+}
+
+fn read_file_derived_fields(path: &Path, is_video: bool, cache: &CacheDir) -> FileDerivedFields {
+    let (mut title, mut artist, mut album, duration_secs, cover_bytes) = if is_video {
+        read_video_metadata(path)
+    } else {
+        read_metadata(path)
+    };
+
+    if title.is_empty() {
+        title = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+    }
+    if artist.is_empty() {
+        artist = "Unknown Artist".to_string();
+    }
+    if album.is_empty() {
+        album = "Unknown Album".to_string();
+    }
+
+    // Content-addressed: writes only if a cover with this exact hash isn't
+    // already cached, so a refresh after the physical cover file was
+    // deleted (but the DB row still references its path) re-materializes
+    // it, while re-reading an unchanged embedded cover is a no-op write.
+    let album_art_path = cover_bytes.and_then(|bytes| {
+        let cover_hash = blake3::hash(&bytes).to_hex()[..32].to_string();
+        let cover_path = cache.cover_path(&cover_hash);
+        if !cover_path.exists() {
+            std::fs::write(&cover_path, &bytes).ok()?;
+        }
+        Some(cover_path)
+    });
+
+    FileDerivedFields {
+        title,
+        artist,
+        album,
+        duration_secs,
+        album_art_path,
+    }
+}
+
 impl Song {
     pub fn from_path(
         path: &Path,
@@ -152,34 +207,13 @@ impl Song {
         usdx: Option<UsdxBundle>,
         origin: SongOrigin,
     ) -> Self {
-        let (mut title, mut artist, mut album, duration_secs, cover_bytes) = if is_video {
-            read_video_metadata(path)
-        } else {
-            read_metadata(path)
-        };
-
-        if title.is_empty() {
-            title = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Unknown")
-                .to_string();
-        }
-        if artist.is_empty() {
-            artist = "Unknown Artist".to_string();
-        }
-        if album.is_empty() {
-            album = "Unknown Album".to_string();
-        }
-
-        let album_art_path = cover_bytes.and_then(|bytes| {
-            let cover_hash = blake3::hash(&bytes).to_hex()[..32].to_string();
-            let cover_path = cache.cover_path(&cover_hash);
-            if !cover_path.exists() {
-                std::fs::write(&cover_path, &bytes).ok()?;
-            }
-            Some(cover_path)
-        });
+        let FileDerivedFields {
+            title,
+            artist,
+            album,
+            duration_secs,
+            album_art_path,
+        } = read_file_derived_fields(path, is_video, cache);
 
         Self {
             path: path.to_path_buf(),
@@ -201,6 +235,33 @@ impl Song {
             origin,
             no_stems: false,
         }
+    }
+
+    /// Re-reads title/artist/album/duration/album art straight from
+    /// `self.path`, overwriting the current values in place. Everything
+    /// analysis-derived (key, tempo,
+    /// transcript_source, is_analyzed, ...) is untouched -- this is a
+    /// metadata-only refresh, not a reanalysis. Exists for the "Refresh
+    /// metadata" action: unlike a rescan (which only ever runs this logic
+    /// for brand-new paths, see `source::folder::scan`), it re-derives
+    /// these fields for a song already in the library -- e.g. to
+    /// re-materialize an album art cache file that was deleted outside the
+    /// app, since `Song::from_path`'s cover write only fires for paths the
+    /// scanner has never seen before.
+    pub fn refresh_metadata(&mut self, cache: &CacheDir) {
+        let FileDerivedFields {
+            title,
+            artist,
+            album,
+            duration_secs,
+            album_art_path,
+        } = read_file_derived_fields(&self.path, self.is_video, cache);
+
+        self.title = title;
+        self.artist = artist;
+        self.album = album;
+        self.duration_secs = duration_secs;
+        self.album_art_path = album_art_path;
     }
 }
 

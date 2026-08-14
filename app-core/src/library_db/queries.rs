@@ -391,6 +391,26 @@ pub fn iter_file_hashes_filtered_full_reanalyzable(
     )
 }
 
+/// Songs eligible for "Refresh metadata" (re-read title/artist/album/
+/// duration/album art/lyrics-source-flags straight from the file, see
+/// `Song::refresh_metadata`): local files only -- remote-source songs have
+/// no local bytes to re-read, and USDX bundles get their metadata from the
+/// chart file, not audio tags. No `is_analyzed` requirement -- this is
+/// independent of the analysis pipeline. `origin`/`usdx` live only in the
+/// JSON `payload` column (not indexed), same pattern already used in
+/// migrations.rs/playlists.rs/remote.rs for filtering on those fields.
+pub fn iter_file_hashes_filtered_refreshable(
+    filters: &LibraryMenuFilters,
+) -> rusqlite::Result<Vec<String>> {
+    iter_file_hashes_filtered(
+        filters,
+        &[
+            "json_extract(s.payload, '$.origin.kind') = 'local_file'",
+            "json_extract(s.payload, '$.usdx') IS NULL",
+        ],
+    )
+}
+
 pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
     with_conn(|c| {
         let (

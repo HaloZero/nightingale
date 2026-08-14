@@ -6,6 +6,7 @@ use app_core::{
     reanalyze_all_transcript as core_reanalyze_all_transcript,
     reanalyze_force_transcribe as core_reanalyze_force_transcribe,
     reanalyze_full as core_reanalyze_full, reanalyze_transcript as core_reanalyze_transcript,
+    refresh_metadata as core_refresh_metadata, refresh_metadata_all as core_refresh_metadata_all,
     shift_key_done_payload, shift_tempo_done_payload, LibraryMenuFilters,
 };
 use tauri::{AppHandle, Emitter};
@@ -63,6 +64,16 @@ pub fn reanalyze_all_force_transcribe(filters: LibraryMenuFilters) -> usize {
 #[tauri::command]
 pub fn realign_all(filters: LibraryMenuFilters, language: Option<String>) -> usize {
     core_realign_all(&filters, language)
+}
+
+#[tauri::command]
+pub fn refresh_metadata(file_hash: String) {
+    core_refresh_metadata(&file_hash);
+}
+
+#[tauri::command]
+pub fn refresh_metadata_all(filters: LibraryMenuFilters) -> usize {
+    core_refresh_metadata_all(&filters)
 }
 
 #[tauri::command]

@@ -587,6 +587,39 @@ pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> us
     hashes.len()
 }
 
+/// "Refresh metadata": re-reads title/artist/album/duration/album art/
+/// lyrics-source-flags straight from the song's file (see
+/// `Song::refresh_metadata`) without touching anything analysis-derived --
+/// unlike every other action in this file, it never calls `enqueue_one` or
+/// marks the song unanalyzed. Exists mainly to recover from a cover-art (or
+/// similar) cache file being deleted outside the app: a normal rescan only
+/// ever re-derives these fields for brand-new paths (see
+/// `source::folder::scan`'s `already_processed` filter), so an
+/// already-known song's stale, now-broken `album_art_path` would otherwise
+/// never get fixed. No-ops for remote-source/USDX songs (nothing local to
+/// re-read); see `iter_file_hashes_filtered_refreshable`.
+pub fn refresh_metadata(file_hash: &str) {
+    let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
+        return;
+    };
+    if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
+        return;
+    }
+    let cache = CacheDir::new();
+    song.refresh_metadata(&cache);
+    let _ = library_db::update_song_fields(file_hash, &song);
+}
+
+/// Bulk "Refresh metadata" -- see `iter_file_hashes_filtered_refreshable`
+/// and `refresh_metadata`.
+pub fn refresh_metadata_all(filters: &LibraryMenuFilters) -> usize {
+    let hashes = library_db::iter_file_hashes_filtered_refreshable(filters).unwrap_or_default();
+    for hash in &hashes {
+        refresh_metadata(hash);
+    }
+    hashes.len()
+}
+
 fn reanalyze(file_hash: &str, full: bool) {
     let cache = CacheDir::new();
     if full {
