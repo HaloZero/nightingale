@@ -24,7 +24,7 @@ import { AudioLinesIcon, EllipsisIcon, ImageIcon, RefreshCwIcon } from "lucide-r
 export const BulkActionsMenu = () => {
   const { reanalyzeAllFull, reanalyzeAllTranscript, refreshMetadataAll } = useAnalysis();
   const { data } = useSongs();
-  const hasAnalyzedSongs = (data?.pages[0]?.analyzed_count ?? 0) > 0;
+  const analyzedCount = data?.pages[0]?.analyzed_count ?? 0;
 
   return (
     <DropdownMenu>
@@ -44,10 +44,10 @@ export const BulkActionsMenu = () => {
           <ImageIcon />
           Refresh metadata
         </DropdownMenuItem>
-        {hasAnalyzedSongs ? (
+        {analyzedCount > 0 ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel>Analyzed songs</DropdownMenuLabel>
+            <DropdownMenuLabel>Analyzed songs ({analyzedCount})</DropdownMenuLabel>
             <DropdownMenuItem onClick={() => reanalyzeAllTranscript()}>
               <RefreshCwIcon />
               Refetch lyrics & align
