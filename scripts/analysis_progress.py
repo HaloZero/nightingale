@@ -3,15 +3,18 @@
 
 Locates config.json the same way app-core does (NIGHTINGALE_DATA_PATH env
 var, else ~/.nightingale), reads `data_path` from it to find songs.db, then
-reports how many songs were analyzed in the past 24 hours and estimates how
-long the remaining library will take at that rate.
+reports how many songs were analyzed in the lookback window and estimates
+how long the remaining library will take at that rate.
 
 Usage:
-    python3 scripts/analysis_progress.py
+    python3 scripts/analysis_progress.py              # last 24 hours
+    python3 scripts/analysis_progress.py --hours 6     # last 6 hours
+    python3 scripts/analysis_progress.py --hours 168   # last week
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sqlite3
@@ -68,7 +71,32 @@ def fmt_duration(seconds: float) -> str:
     return " ".join(parts)
 
 
+def fmt_window(hours: float) -> str:
+    if hours == int(hours) and hours % 24 == 0 and hours > 24:
+        return f"{int(hours // 24)}d"
+    if hours == int(hours):
+        return f"{int(hours)}h"
+    return f"{hours}h"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--hours",
+        type=float,
+        default=24.0,
+        help="lookback window in hours for the 'recently analyzed' stats (default: 24)",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
+    if args.hours <= 0:
+        print("--hours must be positive", file=sys.stderr)
+        return 1
+    window = fmt_window(args.hours)
+
     cfg_path = config_path()
     if not cfg_path.is_file():
         print(f"No config found at {cfg_path}", file=sys.stderr)
@@ -93,7 +121,7 @@ def main() -> int:
         ).fetchone()
         remaining = total_songs - analyzed_songs
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime(
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=args.hours)).strftime(
             "%Y-%m-%dT%H:%M:%S.%fZ"
         )
         row = conn.execute(
@@ -104,7 +132,7 @@ def main() -> int:
             """,
             (cutoff,),
         ).fetchone()
-        events_24h, distinct_songs_24h, avg_ms_24h = row
+        events_window, distinct_songs_window, avg_ms_window = row
     finally:
         conn.close()
 
@@ -114,21 +142,21 @@ def main() -> int:
     print(f"Remaining:  {remaining} songs")
     print()
 
-    print("Last 24 hours:")
-    print(f"  Songs analyzed:   {distinct_songs_24h}")
-    if events_24h != distinct_songs_24h:
-        print(f"  Analysis runs:    {events_24h} (includes re-analysis)")
+    print(f"Last {window}:")
+    print(f"  Songs analyzed:   {distinct_songs_window}")
+    if events_window != distinct_songs_window:
+        print(f"  Analysis runs:    {events_window} (includes re-analysis)")
 
-    if distinct_songs_24h == 0:
+    if distinct_songs_window == 0:
         print()
-        print("No analysis activity in the past 24 hours -- can't estimate time remaining.")
+        print(f"No analysis activity in the past {window} -- can't estimate time remaining.")
         return 0
 
-    avg_seconds = (avg_ms_24h or 0) / 1000
-    wall_clock_rate_per_hour = distinct_songs_24h / 24
+    avg_seconds = (avg_ms_window or 0) / 1000
+    wall_clock_rate_per_hour = distinct_songs_window / args.hours
     print(f"  Avg time/song:    {fmt_duration(avg_seconds)}")
     print(f"  Wall-clock rate:  {wall_clock_rate_per_hour:.2f} songs/hour "
-          f"({distinct_songs_24h} songs / 24h, includes any idle time)")
+          f"({distinct_songs_window} songs / {window}, includes any idle time)")
     print()
 
     if remaining <= 0:
@@ -142,7 +170,7 @@ def main() -> int:
               f"~{fmt_duration(active_eta)}")
     if wall_clock_rate_per_hour > 0:
         wall_eta_hours = remaining / wall_clock_rate_per_hour
-        print(f"  At last-24h wall-clock rate ({wall_clock_rate_per_hour:.2f} songs/hour): "
+        print(f"  At last-{window} wall-clock rate ({wall_clock_rate_per_hour:.2f} songs/hour): "
               f"~{fmt_duration(wall_eta_hours * 3600)}")
 
     return 0
