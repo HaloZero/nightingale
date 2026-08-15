@@ -12,3 +12,8 @@ latest.json
 
 # Local-only release/updater notes (not for the public repo)
 RELEASING.md
+
+# Mac Files
+**/.DS_Store
+
+**/__pycache__
