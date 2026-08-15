@@ -35,6 +35,12 @@ pub struct SongsStore {
     pub processed: Vec<Song>,
     #[serde(default)]
     pub processed_count: usize,
+    /// Count of songs matching the current filter that are already analyzed
+    /// -- lets the frontend gate analyzed-only bulk actions (e.g. full
+    /// reanalysis, refetch lyrics & align) without paging in every song in
+    /// the filtered set.
+    #[serde(default)]
+    pub analyzed_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]

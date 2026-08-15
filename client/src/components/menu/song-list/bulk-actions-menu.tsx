@@ -8,33 +8,23 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAnalysis } from "@/hooks/use-analysis";
-import { useDialog } from "@/hooks/use-dialog";
-import {
-  AlignLeftIcon,
-  AudioLinesIcon,
-  EllipsisIcon,
-  ImageIcon,
-  LanguagesIcon,
-  MicIcon,
-  RefreshCwIcon,
-} from "lucide-react";
+import { useSongs } from "@/queries/use-songs";
+import { AudioLinesIcon, EllipsisIcon, ImageIcon, RefreshCwIcon } from "lucide-react";
 
-/** Bulk counterpart to the per-song "Realign / Refetch lyrics & align /
- * Force transcribe / Full reanalysis / Change language / Refresh metadata"
- * actions in song-actions.ts, applied to every song matching the current
- * library filter instead of one song at a time. Ineligible songs (not yet
- * analyzed, USDX, or -- for everything but full reanalysis and refresh
- * metadata -- LRC-provided) are excluded server-side per action; see the
- * eligibility queries in app-core's library_db/queries.rs. */
+/** Bulk counterpart to a subset of the per-song actions in song-actions.ts,
+ * applied to every song matching the current library filter instead of one
+ * song at a time. "Refresh metadata" applies to any local-file song
+ * regardless of analysis state; "Full reanalysis" and "Refetch lyrics &
+ * align" only apply to already-analyzed songs (mirrors the per-song menu's
+ * gating), so they're grouped under their own section, hidden entirely when
+ * the current filter has no analyzed songs. Ineligible songs within an
+ * eligible section (USDX, LRC-provided, etc.) are still excluded
+ * server-side per action; see the eligibility queries in app-core's
+ * library_db/queries.rs. */
 export const BulkActionsMenu = () => {
-  const {
-    reanalyzeAllFull,
-    reanalyzeAllTranscript,
-    reanalyzeAllForceTranscribe,
-    realignAll,
-    refreshMetadataAll,
-  } = useAnalysis();
-  const { setMode } = useDialog();
+  const { reanalyzeAllFull, reanalyzeAllTranscript, refreshMetadataAll } = useAnalysis();
+  const { data } = useSongs();
+  const hasAnalyzedSongs = (data?.pages[0]?.analyzed_count ?? 0) > 0;
 
   return (
     <DropdownMenu>
@@ -49,32 +39,25 @@ export const BulkActionsMenu = () => {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">
-        <DropdownMenuLabel>Filtered songs</DropdownMenuLabel>
-        <DropdownMenuItem onClick={() => realignAll()}>
-          <AlignLeftIcon />
-          Realign
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => reanalyzeAllTranscript()}>
-          <RefreshCwIcon />
-          Refetch lyrics & align
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => reanalyzeAllForceTranscribe()}>
-          <MicIcon />
-          Force transcribe
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => reanalyzeAllFull()}>
-          <AudioLinesIcon />
-          Full reanalysis
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setMode({ mode: "bulk-language" })}>
-          <LanguagesIcon />
-          Change language
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
+        <DropdownMenuLabel>All songs</DropdownMenuLabel>
         <DropdownMenuItem onClick={() => refreshMetadataAll()}>
           <ImageIcon />
           Refresh metadata
         </DropdownMenuItem>
+        {hasAnalyzedSongs ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Analyzed songs</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => reanalyzeAllTranscript()}>
+              <RefreshCwIcon />
+              Refetch lyrics & align
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => reanalyzeAllFull()}>
+              <AudioLinesIcon />
+              Full reanalysis
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

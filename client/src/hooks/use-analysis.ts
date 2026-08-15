@@ -6,7 +6,6 @@ import {
   enqueueAll,
   enqueueOne,
   realign,
-  realignAll,
   reanalyzeAllForceTranscribe,
   reanalyzeAllFull,
   reanalyzeAllTranscript,
@@ -173,11 +172,6 @@ export const useAnalysis = () => {
       reanalyzeAllForceTranscribe: wrapBulk(
         "force transcribing",
         () => reanalyzeAllForceTranscribe(currentFilters()),
-        invalidateSongs,
-      ),
-      realignAll: wrapBulk(
-        "realigning",
-        (language?: string) => realignAll(currentFilters(), language),
         invalidateSongs,
       ),
     };

@@ -291,20 +291,27 @@ pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore>
         })?
     };
 
-    let processed_count = if let Some(ref where_sql) = where_sql {
-        let sql = format!("SELECT COUNT(*) FROM songs s WHERE {where_sql}");
+    let (processed_count, analyzed_count) = if let Some(ref where_sql) = where_sql {
+        let sql = format!(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN s.is_analyzed = 1 THEN 1 ELSE 0 END), 0)
+             FROM songs s WHERE {where_sql}"
+        );
         with_conn(|c| {
-            let n: i64 = c.query_row(
+            let (count, analyzed): (i64, i64) = c.query_row(
                 &sql,
                 rusqlite::params_from_iter(bind_strings.iter().map(|s| s.as_str())),
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            Ok(n as usize)
+            Ok((count as usize, analyzed as usize))
         })?
     } else {
         with_conn(|c| {
-            let n: i64 = c.query_row("SELECT COUNT(*) FROM songs", [], |r| r.get(0))?;
-            Ok(n as usize)
+            let (count, analyzed): (i64, i64) = c.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN is_analyzed = 1 THEN 1 ELSE 0 END), 0) FROM songs",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok((count as usize, analyzed as usize))
         })?
     };
 
@@ -313,6 +320,7 @@ pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore>
         folder,
         processed,
         processed_count,
+        analyzed_count,
     })
 }
 

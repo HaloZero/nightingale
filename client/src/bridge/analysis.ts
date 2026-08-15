@@ -45,13 +45,6 @@ export const reanalyzeAllForceTranscribe = async (filters: LibraryMenuFilters): 
   return await invoke<number>("reanalyze_all_force_transcribe", { filters });
 };
 
-export const realignAll = async (
-  filters: LibraryMenuFilters,
-  language?: string,
-): Promise<number> => {
-  return await invoke<number>("realign_all", { filters, language });
-};
-
 export const refreshMetadata = async (fileHash: string): Promise<void> => {
   return await invoke<void>("refresh_metadata", { fileHash });
 };
