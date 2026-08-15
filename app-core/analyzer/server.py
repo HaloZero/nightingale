@@ -16,6 +16,7 @@ Wire protocol (NDJSON over TCP, one JSON object per line):
   Server -> client:
     {"type":"hello_ack"}
     {"type":"progress","pct":N,"msg":"..."}
+    {"type":"starting","stage":"key_detect"|"separation"|"transcribe"|"align"}
     {"type":"timing","stage":"key_detect"|"separation"|"transcribe"|"align","ms":N}
     {"type":"done","hash":"..."}
     {"type":"error","kind":"oom"|"generic","msg":"..."}

@@ -30,23 +30,27 @@ pub struct AnalysisTimingRow<'a> {
     /// `align_ms` is set per row -- whichever is `Some` says whether that
     /// run used lyrics.
     pub align_ms: Option<u64>,
-    /// 1-minute system load average (`sysctl vm.loadavg`) sampled when the
-    /// run started, as a cheap proxy for other processes (Plex transcodes,
-    /// downloads, ...) competing for CPU/GPU at the time.
+    /// 1-minute system load average (`sysctl vm.loadavg`), sampled
+    /// `SEPARATION_SNAPSHOT_DELAY` (120s) into the separation stage, as a
+    /// cheap proxy for other processes (Plex transcodes, downloads, ...)
+    /// competing for CPU/GPU while separation is actually running. `None`
+    /// when separation was skipped, served from cache, or finished before
+    /// the snapshot fired -- an attempt-start sample was tried first but
+    /// mostly caught the GPU idle before separation had ramped up.
     pub load_avg_1m: Option<f64>,
-    /// GPU utilization (0.0-1.0), clock speed, and die temperature sampled
-    /// via `macmon` (https://github.com/vladkens/macmon) when the run
-    /// started -- confirms whether stem separation is actually landing on
-    /// the GPU and whether it's thermal-throttled. All three are `None` if
-    /// `macmon` isn't installed or the sample fails; this is a best-effort
-    /// diagnostic, not a requirement.
+    /// GPU utilization (0.0-1.0), clock speed, and die temperature from the
+    /// same mid-separation `macmon` sample (https://github.com/vladkens/macmon)
+    /// as `load_avg_1m` -- confirms whether stem separation is actually
+    /// landing on the GPU and whether it's thermal-throttled. All three are
+    /// `None` if `macmon` isn't installed or the sample fails; this is a
+    /// best-effort diagnostic, not a requirement.
     pub gpu_active_ratio: Option<f64>,
     pub gpu_freq_mhz: Option<i64>,
     pub gpu_temp_c: Option<f64>,
     /// SoC-wide CPU utilization (0.0-1.0) from the same `macmon` sample as
     /// the GPU fields above -- a finer-grained companion to `load_avg_1m`.
     pub cpu_active_ratio: Option<f64>,
-    /// Fraction of physical RAM in use at run start, also from `macmon` --
+    /// Fraction of physical RAM in use at sample time, also from `macmon` --
     /// a proxy for memory pressure (macmon doesn't expose macOS's actual
     /// Normal/Warn/Critical pressure level, only raw usage).
     pub mem_pressure_ratio: Option<f64>,

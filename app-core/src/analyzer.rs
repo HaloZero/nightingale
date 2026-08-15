@@ -4,7 +4,7 @@ use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ fn last_device() -> Option<String> {
 
 /// 1-minute system load average via `sysctl vm.loadavg` (e.g. `{ 7.71 5.24
 /// 4.50 }`) -- a no-`sudo` proxy for other processes (Plex transcodes,
-/// downloads, ...) competing for CPU/GPU when an analysis run starts.
+/// downloads, ...) competing for CPU/GPU while separation runs.
 fn load_avg_1m() -> Option<f64> {
     let output = Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok()?;
     if !output.status.success() {
@@ -146,6 +146,22 @@ fn macmon_snapshot() -> Option<MacmonSnapshot> {
         },
     })
 }
+
+/// `load_avg_1m()` + `macmon_snapshot()`, bundled as the one contention
+/// reading taken for a song's analysis-timing row.
+struct ContentionSnapshot {
+    load_avg_1m: Option<f64>,
+    macmon: Option<MacmonSnapshot>,
+}
+
+/// How far into the separation stage to sample `ContentionSnapshot`. A
+/// snapshot taken at attempt-start (the previous approach) mostly caught the
+/// GPU idle -- separation hadn't ramped up yet -- so `gpu_active_ratio` read
+/// 0 on well over half of sampled songs even though separation is the stage
+/// that actually drives the GPU. Waiting until separation has been running
+/// for a while gives a reading that reflects what's actually contending for
+/// the GPU/CPU during the expensive part of the pipeline.
+const SEPARATION_SNAPSHOT_DELAY: Duration = Duration::from_secs(120);
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -880,10 +896,8 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
 
         let server = guard.as_mut().unwrap();
         let attempt_start = Instant::now();
-        let load_avg_1m_at_start = load_avg_1m();
-        let macmon_at_start = macmon_snapshot();
         match send_and_monitor(server, &json_str, Some(file_hash)) {
-            Ok(SongResult::Done(stage_timings)) => {
+            Ok(SongResult::Done(stage_timings, contention_snapshot)) => {
                 let total_ms = attempt_start.elapsed().as_millis() as u64;
                 info!("[analyzer:timing] hash={file_hash} stage=total ms={total_ms}");
                 if config.track_analysis_timings() {
@@ -891,8 +905,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                         file_hash,
                         &config,
                         &stage_timings,
-                        load_avg_1m_at_start,
-                        macmon_at_start,
+                        contention_snapshot,
                         total_ms,
                     );
                 }
@@ -1058,7 +1071,7 @@ fn run_key_pass(
         let server = guard.as_mut().unwrap();
         // `None` progress hash keeps this off the status pipe (no queue rows).
         match send_and_monitor(server, &json_str, None) {
-            Ok(SongResult::Done(_)) => return Ok(()),
+            Ok(SongResult::Done(..)) => return Ok(()),
             Ok(SongResult::Oom) | Err(_) => {
                 *guard = None;
                 if !retried {
@@ -1136,7 +1149,7 @@ fn prepare_audio_for_analysis(
 // ─── Server communication ────────────────────────────────────────────
 
 enum SongResult {
-    Done(Vec<(String, u64)>),
+    Done(Vec<(String, u64)>, Option<ContentionSnapshot>),
     Oom,
     Error(String),
 }
@@ -1148,6 +1161,9 @@ enum ServerEvent {
         pct: u32,
         #[serde(default)]
         msg: String,
+    },
+    Starting {
+        stage: String,
     },
     Timing {
         stage: String,
@@ -1170,8 +1186,7 @@ fn record_analysis_timing(
     file_hash: &str,
     config: &AppConfig,
     stage_timings: &[(String, u64)],
-    load_avg_1m_at_start: Option<f64>,
-    macmon_at_start: Option<MacmonSnapshot>,
+    contention_snapshot: Option<ContentionSnapshot>,
     total_ms: u64,
 ) {
     let stage_ms = |name: &str| -> Option<u64> {
@@ -1181,6 +1196,7 @@ fn record_analysis_timing(
             .map(|(_, ms)| *ms)
     };
     let device = last_device();
+    let macmon = contention_snapshot.as_ref().and_then(|s| s.macmon.as_ref());
     let row = library_db::AnalysisTimingRow {
         file_hash,
         device: device.as_deref(),
@@ -1195,12 +1211,12 @@ fn record_analysis_timing(
         separation_ms: stage_ms("separation"),
         transcribe_ms: stage_ms("transcribe"),
         align_ms: stage_ms("align"),
-        load_avg_1m: load_avg_1m_at_start,
-        gpu_active_ratio: macmon_at_start.as_ref().and_then(|m| m.gpu_active_ratio),
-        gpu_freq_mhz: macmon_at_start.as_ref().and_then(|m| m.gpu_freq_mhz),
-        gpu_temp_c: macmon_at_start.as_ref().and_then(|m| m.gpu_temp_c),
-        cpu_active_ratio: macmon_at_start.as_ref().and_then(|m| m.cpu_active_ratio),
-        mem_pressure_ratio: macmon_at_start.as_ref().and_then(|m| m.mem_pressure_ratio),
+        load_avg_1m: contention_snapshot.as_ref().and_then(|s| s.load_avg_1m),
+        gpu_active_ratio: macmon.and_then(|m| m.gpu_active_ratio),
+        gpu_freq_mhz: macmon.and_then(|m| m.gpu_freq_mhz),
+        gpu_temp_c: macmon.and_then(|m| m.gpu_temp_c),
+        cpu_active_ratio: macmon.and_then(|m| m.cpu_active_ratio),
+        mem_pressure_ratio: macmon.and_then(|m| m.mem_pressure_ratio),
         total_ms,
     };
     if let Err(e) = library_db::insert_analysis_timing(&row) {
@@ -1219,6 +1235,11 @@ fn send_and_monitor(
 
     let mut line_buf = String::new();
     let mut stage_timings: Vec<(String, u64)> = Vec::new();
+    // Set once "starting" fires for the separation stage; polled once that
+    // stage's "timing" event confirms it ran long enough for the delayed
+    // sample to have fired (see `SEPARATION_SNAPSHOT_DELAY`).
+    let mut separation_snapshot_rx: Option<mpsc::Receiver<ContentionSnapshot>> = None;
+    let mut contention_snapshot: Option<ContentionSnapshot> = None;
     loop {
         line_buf.clear();
         let bytes = server.reader.read_line(&mut line_buf)?;
@@ -1249,14 +1270,43 @@ fn send_and_monitor(
                     update_queue_status(hash, QueuedStatus::Analyzing(pct as usize));
                 }
             }
+            ServerEvent::Starting { stage } => {
+                if stage == "separation" {
+                    let (tx, rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(SEPARATION_SNAPSHOT_DELAY);
+                        let _ = tx.send(ContentionSnapshot {
+                            load_avg_1m: load_avg_1m(),
+                            macmon: macmon_snapshot(),
+                        });
+                    });
+                    separation_snapshot_rx = Some(rx);
+                }
+            }
             ServerEvent::Timing { stage, ms } => {
                 match progress_hash {
                     Some(hash) => info!("[analyzer:timing] hash={hash} stage={stage} ms={ms}"),
                     None => info!("[analyzer:timing] stage={stage} ms={ms}"),
                 }
+                if stage == "separation" {
+                    // Only collect the sample if separation actually ran
+                    // long enough for it to have fired; otherwise leave the
+                    // row's contention fields empty rather than reading a
+                    // snapshot taken after separation already finished. By
+                    // this point the delay has already elapsed in real time,
+                    // so the recv is just picking up an already-sent value
+                    // -- the timeout is a safety net, not an expected wait.
+                    if let Some(rx) = separation_snapshot_rx.take() {
+                        if ms >= SEPARATION_SNAPSHOT_DELAY.as_millis() as u64 {
+                            contention_snapshot = rx.recv_timeout(Duration::from_secs(5)).ok();
+                        }
+                    }
+                }
                 stage_timings.push((stage, ms));
             }
-            ServerEvent::Done { .. } => return Ok(SongResult::Done(stage_timings)),
+            ServerEvent::Done { .. } => {
+                return Ok(SongResult::Done(stage_timings, contention_snapshot));
+            }
             ServerEvent::Error { kind, msg } => {
                 let kind_s = kind.as_deref().unwrap_or("generic");
                 if kind_s == "oom" {
