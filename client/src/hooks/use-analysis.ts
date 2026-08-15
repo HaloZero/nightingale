@@ -90,6 +90,27 @@ export const useAnalysis = () => {
         }
       };
 
+    // Same as `wrap`, but returns the handler's resolved value to the
+    // caller instead of discarding it -- for actions like `refreshMetadata`
+    // where the caller needs to distinguish "did something" from "nothing
+    // to do" rather than getting a blanket success. Resolves `undefined` on
+    // error (the generic error toast already fired), same as a caught
+    // exception would.
+    const wrapResult =
+      <A extends unknown[], R>(handler: (...args: A) => Promise<R>, invalidate: () => void) =>
+      async (...args: A): Promise<R | undefined> => {
+        try {
+          const result = await handler(...args);
+          invalidate();
+          return result;
+        } catch (error: unknown) {
+          toast.error(
+            `Error while running an analysis action: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
+          return undefined;
+        }
+      };
+
     // Same as `wrap`, but for the bulk actions: they resolve with how many
     // eligible songs got queued (ineligible ones -- not yet analyzed, USDX,
     // etc. depending on the action -- are excluded server-side, never
@@ -153,7 +174,7 @@ export const useAnalysis = () => {
       reanalyzeFull: wrap(reanalyzeFull, invalidateSongs),
       realign: wrap(realign, invalidateSongs),
       reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
-      refreshMetadata: wrap(refreshMetadata, invalidateSongs),
+      refreshMetadata: wrapResult(refreshMetadata, invalidateSongs),
       refreshMetadataAll: wrapBulkDone(
         "Refreshed metadata",
         () => refreshMetadataAll(currentFilters()),

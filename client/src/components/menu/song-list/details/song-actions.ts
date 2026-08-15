@@ -21,7 +21,11 @@ interface AnalysisHandlers {
   reanalyzeTranscript: AnalysisHandler;
   realign: AnalysisHandler;
   reanalyzeForceTranscribe: AnalysisHandler;
-  refreshMetadata: AnalysisHandler;
+  /** Resolves `false` (not an exception) when nothing was actually
+   * refreshed -- ineligible/missing song or a failed DB write -- so `run`
+   * can tell that apart from a real refresh. See app-core's
+   * `refresh_metadata`. */
+  refreshMetadata: (fileHash: string) => Promise<boolean | undefined>;
 }
 
 interface BuildActionGroupsParams {
@@ -32,7 +36,11 @@ interface BuildActionGroupsParams {
   analysis: AnalysisHandlers;
   onEditLyrics: () => void;
   onChangeLanguage: () => void;
-  run: (message: string, action: () => void | Promise<void>) => () => Promise<void>;
+  run: (
+    message: string,
+    action: () => void | boolean | undefined | Promise<void | boolean | undefined>,
+    onFalse?: string,
+  ) => () => Promise<void>;
 }
 
 export function buildActionGroups({
@@ -155,8 +163,10 @@ export function buildActionGroups({
           icon: ImageIcon,
           title: "Refresh metadata",
           description: "Re-read title, artist, album, cover art, and lyrics source from the file.",
-          onClick: run(`Refreshed metadata for "${song.title}"`, () =>
-            analysis.refreshMetadata(song.file_hash),
+          onClick: run(
+            `Refreshed metadata for "${song.title}"`,
+            () => analysis.refreshMetadata(song.file_hash),
+            `Nothing to refresh for "${song.title}"`,
           ),
         },
       ]);

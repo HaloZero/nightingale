@@ -28,10 +28,16 @@ export const ActionsSection = ({
   const { data: profiles } = useProfiles();
   const hasScores = profiles?.scores.some((score) => score.song_hash === song.file_hash) ?? false;
 
-  const run = (message: string, action: () => void | Promise<void>) => async () => {
-    await action();
-    toast.info(message);
-  };
+  const run =
+    (
+      message: string,
+      action: () => void | boolean | undefined | Promise<void | boolean | undefined>,
+      onFalse?: string,
+    ) =>
+    async () => {
+      const result = await action();
+      toast.info(result === false && onFalse ? onFalse : message);
+    };
 
   const groups = buildActionGroups({
     song,

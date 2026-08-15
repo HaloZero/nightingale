@@ -353,8 +353,7 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         }
         "refresh_metadata" => {
             let args: FileHashArgs = deserialize(payload)?;
-            app_core::refresh_metadata(&args.file_hash);
-            Ok(Value::Null)
+            Ok(Value::from(app_core::refresh_metadata(&args.file_hash)))
         }
         "refresh_metadata_all" => {
             #[derive(Deserialize)]

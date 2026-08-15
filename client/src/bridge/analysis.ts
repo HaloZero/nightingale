@@ -45,8 +45,8 @@ export const reanalyzeAllForceTranscribe = async (filters: LibraryMenuFilters): 
   return await invoke<number>("reanalyze_all_force_transcribe", { filters });
 };
 
-export const refreshMetadata = async (fileHash: string): Promise<void> => {
-  return await invoke<void>("refresh_metadata", { fileHash });
+export const refreshMetadata = async (fileHash: string): Promise<boolean> => {
+  return await invoke<boolean>("refresh_metadata", { fileHash });
 };
 
 export const refreshMetadataAll = async (filters: LibraryMenuFilters): Promise<number> => {

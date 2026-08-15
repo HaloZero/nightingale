@@ -67,8 +67,8 @@ pub fn realign_all(filters: LibraryMenuFilters, language: Option<String>) -> usi
 }
 
 #[tauri::command]
-pub fn refresh_metadata(file_hash: String) {
-    core_refresh_metadata(&file_hash);
+pub fn refresh_metadata(file_hash: String) -> bool {
+    core_refresh_metadata(&file_hash)
 }
 
 #[tauri::command]

@@ -597,27 +597,29 @@ pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> us
 /// `source::folder::scan`'s `already_processed` filter), so an
 /// already-known song's stale, now-broken `album_art_path` would otherwise
 /// never get fixed. No-ops for remote-source/USDX songs (nothing local to
-/// re-read); see `iter_file_hashes_filtered_refreshable`.
-pub fn refresh_metadata(file_hash: &str) {
+/// re-read); see `iter_file_hashes_filtered_refreshable`. Returns whether a
+/// refresh actually happened -- `false` for a missing/ineligible song or a
+/// failed DB write, so callers can tell "nothing to do" (or "something went
+/// wrong") apart from a real refresh.
+pub fn refresh_metadata(file_hash: &str) -> bool {
     let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
-        return;
+        return false;
     };
     if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
-        return;
+        return false;
     }
     let cache = CacheDir::new();
     song.refresh_metadata(&cache);
-    let _ = library_db::update_song_fields(file_hash, &song);
+    library_db::update_song_fields(file_hash, &song).is_ok()
 }
 
 /// Bulk "Refresh metadata" -- see `iter_file_hashes_filtered_refreshable`
-/// and `refresh_metadata`.
+/// and `refresh_metadata`. Returns how many songs were actually refreshed
+/// (not just how many were eligible), since `refresh_metadata` can still
+/// fail its DB write per-song.
 pub fn refresh_metadata_all(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_refreshable(filters).unwrap_or_default();
-    for hash in &hashes {
-        refresh_metadata(hash);
-    }
-    hashes.len()
+    hashes.iter().filter(|hash| refresh_metadata(hash)).count()
 }
 
 fn reanalyze(file_hash: &str, full: bool) {
