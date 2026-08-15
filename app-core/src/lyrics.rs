@@ -85,7 +85,9 @@ pub fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
         .into_iter()
         .filter(|r| {
             !r.plain_lyrics.is_empty()
-                || r.synced_lyrics.as_deref().is_some_and(|s| !s.trim().is_empty())
+                || r.synced_lyrics
+                    .as_deref()
+                    .is_some_and(|s| !s.trim().is_empty())
         })
         .collect();
 
@@ -116,7 +118,10 @@ pub fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
                 .collect();
             // Normalize empty synced payloads to `None` so the frontend can
             // treat "has LRC" as a simple presence check.
-            if r.synced_lyrics.as_deref().is_some_and(|s| s.trim().is_empty()) {
+            if r.synced_lyrics
+                .as_deref()
+                .is_some_and(|s| s.trim().is_empty())
+            {
                 r.synced_lyrics = None;
             }
             if r.lines.is_empty() && r.synced_lyrics.is_none() {
@@ -273,7 +278,13 @@ pub fn apply_timed_lyrics(file_hash: &str, lrc_text: &str) -> Result<(), String>
     cache.delete_transcript_variants(file_hash);
     let _ = std::fs::remove_file(cache.lyrics_path(file_hash));
 
-    let value = build_lrc_transcript(&parsed, song.language.as_deref(), key.as_deref(), 1.0, no_stems);
+    let value = build_lrc_transcript(
+        &parsed,
+        song.language.as_deref(),
+        key.as_deref(),
+        1.0,
+        no_stems,
+    );
     write_transcript_json(&cache, file_hash, &value)
         .map_err(|e| format!("Failed to write transcript: {e}"))?;
 

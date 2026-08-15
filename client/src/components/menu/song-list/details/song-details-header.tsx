@@ -6,14 +6,21 @@ import { formatSeconds } from "@/utils/format-duration";
 import { AlbumArt } from "../shared/album-art";
 import { LanguageBadge, isDisplayableLanguage } from "../shared/language-badge";
 import { StatusBadge } from "../shared/status-badge";
+import { Stars } from "@/components/shared/stars";
 
 interface SongDetailsHeaderProps {
   song: Song;
   queueStatus?: QueuedStatus;
+  bestScore?: number;
   onClose: () => void;
 }
 
-export const SongDetailsHeader = ({ song, queueStatus, onClose }: SongDetailsHeaderProps) => (
+export const SongDetailsHeader = ({
+  song,
+  queueStatus,
+  bestScore,
+  onClose,
+}: SongDetailsHeaderProps) => (
   <header className="relative border-b px-4 pb-4 pt-3">
     <Button
       variant="ghost"
@@ -43,6 +50,7 @@ export const SongDetailsHeader = ({ song, queueStatus, onClose }: SongDetailsHea
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {song.album || "Unknown album"}
         </p>
+        {bestScore === undefined ? null : <Stars score={bestScore} size="sm" className="mt-1" />}
       </div>
     </div>
 

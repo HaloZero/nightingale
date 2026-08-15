@@ -1,4 +1,4 @@
-import { Song } from "@/types/Song";
+import type { Song } from "@/types/Song";
 import { atom, useAtom } from "jotai";
 
 export type ClearCacheTarget = "all" | "videos" | "models";
@@ -7,6 +7,7 @@ export type DialogMode =
   | "exit"
   | "create-profile"
   | "select-profile"
+  | "leaderboards"
   | "about"
   | "update"
   | "donate"
@@ -16,6 +17,7 @@ export type DialogMode =
   | { mode: "language"; song: Song }
   | { mode: "bulk-language" }
   | { mode: "edit-lyrics"; song: Song }
+  | { mode: "song-leaderboard"; song: Song }
   | { mode: "clear-cache"; target: ClearCacheTarget }
   | null;
 

@@ -634,9 +634,7 @@ fn fetch_libraries(
         .filter(|item| !item.id.is_empty())
         .map(|item| JellyfinLibrary {
             name: pick_string(item.name.as_deref(), "Library"),
-            collection_type: item
-                .collection_type
-                .filter(|value| !value.is_empty()),
+            collection_type: item.collection_type.filter(|value| !value.is_empty()),
             id: item.id,
         })
         .collect())

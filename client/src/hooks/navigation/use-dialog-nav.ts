@@ -87,6 +87,8 @@ export interface UseDialogNavOptions {
   onAction?: (segment: number, slot: number, action: NavAction) => boolean | void;
   /** Root used to resolve focusables and optional `.click()` on confirm. */
   containerRef?: RefObject<HTMLElement | null>;
+  /** Keep the previous virtual focus when an existing surface is temporarily covered. */
+  resetOnOpen?: boolean;
 }
 
 /**
@@ -113,6 +115,7 @@ export function useDialogNav({
   onAction,
   stops,
   containerRef,
+  resetOnOpen = true,
 }: UseDialogNavOptions) {
   const segmentSizes = useMemo(
     () => stops ?? Array.from({ length: itemCount }, () => 1),
@@ -139,19 +142,23 @@ export function useDialogNav({
 
   useEffect(() => {
     if (open) {
-      setSegmentIndex(0);
-      setSlotInSegment(0);
+      if (resetOnOpen) {
+        setSegmentIndex(0);
+        setSlotInSegment(0);
+      }
       openedAtMsRef.current = performance.now();
     }
-  }, [open]);
+  }, [open, resetOnOpen]);
 
-  const clampedSegmentIndex = justOpened
-    ? 0
-    : Math.min(Math.max(0, segmentIndex), Math.max(0, segmentCount - 1));
+  const clampedSegmentIndex =
+    justOpened && resetOnOpen
+      ? 0
+      : Math.min(Math.max(0, segmentIndex), Math.max(0, segmentCount - 1));
 
   const slotsThisSegment = segmentSizes[clampedSegmentIndex] ?? 1;
 
-  const clampedSlot = justOpened ? 0 : Math.min(Math.max(0, slotInSegment), slotsThisSegment - 1);
+  const clampedSlot =
+    justOpened && resetOnOpen ? 0 : Math.min(Math.max(0, slotInSegment), slotsThisSegment - 1);
 
   const flatFocusedIndex = flatIndexFromSegmentLayout(
     segmentSizes,

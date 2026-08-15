@@ -408,8 +408,7 @@ static FORCE_TRANSCRIBE: LazyLock<Mutex<HashSet<String>>> =
 
 /// Hashes whose queued job should only run stem separation (key detect +
 /// separation) and keep the already-written LRC-provided transcript.
-static STEMS_ONLY: LazyLock<Mutex<HashSet<String>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+static STEMS_ONLY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Mark a hash so its next analysis pass separates stems without transcribing,
 /// preserving the transcript built from provided LRC.

@@ -129,8 +129,10 @@ def separate_stems_uvr(audio_path: str, work_dir: str, models_dir: str) -> tuple
         held.append(separator)
         separator.load_model(KARAOKE_MODEL)
 
-        progress(15, "Separating vocals from instrumentals...")
-        output_files = separator.separate(audio_path)
+        progress(15, "Preparing audio for stem separation...")
+        load_path = _ensure_wav(audio_path, work_dir)
+        progress(20, "Separating vocals from instrumentals...")
+        output_files = separator.separate(load_path)
 
     print(f"[nightingale:LOG] Separator outputs: {output_files}", flush=True)
 

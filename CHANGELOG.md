@@ -13,6 +13,24 @@ below.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-14
+
+### Features
+
+- Leaderboards — open a global top-10 ranking across every profile and song from the profile menu, or open a song-specific leaderboard to compare each profile's personal best. Scored songs expose the per-song board directly from their details panel.
+- Personal-best ratings — song cards, table rows, and song details now show the active profile's best score as a five-star rating, with the exact score available on hover.
+
+### Improvements
+
+- Instant key and tempo controls — stepper changes are now staged immediately, then prepared together when playback starts. The Play button shows preparation progress and enters playback only after the adjusted audio is ready.
+- Prebuilt Docker distribution — release tooling can publish multi-architecture CPU images and CUDA images to Docker Hub and GHCR. The Docker quick start now uses the published image, a persistent named data volume, and host port `64448`, while local builds remain supported.
+- Theme-aware scrollbars — scrollable app surfaces now use compact scrollbar colors that follow the active light or dark theme.
+
+### Fixes
+
+- Setup errors now wrap and scroll within the modal instead of overflowing the dialog.
+- UVR stem separation now converts source audio to WAV before loading it, preventing failures on input formats the separator cannot read directly.
+
 ## [1.0.0] - 2026-07-25
 
 🎉 **Nightingale 1.0 is here!** Reaching this milestone means a great deal to me. I'm incredibly proud of the app Nightingale has become and grateful to everyone who has tried it, shared feedback, reported issues, contributed, or simply cheered the project on. Thank you for being part of the journey — I hope you enjoy this release as much as I've enjoyed building it.

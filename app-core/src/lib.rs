@@ -46,7 +46,7 @@ pub use playback::{
 };
 pub use profile::ProfileStore;
 pub use scanner::start_scan;
-pub use song::SongOrigin;
+pub use song::{Song, SongOrigin};
 pub use source::{
     JellyfinAuth, JellyfinSource, MediaSource, NavidromeAuth, NavidromeSource, PlexAuth,
     PlexSource, SourceKind, active_source,

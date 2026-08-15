@@ -5,9 +5,14 @@ import { AlbumArt } from "../shared/album-art";
 import { LanguageBadge } from "../shared/language-badge";
 import { StatusBadge } from "../shared/status-badge";
 import type { SongItemProps } from "../types";
+import { Stars } from "@/components/shared/stars";
+
+interface SongGridCardProps extends SongItemProps {
+  bestScore?: number;
+}
 
 export const SongGridCard = memo(
-  ({ song, queueStatus, index, isFocused, isSelected, onSelect }: SongItemProps) => (
+  ({ song, queueStatus, index, isFocused, isSelected, onSelect, bestScore }: SongGridCardProps) => (
     <button
       type="button"
       data-song-index={index}
@@ -28,6 +33,7 @@ export const SongGridCard = memo(
         <div className="line-clamp-2 text-sm leading-snug font-semibold">{song.title}</div>
         <p className="mt-1 truncate text-xs text-muted-foreground">{song.artist || "—"}</p>
         <p className="truncate text-xs text-muted-foreground">{song.album || "—"}</p>
+        {bestScore === undefined ? null : <Stars score={bestScore} size="sm" className="mt-1" />}
         <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
           <span className="text-xs tabular-nums text-muted-foreground">
             {formatSeconds(song.duration_secs)}

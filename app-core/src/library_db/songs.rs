@@ -191,6 +191,26 @@ pub fn load_song_by_hash(file_hash: &str) -> rusqlite::Result<Option<Song>> {
     })
 }
 
+pub fn load_songs_by_hashes(file_hashes: &[String]) -> rusqlite::Result<Vec<Song>> {
+    if file_hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    with_conn(|c| {
+        let placeholders = (1..=file_hashes.len())
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SELECT payload FROM songs WHERE file_hash IN ({placeholders})");
+        let mut stmt = c.prepare(&sql)?;
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(file_hashes.iter().map(String::as_str)),
+            load_song_from_payload_column,
+        )?;
+        rows.collect()
+    })
+}
+
 /// Rewrite a song row keyed by `old_hash` so its `file_hash`, `path`, and
 /// JSON payload reflect a freshly downloaded source whose true Blake3 differs
 /// from the placeholder we initially stored. Also points any pending row in

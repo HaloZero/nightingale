@@ -1,24 +1,25 @@
-import { SONGS } from "@/queries/keys";
 import type { Song } from "@/types/Song";
-import { useQueryClient } from "@tanstack/react-query";
-import type { Dispatch, SetStateAction } from "react";
-import { toast } from "sonner";
-import { Shifts, type ShiftType } from "../shifts";
+import { Shifts } from "../shifts";
 
 interface KeyTempoSectionProps {
   song: Song;
   supportsShifts: boolean;
-  shifting: Record<ShiftType, boolean>;
-  setShifting: Dispatch<SetStateAction<Record<ShiftType, boolean>>>;
+  tempo: number;
+  keyOffset: number;
+  disabled?: boolean;
+  onTempoChange: (tempo: number) => void;
+  onKeyOffsetChange: (keyOffset: number) => void;
 }
 
 export const KeyTempoSection = ({
   song,
   supportsShifts,
-  shifting,
-  setShifting,
+  tempo,
+  keyOffset,
+  disabled,
+  onTempoChange,
+  onKeyOffsetChange,
 }: KeyTempoSectionProps) => {
-  const queryClient = useQueryClient();
   const sectionClass = supportsShifts ? "px-4 pt-4 pb-2" : "px-4 py-4";
 
   return (
@@ -29,17 +30,11 @@ export const KeyTempoSection = ({
       {supportsShifts ? (
         <Shifts
           song={song}
-          status={shifting}
-          onStart={(type) => setShifting((current) => ({ ...current, [type]: true }))}
-          onSuccess={(message, type) => {
-            toast.success(message);
-            queryClient.invalidateQueries({ queryKey: SONGS });
-            setShifting((current) => ({ ...current, [type]: false }));
-          }}
-          onError={(message, type) => {
-            toast.error(message);
-            setShifting((current) => ({ ...current, [type]: false }));
-          }}
+          tempo={tempo}
+          keyOffset={keyOffset}
+          disabled={disabled}
+          onTempoChange={onTempoChange}
+          onKeyOffsetChange={onKeyOffsetChange}
         />
       ) : (
         <p className="max-w-72 text-xs leading-relaxed text-muted-foreground">
