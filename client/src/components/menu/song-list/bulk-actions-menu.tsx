@@ -15,6 +15,7 @@ import {
   EllipsisIcon,
   ImageIcon,
   LanguagesIcon,
+  ListXIcon,
   MicIcon,
   RefreshCwIcon,
 } from "lucide-react";
@@ -33,6 +34,7 @@ export const BulkActionsMenu = () => {
     reanalyzeAllForceTranscribe,
     realignAll,
     refreshMetadataAll,
+    removeFromQueueAll,
   } = useAnalysis();
   const { setMode } = useDialog();
 
@@ -74,6 +76,10 @@ export const BulkActionsMenu = () => {
         <DropdownMenuItem onClick={() => refreshMetadataAll()}>
           <ImageIcon />
           Refresh metadata
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => removeFromQueueAll()}>
+          <ListXIcon />
+          Remove from queue
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

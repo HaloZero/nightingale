@@ -431,6 +431,17 @@ fn remove_from_queue(file_hash: &str) {
     let _ = library_db::analysis_queue_delete(file_hash);
 }
 
+/// Public entry point for dequeuing a still-pending song (as opposed to
+/// `remove_from_queue`, called internally once analysis finishes): also has
+/// to drop the hash from `ANALYZER.queue`, or the worker would just pick it
+/// back up despite the row being gone.
+fn remove_from_queue_one(file_hash: &str) {
+    let mut state = ANALYZER.lock().unwrap();
+    state.queue.retain(|h| h != file_hash);
+    drop(state);
+    remove_from_queue(file_hash);
+}
+
 pub(crate) fn update_song_analyzed(
     file_hash: &str,
     is_analyzed: bool,
@@ -666,6 +677,18 @@ pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> us
     let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
     for hash in &hashes {
         realign(hash, language.clone());
+    }
+    hashes.len()
+}
+
+/// Bulk "Remove from queue" -- see `iter_file_hashes_filtered_queued` for
+/// eligibility (excludes songs currently being analyzed). Unlike the other
+/// bulk actions this doesn't enqueue further work; it's done synchronously
+/// by the time it returns.
+pub fn remove_from_queue_all(filters: &LibraryMenuFilters) -> usize {
+    let hashes = library_db::iter_file_hashes_filtered_queued(filters).unwrap_or_default();
+    for hash in &hashes {
+        remove_from_queue_one(hash);
     }
     hashes.len()
 }

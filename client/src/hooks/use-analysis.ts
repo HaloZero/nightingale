@@ -15,6 +15,7 @@ import {
   reanalyzeTranscript,
   refreshMetadata,
   refreshMetadataAll,
+  removeFromQueueAll,
 } from "@/bridge/analysis";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 import type { Song } from "@/types/Song";
@@ -160,6 +161,11 @@ export const useAnalysis = () => {
       refreshMetadataAll: wrapBulkDone(
         "Refreshed metadata",
         () => refreshMetadataAll(currentFilters()),
+        invalidateSongs,
+      ),
+      removeFromQueueAll: wrapBulkDone(
+        "Removed from queue",
+        () => removeFromQueueAll(currentFilters()),
         invalidateSongs,
       ),
       reanalyzeAllFull: wrapBulk(

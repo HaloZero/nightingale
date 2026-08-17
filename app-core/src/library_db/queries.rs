@@ -396,6 +396,20 @@ pub fn iter_file_hashes_filtered_realignable(
     )
 }
 
+/// Songs eligible for the bulk "Remove from queue" action: have an
+/// `analysis_queue` row that isn't currently being processed. "analyzing"
+/// rows are excluded -- the worker's next progress update
+/// (`update_queue_status`) would just re-insert a row deleted out from under
+/// it, so an in-progress analysis can't be safely dequeued this way.
+pub fn iter_file_hashes_filtered_queued(
+    filters: &LibraryMenuFilters,
+) -> rusqlite::Result<Vec<String>> {
+    iter_file_hashes_filtered(
+        filters,
+        &["EXISTS (SELECT 1 FROM analysis_queue aq WHERE aq.file_hash = s.file_hash AND aq.status IN ('queued', 'failed'))"],
+    )
+}
+
 /// Songs eligible for bulk full reanalysis: already analyzed, not USDX.
 /// LRC-provided songs ARE included here (matching the per-song menu's
 /// "Analyze with AI" item, which replaces the LRC with a full AI pass) even
