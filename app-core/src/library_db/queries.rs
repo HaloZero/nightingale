@@ -324,11 +324,6 @@ pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore>
     })
 }
 
-/// Shared by `iter_file_hashes_filtered_not_analyzed` and the bulk-action
-/// eligibility queries below -- `extra_where_parts` is always non-empty for
-/// every current caller, so `build_song_where_clause` always returns
-/// `Some`; the `None` branch is kept only because that function's contract
-/// doesn't guarantee it (e.g. if a future caller passed an empty slice).
 fn iter_file_hashes_filtered(
     filters: &LibraryMenuFilters,
     extra_where_parts: &[&str],
@@ -369,11 +364,6 @@ pub fn iter_file_hashes_filtered_not_analyzed(
     iter_file_hashes_filtered(filters, &["s.is_analyzed = 0"])
 }
 
-/// Songs eligible for the "restart the transcribe/align stage" bulk actions
-/// (realign, refetch lyrics & align, force transcribe, change language):
-/// already analyzed, and not USDX or user-provided LRC -- mirrors
-/// song-actions.ts's `supportsAnalysisActions` + `transcript_source` checks
-/// that gate the equivalent per-song menu items.
 pub fn iter_file_hashes_filtered_realignable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
@@ -386,10 +376,7 @@ pub fn iter_file_hashes_filtered_realignable(
     )
 }
 
-/// Songs eligible for bulk full reanalysis: already analyzed, not USDX.
-/// LRC-provided songs ARE included here (matching the per-song menu's
-/// "Analyze with AI" item, which replaces the LRC with a full AI pass) even
-/// though they're excluded from `iter_file_hashes_filtered_realignable`.
+/// Unlike `iter_file_hashes_filtered_realignable`, includes LRC-provided songs.
 pub fn iter_file_hashes_filtered_full_reanalyzable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
@@ -399,14 +386,6 @@ pub fn iter_file_hashes_filtered_full_reanalyzable(
     )
 }
 
-/// Songs eligible for "Refresh metadata" (re-read title/artist/album/
-/// duration/album art/lyrics-source-flags straight from the file, see
-/// `Song::refresh_metadata`): local files only -- remote-source songs have
-/// no local bytes to re-read, and USDX bundles get their metadata from the
-/// chart file, not audio tags. No `is_analyzed` requirement -- this is
-/// independent of the analysis pipeline. `origin`/`usdx` live only in the
-/// JSON `payload` column (not indexed), same pattern already used in
-/// migrations.rs/playlists.rs/remote.rs for filtering on those fields.
 pub fn iter_file_hashes_filtered_refreshable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {

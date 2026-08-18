@@ -19,12 +19,6 @@ import {
   Trash2Icon,
 } from "lucide-react";
 
-/** Mirrors song-actions.ts (same actions, wording, icons), minus "Edit
- * lyrics" / "Change language" which have no bulk equivalent. The analyzed
- * actions are gated and hidden as a group when there's nothing eligible, to
- * match the per-song menu's `supportsAnalysisActions` gating; per-action
- * exclusions (USDX, LRC-provided, etc.) still happen server-side, see
- * app-core's library_db/queries.rs. */
 export const BulkActionsMenu = () => {
   const {
     realignAll,

@@ -571,9 +571,6 @@ pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> us
     hashes.len()
 }
 
-/// Bulk "Delete cache" -- same eligibility as bulk full reanalysis
-/// (`iter_file_hashes_filtered_full_reanalyzable`: already analyzed, not
-/// USDX), matching the per-song menu's own gating (`supportsAnalysisActions`).
 pub fn delete_cache_all(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_full_reanalyzable(filters).unwrap_or_default();
     for hash in &hashes {
@@ -596,6 +593,7 @@ pub fn refresh_metadata(file_hash: &str) -> bool {
     library_db::update_song_fields(file_hash, &song).is_ok()
 }
 
+// Bulk refresh metadata for songs that match filters. Only returns the number of songs that were found and updated
 pub fn refresh_metadata_all(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_refreshable(filters).unwrap_or_default();
     hashes.iter().filter(|hash| refresh_metadata(hash)).count()

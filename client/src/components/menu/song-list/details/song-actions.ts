@@ -21,10 +21,6 @@ interface AnalysisHandlers {
   reanalyzeTranscript: AnalysisHandler;
   realign: AnalysisHandler;
   reanalyzeForceTranscribe: AnalysisHandler;
-  /** Resolves `false` (not an exception) when nothing was actually
-   * refreshed -- ineligible/missing song or a failed DB write -- so `run`
-   * can tell that apart from a real refresh. See app-core's
-   * `refresh_metadata`. */
   refreshMetadata: (fileHash: string) => Promise<boolean | undefined>;
 }
 
@@ -152,11 +148,6 @@ export function buildActionGroups({
       ]);
     }
 
-    // Independent of the analysis pipeline (title/artist/album/duration/
-    // cover/lyrics-source-flags, re-read straight from the file) -- not
-    // gated by transcript_source since it applies equally to LRC-provided
-    // songs. USDX songs get their metadata from the chart file, not audio
-    // tags, so there's nothing here to re-read for them.
     if (!song.usdx) {
       groups.push([
         {
