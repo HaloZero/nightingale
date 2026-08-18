@@ -582,6 +582,8 @@ pub fn delete_cache_all(filters: &LibraryMenuFilters) -> usize {
     hashes.len()
 }
 
+// Refresh metadata for a song, this include things like artist, cover, etc.
+// Returns true if it updated song fields or false if it didn't find a song
 pub fn refresh_metadata(file_hash: &str) -> bool {
     let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
         return false;
