@@ -991,10 +991,22 @@ fn fetch_video_listing(flavor: &str) -> Result<Vec<PendingDownload>, String> {
         order,
     );
 
-    let mut response = ureq::get(&url).call().map_err(|e| {
-        warn!("Pixabay listing request failed for {flavor} ({keyword}): {e}");
-        e.to_string()
-    })?;
+    let mut response = ureq::get(&url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .map_err(|e| {
+            warn!("Pixabay listing request failed for {flavor} ({keyword}): {e}");
+            e.to_string()
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body_text = response.body_mut().read_to_string().unwrap_or_default();
+        warn!("Pixabay listing request failed for {flavor} ({keyword}): http status: {status}: {body_text}");
+        return Err(format!("http status: {status}"));
+    }
 
     let body: serde_json::Value = response.body_mut().read_json().map_err(|e| {
         warn!("Pixabay listing response for {flavor} was not valid JSON: {e}");
