@@ -19,7 +19,7 @@ mod vendor;
 mod vendor_scripts;
 
 pub use analyzer::{
-    AnalysisQueue, delete_cache, enqueue_all, enqueue_one, realign, realign_all,
+    AnalysisQueue, delete_cache, delete_cache_all, enqueue_all, enqueue_one, realign, realign_all,
     reanalyze_all_force_transcribe, reanalyze_all_full, reanalyze_all_transcript,
     reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript, refresh_metadata,
     refresh_metadata_all, shutdown_server,

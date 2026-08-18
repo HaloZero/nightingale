@@ -14,6 +14,10 @@ export const deleteSongCache = async (fileHash: string): Promise<void> => {
   return await invoke<void>("delete_song_cache", { fileHash });
 };
 
+export const deleteSongCacheAll = async (filters: LibraryMenuFilters): Promise<number> => {
+  return await invoke<number>("delete_song_cache_all", { filters });
+};
+
 export const reanalyzeTranscript = async (fileHash: string, language?: string): Promise<void> => {
   return await invoke<void>("reanalyze_transcript", { fileHash, language });
 };
@@ -43,6 +47,13 @@ export const reanalyzeAllTranscript = async (
 
 export const reanalyzeAllForceTranscribe = async (filters: LibraryMenuFilters): Promise<number> => {
   return await invoke<number>("reanalyze_all_force_transcribe", { filters });
+};
+
+export const realignAll = async (
+  filters: LibraryMenuFilters,
+  language?: string,
+): Promise<number> => {
+  return await invoke<number>("realign_all", { filters, language });
 };
 
 export const refreshMetadata = async (fileHash: string): Promise<boolean> => {

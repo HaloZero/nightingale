@@ -10,7 +10,7 @@ mod scanner;
 mod vendor;
 
 use analyzer::{
-    delete_song_cache, enqueue_all, enqueue_one, realign, realign_all,
+    delete_song_cache, delete_song_cache_all, enqueue_all, enqueue_one, realign, realign_all,
     reanalyze_all_force_transcribe, reanalyze_all_full, reanalyze_all_transcript,
     reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript, refresh_metadata,
     refresh_metadata_all, shift_key, shift_tempo,
@@ -126,6 +126,7 @@ pub fn run() {
             enqueue_one,
             enqueue_all,
             delete_song_cache,
+            delete_song_cache_all,
             reanalyze_transcript,
             reanalyze_full,
             realign,

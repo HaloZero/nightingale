@@ -539,15 +539,6 @@ pub fn reanalyze_force_transcribe(file_hash: &str) {
     reanalyze(file_hash, false);
 }
 
-/// Bulk "Full reanalysis": every already-analyzed, non-USDX song matching
-/// `filters` (see `library_db::iter_file_hashes_filtered_full_reanalyzable`)
-/// -- songs that aren't yet analyzed at all are already covered by
-/// `enqueue_all`, and USDX songs never support reanalysis (see
-/// `reanalyze_full`'s own guard). Reuses `reanalyze_full` per song rather
-/// than duplicating its logic; safe to call in a loop since it only marks
-/// the song unanalyzed and pushes onto the single-worker queue via
-/// `enqueue_one` -- it doesn't spawn any work itself. Returns how many
-/// songs were queued.
 pub fn reanalyze_all_full(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_full_reanalyzable(filters).unwrap_or_default();
     for hash in &hashes {
@@ -556,10 +547,6 @@ pub fn reanalyze_all_full(filters: &LibraryMenuFilters) -> usize {
     hashes.len()
 }
 
-/// Bulk "Refetch lyrics & align" -- see `iter_file_hashes_filtered_realignable`
-/// for eligibility. `language` is `Some` only when called from the bulk
-/// "Change language" flow (mode = force); `None` for the plain refetch
-/// action, matching `reanalyze_transcript`'s own per-song signature.
 pub fn reanalyze_all_transcript(filters: &LibraryMenuFilters, language: Option<String>) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
     for hash in &hashes {
@@ -568,7 +555,6 @@ pub fn reanalyze_all_transcript(filters: &LibraryMenuFilters, language: Option<S
     hashes.len()
 }
 
-/// Bulk "Force transcribe" -- see `iter_file_hashes_filtered_realignable`.
 pub fn reanalyze_all_force_transcribe(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
     for hash in &hashes {
@@ -577,8 +563,6 @@ pub fn reanalyze_all_force_transcribe(filters: &LibraryMenuFilters) -> usize {
     hashes.len()
 }
 
-/// Bulk "Realign" -- see `iter_file_hashes_filtered_realignable`. `language`
-/// is `Some` only from the bulk "Change language" flow (mode = realign).
 pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
     for hash in &hashes {
@@ -587,20 +571,17 @@ pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> us
     hashes.len()
 }
 
-/// "Refresh metadata": re-reads title/artist/album/duration/album art/
-/// lyrics-source-flags straight from the song's file (see
-/// `Song::refresh_metadata`) without touching anything analysis-derived --
-/// unlike every other action in this file, it never calls `enqueue_one` or
-/// marks the song unanalyzed. Exists mainly to recover from a cover-art (or
-/// similar) cache file being deleted outside the app: a normal rescan only
-/// ever re-derives these fields for brand-new paths (see
-/// `source::folder::scan`'s `already_processed` filter), so an
-/// already-known song's stale, now-broken `album_art_path` would otherwise
-/// never get fixed. No-ops for remote-source/USDX songs (nothing local to
-/// re-read); see `iter_file_hashes_filtered_refreshable`. Returns whether a
-/// refresh actually happened -- `false` for a missing/ineligible song or a
-/// failed DB write, so callers can tell "nothing to do" (or "something went
-/// wrong") apart from a real refresh.
+/// Bulk "Delete cache" -- same eligibility as bulk full reanalysis
+/// (`iter_file_hashes_filtered_full_reanalyzable`: already analyzed, not
+/// USDX), matching the per-song menu's own gating (`supportsAnalysisActions`).
+pub fn delete_cache_all(filters: &LibraryMenuFilters) -> usize {
+    let hashes = library_db::iter_file_hashes_filtered_full_reanalyzable(filters).unwrap_or_default();
+    for hash in &hashes {
+        delete_cache(hash);
+    }
+    hashes.len()
+}
+
 pub fn refresh_metadata(file_hash: &str) -> bool {
     let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
         return false;
@@ -613,10 +594,6 @@ pub fn refresh_metadata(file_hash: &str) -> bool {
     library_db::update_song_fields(file_hash, &song).is_ok()
 }
 
-/// Bulk "Refresh metadata" -- see `iter_file_hashes_filtered_refreshable`
-/// and `refresh_metadata`. Returns how many songs were actually refreshed
-/// (not just how many were eligible), since `refresh_metadata` can still
-/// fail its DB write per-song.
 pub fn refresh_metadata_all(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_refreshable(filters).unwrap_or_default();
     hashes.iter().filter(|hash| refresh_metadata(hash)).count()

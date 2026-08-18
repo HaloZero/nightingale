@@ -9,20 +9,31 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAnalysis } from "@/hooks/use-analysis";
 import { useSongs } from "@/queries/use-songs";
-import { AudioLinesIcon, EllipsisIcon, ImageIcon, RefreshCwIcon } from "lucide-react";
+import {
+  AlignLeftIcon,
+  AudioLinesIcon,
+  EllipsisIcon,
+  ImageIcon,
+  MicIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
 
-/** Bulk counterpart to a subset of the per-song actions in song-actions.ts,
- * applied to every song matching the current library filter instead of one
- * song at a time. "Refresh metadata" applies to any local-file song
- * regardless of analysis state; "Full reanalysis" and "Refetch lyrics &
- * align" only apply to already-analyzed songs (mirrors the per-song menu's
- * gating), so they're grouped under their own section, hidden entirely when
- * the current filter has no analyzed songs. Ineligible songs within an
- * eligible section (USDX, LRC-provided, etc.) are still excluded
- * server-side per action; see the eligibility queries in app-core's
- * library_db/queries.rs. */
+/** Mirrors song-actions.ts (same actions, wording, icons), minus "Edit
+ * lyrics" / "Change language" which have no bulk equivalent. The analyzed
+ * actions are gated and hidden as a group when there's nothing eligible, to
+ * match the per-song menu's `supportsAnalysisActions` gating; per-action
+ * exclusions (USDX, LRC-provided, etc.) still happen server-side, see
+ * app-core's library_db/queries.rs. */
 export const BulkActionsMenu = () => {
-  const { reanalyzeAllFull, reanalyzeAllTranscript, refreshMetadataAll } = useAnalysis();
+  const {
+    realignAll,
+    reanalyzeAllFull,
+    reanalyzeAllTranscript,
+    reanalyzeAllForceTranscribe,
+    refreshMetadataAll,
+    deleteSongCacheAll,
+  } = useAnalysis();
   const { data } = useSongs();
   const analyzedCount = data?.pages[0]?.analyzed_count ?? 0;
 
@@ -48,13 +59,25 @@ export const BulkActionsMenu = () => {
           <>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Analyzed songs ({analyzedCount})</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => realignAll()}>
+              <AlignLeftIcon />
+              Realign
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => reanalyzeAllTranscript()}>
               <RefreshCwIcon />
               Refetch lyrics & align
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => reanalyzeAllForceTranscribe()}>
+              <MicIcon />
+              Force transcribe
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => reanalyzeAllFull()}>
               <AudioLinesIcon />
               Full reanalysis
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onClick={() => deleteSongCacheAll()}>
+              <Trash2Icon />
+              Delete cache
             </DropdownMenuItem>
           </>
         ) : null}

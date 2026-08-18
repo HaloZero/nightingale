@@ -3,9 +3,11 @@ import { useLibraryFilter } from "@/hooks/use-library-filter";
 import { useSearch } from "@/hooks/use-search";
 import {
   deleteSongCache,
+  deleteSongCacheAll,
   enqueueAll,
   enqueueOne,
   realign,
+  realignAll,
   reanalyzeAllForceTranscribe,
   reanalyzeAllFull,
   reanalyzeAllTranscript,
@@ -170,9 +172,15 @@ export const useAnalysis = () => {
         await deleteSongCache(fileHash);
         markSongCacheDeleted(fileHash);
       }, invalidateSongs),
+      deleteSongCacheAll: wrapBulkDone(
+        "Cache deleted",
+        () => deleteSongCacheAll(currentFilters()),
+        invalidateSongs,
+      ),
       reanalyzeTranscript: wrap(reanalyzeTranscript, invalidateSongs),
       reanalyzeFull: wrap(reanalyzeFull, invalidateSongs),
       realign: wrap(realign, invalidateSongs),
+      realignAll: wrapBulk("realigning", () => realignAll(currentFilters()), invalidateSongs),
       reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
       refreshMetadata: wrapResult(refreshMetadata, invalidateSongs),
       refreshMetadataAll: wrapBulkDone(
