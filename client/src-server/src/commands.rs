@@ -364,6 +364,14 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             let args: Args = deserialize(payload)?;
             Ok(Value::from(app_core::refresh_metadata_all(&args.filters)))
         }
+        "remove_from_queue_all" => {
+            #[derive(Deserialize)]
+            struct Args {
+                filters: LibraryMenuFilters,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::remove_from_queue_all(&args.filters)))
+        }
         "shift_key" => shift_key_cmd(events, payload),
         "shift_tempo" => shift_tempo_cmd(events, payload),
 
