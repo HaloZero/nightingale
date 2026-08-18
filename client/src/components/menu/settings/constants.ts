@@ -92,6 +92,7 @@ export const DEFAULTS = {
   mic_latency_compensation_sec: DEFAULT_MIC_LATENCY_COMPENSATION_SEC,
   use_external_lyrics: false,
   auto_analyze: false,
+  restore_analyze: false,
   track_analysis_timings: true,
   lyrics_vertical_position: "bottom",
   lyrics_horizontal_position: "center",
@@ -108,6 +109,7 @@ export const DEFAULTS = {
   | "mic_latency_compensation_sec"
   | "use_external_lyrics"
   | "auto_analyze"
+  | "restore_analyze"
   | "track_analysis_timings"
   | "lyrics_vertical_position"
   | "lyrics_horizontal_position"
@@ -153,6 +155,7 @@ export function getAnalysisNav(isParakeet: boolean) {
         vocalThreshold: 6,
         batchSize: 7,
         useExternalLyrics: 8,
+        restoreAnalyze: 9,
       }
     : {
         separator: 1,
@@ -165,6 +168,7 @@ export function getAnalysisNav(isParakeet: boolean) {
         vocalThreshold: 8,
         batchSize: 9,
         useExternalLyrics: 10,
+        restoreAnalyze: 11,
       };
 }
 
@@ -173,11 +177,12 @@ export function getSettingsStops(tab: SettingsTab, isParakeet: boolean) {
     return [2, 2, 1, 1, 2, 1, 1, 2];
   }
 
-  // Trailing "2" is useExternalLyrics's own toggle -- appended after every
-  // existing field rather than inserted mid-sequence, so none of the
-  // indices above have to shift. footerSegment (Restore Defaults / Close)
-  // is derived as `stops.length - 1`, so it stays correct automatically.
+  // The two "2"s before the trailing footer "2" are useExternalLyrics's and
+  // restoreAnalyze's own toggles -- each appended after every existing field
+  // rather than inserted mid-sequence, so none of the indices above have to
+  // shift. footerSegment (Restore Defaults / Close) is derived as
+  // `stops.length - 1`, so it stays correct automatically.
   return isParakeet
-    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2]
-    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2];
+    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2, 2]
+    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2, 2];
 }

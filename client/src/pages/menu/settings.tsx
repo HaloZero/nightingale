@@ -435,6 +435,30 @@ export const SettingsPage = () => {
                   </Button>
                 </ButtonGroup>
               </Field>
+
+              <Field>
+                <Label>Restore analysis queue</Label>
+                <Hint>
+                  Re-queue songs that were still queued, analyzing, or failed when the server last
+                  stopped, instead of clearing the queue on startup
+                </Hint>
+                <ButtonGroup>
+                  <Button
+                    variant={config?.restore_analyze === true ? "outline" : "default"}
+                    onClick={() => mutate({ restore_analyze: false })}
+                    className={getFocusClassName(analysisNav.restoreAnalyze, 0)}
+                  >
+                    Off
+                  </Button>
+                  <Button
+                    variant={config?.restore_analyze === true ? "default" : "outline"}
+                    onClick={() => mutate({ restore_analyze: true })}
+                    className={getFocusClassName(analysisNav.restoreAnalyze, 1)}
+                  >
+                    On
+                  </Button>
+                </ButtonGroup>
+              </Field>
             </FieldGroup>
           </TabsContent>
         </Tabs>

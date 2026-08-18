@@ -74,7 +74,27 @@ pub use vendor::{
 pub fn startup() -> Result<(), String> {
     init_library().map_err(|e| e.to_string())?;
 
+    let config = AppConfig::load();
+
+    // The worker that owned any persisted rows died with the last process --
+    // nothing is actually "analyzing" or dequeued right now. Snapshot the
+    // hashes before wiping so `restore_analyze` can re-enqueue them through
+    // the normal clean path afterward, rather than trusting the stale
+    // status/percentage left behind. This also resets any `analyzing` rows
+    // back to `queued`, since a stale `analyzing` row is excluded from the
+    // "Remove from queue" bulk action (it assumes a live worker will revisit
+    // it).
+    let restore_hashes: Vec<String> = if config.restore_analyze() {
+        AnalysisQueue::load().entries.into_keys().collect()
+    } else {
+        Vec::new()
+    };
+
     AnalysisQueue::clear();
+
+    for file_hash in &restore_hashes {
+        analyzer::enqueue_one(file_hash);
+    }
 
     let cache = CacheDir::new();
 
@@ -86,7 +106,7 @@ pub fn startup() -> Result<(), String> {
         tracing::warn!("Failed to refresh analyzer scripts: {e}");
     }
 
-    if AppConfig::load().auto_analyze() {
+    if config.auto_analyze() {
         analyzer::enqueue_all(&LibraryMenuFilters::default());
     }
 

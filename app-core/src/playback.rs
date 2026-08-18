@@ -964,6 +964,7 @@ fn fetch_video_listing(flavor: &str) -> Result<Vec<PendingDownload>, String> {
         .unwrap_or_default();
 
     if api_key.is_empty() {
+        warn!("Pixabay fetch for {flavor}: PIXABAY_API_KEY not set");
         return Err("PIXABAY_API_KEY not set".into());
     }
 
@@ -990,16 +991,20 @@ fn fetch_video_listing(flavor: &str) -> Result<Vec<PendingDownload>, String> {
         order,
     );
 
-    let body: serde_json::Value = ureq::get(&url)
-        .call()
-        .map_err(|e| e.to_string())?
-        .body_mut()
-        .read_json()
-        .map_err(|e| e.to_string())?;
+    let mut response = ureq::get(&url).call().map_err(|e| {
+        warn!("Pixabay listing request failed for {flavor} ({keyword}): {e}");
+        e.to_string()
+    })?;
 
-    let hits = body["hits"]
-        .as_array()
-        .ok_or("No hits in Pixabay response")?;
+    let body: serde_json::Value = response.body_mut().read_json().map_err(|e| {
+        warn!("Pixabay listing response for {flavor} was not valid JSON: {e}");
+        e.to_string()
+    })?;
+
+    let hits = body["hits"].as_array().ok_or_else(|| {
+        warn!("Pixabay listing for {flavor} had no `hits` array: {body}");
+        "No hits in Pixabay response".to_string()
+    })?;
 
     let mut results: Vec<PendingDownload> = hits
         .iter()
@@ -1014,6 +1019,12 @@ fn fetch_video_listing(flavor: &str) -> Result<Vec<PendingDownload>, String> {
             })
         })
         .collect();
+
+    info!(
+        "Pixabay listing for {flavor} ({keyword}, {order}): {} hits, {} usable",
+        hits.len(),
+        results.len()
+    );
 
     results.shuffle(&mut rng);
     Ok(results)
@@ -1067,15 +1078,27 @@ pub fn download_pixabay_videos(
 ) {
     let listing = match fetch_video_listing(flavor) {
         Ok(l) => l,
-        Err(_) => return,
+        Err(e) => {
+            warn!("Pixabay download for {flavor}: aborting, listing fetch failed: {e}");
+            return;
+        }
     };
 
     let mut cached = cached_video_paths(flavor);
+    info!(
+        "Pixabay download for {flavor}: {} cached, {} candidates",
+        cached.len(),
+        listing.len()
+    );
 
     while cached.len() > MAX_CACHED_VIDEOS {
         let Some(evicted) = oldest_cached_video(&cached, None) else {
             break;
         };
+        info!(
+            "Pixabay download for {flavor}: evicting {}",
+            evicted.display()
+        );
         std::fs::remove_file(&evicted).ok();
         cached.retain(|path| path != &evicted);
     }
@@ -1084,30 +1107,56 @@ pub fn download_pixabay_videos(
         if cached.len() >= MAX_CACHED_VIDEOS {
             break;
         }
-        if download_file(&dl.url, &dl.dest).is_ok() {
-            cached.push(dl.dest.clone());
-            on_downloaded(dl.dest.to_string_lossy().into_owned(), None);
+        match download_file(&dl.url, &dl.dest) {
+            Ok(()) => {
+                info!("Pixabay download for {flavor}: saved {}", dl.dest.display());
+                cached.push(dl.dest.clone());
+                on_downloaded(dl.dest.to_string_lossy().into_owned(), None);
+            }
+            Err(e) => {
+                warn!(
+                    "Pixabay download for {flavor}: failed to save {}: {e}",
+                    dl.dest.display()
+                );
+            }
         }
     }
 
     if cached.len() < MAX_CACHED_VIDEOS {
+        info!(
+            "Pixabay download for {flavor}: only {} of {MAX_CACHED_VIDEOS} cached, stopping short of rotation",
+            cached.len()
+        );
         return;
     }
 
     let Some(next) = listing.iter().find(|p| !p.dest.exists()) else {
+        info!("Pixabay download for {flavor}: no new candidates left to rotate in");
         return;
     };
 
-    if download_file(&next.url, &next.dest).is_ok() {
-        cached.push(next.dest.clone());
-        let new_path = next.dest.to_string_lossy().into_owned();
-        if let Some(evicted) = oldest_cached_video(&cached, Some(&next.dest)) {
-            let evicted_path = evicted.to_string_lossy().into_owned();
-            std::fs::remove_file(&evicted).ok();
-            on_downloaded(new_path, Some(evicted_path));
-            return;
+    match download_file(&next.url, &next.dest) {
+        Ok(()) => {
+            cached.push(next.dest.clone());
+            let new_path = next.dest.to_string_lossy().into_owned();
+            if let Some(evicted) = oldest_cached_video(&cached, Some(&next.dest)) {
+                let evicted_path = evicted.to_string_lossy().into_owned();
+                info!(
+                    "Pixabay download for {flavor}: rotating in {new_path}, evicting {evicted_path}"
+                );
+                std::fs::remove_file(&evicted).ok();
+                on_downloaded(new_path, Some(evicted_path));
+                return;
+            }
+            info!("Pixabay download for {flavor}: rotating in {new_path}");
+            on_downloaded(new_path, None);
         }
-        on_downloaded(new_path, None);
+        Err(e) => {
+            warn!(
+                "Pixabay download for {flavor}: rotation download failed for {}: {e}",
+                next.dest.display()
+            );
+        }
     }
 }
 

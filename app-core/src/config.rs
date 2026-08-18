@@ -211,6 +211,13 @@ pub struct AppConfig {
     /// lookup, then ASR).
     pub use_external_lyrics: Option<bool>,
     pub auto_analyze: Option<bool>,
+    /// Whether startup restores the on-disk analysis queue instead of
+    /// wiping it. When on, every song that was `queued`/`analyzing`/`failed`
+    /// before shutdown is cleanly re-enqueued (see `enqueue_one`) so work
+    /// resumes; unlike `auto_analyze` it does not sweep the whole library
+    /// for anything else unanalyzed. Off by default to preserve existing
+    /// behavior (clear-on-startup).
+    pub restore_analyze: Option<bool>,
     pub track_analysis_timings: Option<bool>,
     /// Whether a library scan/rescan re-checks `has_lrc_file`/
     /// `has_embedded_lyrics` for every already-known local song, not just
@@ -255,6 +262,7 @@ impl Default for AppConfig {
             vocal_detection_threshold_pct: None,
             use_external_lyrics: None,
             auto_analyze: None,
+            restore_analyze: None,
             track_analysis_timings: None,
             refresh_lyrics_on_scan: None,
             song_list_view: None,
@@ -418,6 +426,10 @@ impl AppConfig {
 
     pub fn auto_analyze(&self) -> bool {
         self.auto_analyze.unwrap_or(false)
+    }
+
+    pub fn restore_analyze(&self) -> bool {
+        self.restore_analyze.unwrap_or(false)
     }
 
     pub fn track_analysis_timings(&self) -> bool {

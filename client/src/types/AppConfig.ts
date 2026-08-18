@@ -47,6 +47,15 @@ export type AppConfig = {
    */
   use_external_lyrics: boolean | null;
   auto_analyze: boolean | null;
+  /**
+   * Whether startup restores the on-disk analysis queue instead of
+   * wiping it. When on, every song that was `queued`/`analyzing`/`failed`
+   * before shutdown is cleanly re-enqueued (see `enqueue_one`) so work
+   * resumes; unlike `auto_analyze` it does not sweep the whole library
+   * for anything else unanalyzed. Off by default to preserve existing
+   * behavior (clear-on-startup).
+   */
+  restore_analyze: boolean | null;
   track_analysis_timings: boolean | null;
   /**
    * Whether a library scan/rescan re-checks `has_lrc_file`/
