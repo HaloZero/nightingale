@@ -364,6 +364,11 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             let args: Args = deserialize(payload)?;
             Ok(Value::from(app_core::refresh_metadata_all(&args.filters)))
         }
+        "remove_from_queue_one" => {
+            let args: FileHashArgs = deserialize(payload)?;
+            app_core::remove_from_queue_one(&args.file_hash);
+            Ok(Value::Null)
+        }
         "remove_from_queue_all" => {
             #[derive(Deserialize)]
             struct Args {

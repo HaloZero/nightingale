@@ -21,12 +21,13 @@ import {
 } from "lucide-react";
 
 /** Bulk counterpart to the per-song "Realign / Refetch lyrics & align /
- * Force transcribe / Full reanalysis / Change language / Refresh metadata"
- * actions in song-actions.ts, applied to every song matching the current
- * library filter instead of one song at a time. Ineligible songs (not yet
- * analyzed, USDX, or -- for everything but full reanalysis and refresh
- * metadata -- LRC-provided) are excluded server-side per action; see the
- * eligibility queries in app-core's library_db/queries.rs. */
+ * Force transcribe / Full reanalysis / Change language / Refresh metadata /
+ * Remove from queue" actions in song-actions.ts, applied to every song
+ * matching the current library filter instead of one song at a time.
+ * Ineligible songs (not yet analyzed, USDX, or -- for everything but full
+ * reanalysis and refresh metadata -- LRC-provided) are excluded
+ * server-side per action; see the eligibility queries in app-core's
+ * library_db/queries.rs. */
 export const BulkActionsMenu = () => {
   const {
     reanalyzeAllFull,

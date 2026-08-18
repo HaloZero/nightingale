@@ -7,7 +7,8 @@ use app_core::{
     reanalyze_force_transcribe as core_reanalyze_force_transcribe,
     reanalyze_full as core_reanalyze_full, reanalyze_transcript as core_reanalyze_transcript,
     refresh_metadata as core_refresh_metadata, refresh_metadata_all as core_refresh_metadata_all,
-    remove_from_queue_all as core_remove_from_queue_all, shift_key_done_payload,
+    remove_from_queue_all as core_remove_from_queue_all,
+    remove_from_queue_one as core_remove_from_queue_one, shift_key_done_payload,
     shift_tempo_done_payload, LibraryMenuFilters,
 };
 use tauri::{AppHandle, Emitter};
@@ -75,6 +76,11 @@ pub fn refresh_metadata(file_hash: String) {
 #[tauri::command]
 pub fn refresh_metadata_all(filters: LibraryMenuFilters) -> usize {
     core_refresh_metadata_all(&filters)
+}
+
+#[tauri::command]
+pub fn remove_from_queue_one(file_hash: String) {
+    core_remove_from_queue_one(&file_hash);
 }
 
 #[tauri::command]

@@ -8,6 +8,7 @@ export type SongStatusInfo = {
   className?: string;
   isAnalyzing?: boolean;
   isReady?: boolean;
+  isQueued?: boolean;
 };
 
 export function formatTranscriptSource(source: Song["transcript_source"]): string {
@@ -19,7 +20,12 @@ export function formatTranscriptSource(source: Song["transcript_source"]): strin
 
 export function getSongStatusInfo(isAnalyzed: boolean, queueStatus?: QueuedStatus): SongStatusInfo {
   if (queueStatus === "Queued") {
-    return { label: "Queued", variant: "secondary", className: ANALYSIS_STATUS_STYLES.queued };
+    return {
+      label: "Queued",
+      variant: "secondary",
+      className: ANALYSIS_STATUS_STYLES.queued,
+      isQueued: true,
+    };
   }
 
   if (typeof queueStatus === "object") {

@@ -15,6 +15,7 @@ import {
   reanalyzeTranscript,
   refreshMetadata,
   refreshMetadataAll,
+  removeFromQueue,
   removeFromQueueAll,
 } from "@/bridge/analysis";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
@@ -150,6 +151,7 @@ export const useAnalysis = () => {
     return {
       enqueueOne: wrap(enqueueOne, invalidateQueue),
       enqueueAll: wrap(() => enqueueAll(currentFilters()), invalidateQueue),
+      removeFromQueue: wrap(removeFromQueue, invalidateQueue),
       deleteSongCache: wrap(async (fileHash: string) => {
         await deleteSongCache(fileHash);
         markSongCacheDeleted(fileHash);

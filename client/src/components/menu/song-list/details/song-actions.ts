@@ -4,6 +4,7 @@ import {
   AudioLinesIcon,
   ImageIcon,
   LanguagesIcon,
+  ListXIcon,
   MicIcon,
   PencilLineIcon,
   RefreshCwIcon,
@@ -16,6 +17,7 @@ type AnalysisHandler = (fileHash: string) => void | Promise<void>;
 
 interface AnalysisHandlers {
   enqueueOne: AnalysisHandler;
+  removeFromQueue: AnalysisHandler;
   deleteSongCache: AnalysisHandler;
   reanalyzeFull: AnalysisHandler;
   reanalyzeTranscript: AnalysisHandler;
@@ -59,6 +61,20 @@ export function buildActionGroups({
         onClick: () => analysis.enqueueOne(song.file_hash),
       },
     ];
+
+    // Mirrors the bulk "Remove from queue" action's eligibility (still
+    // pending, not actively being analyzed) -- see `remove_from_queue_all`
+    // in app-core's analyzer.rs.
+    if (status.isQueued) {
+      notReadyGroup.push({
+        icon: ListXIcon,
+        title: "Remove from queue",
+        description: "Cancel analysis and take this song out of the queue.",
+        onClick: run(`Removed "${song.title}" from the queue`, () =>
+          analysis.removeFromQueue(song.file_hash),
+        ),
+      });
+    }
 
     if (supportsProvideLyrics) {
       notReadyGroup.push({

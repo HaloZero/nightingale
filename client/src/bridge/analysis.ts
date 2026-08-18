@@ -60,6 +60,10 @@ export const refreshMetadataAll = async (filters: LibraryMenuFilters): Promise<n
   return await invoke<number>("refresh_metadata_all", { filters });
 };
 
+export const removeFromQueue = async (fileHash: string): Promise<void> => {
+  return await invoke<void>("remove_from_queue_one", { fileHash });
+};
+
 export const removeFromQueueAll = async (filters: LibraryMenuFilters): Promise<number> => {
   return await invoke<number>("remove_from_queue_all", { filters });
 };

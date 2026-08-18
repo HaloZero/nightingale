@@ -431,11 +431,12 @@ fn remove_from_queue(file_hash: &str) {
     let _ = library_db::analysis_queue_delete(file_hash);
 }
 
-/// Public entry point for dequeuing a still-pending song (as opposed to
-/// `remove_from_queue`, called internally once analysis finishes): also has
-/// to drop the hash from `ANALYZER.queue`, or the worker would just pick it
-/// back up despite the row being gone.
-fn remove_from_queue_one(file_hash: &str) {
+/// Single-song counterpart to `remove_from_queue_all`, same pairing as
+/// `enqueue_one`/`enqueue_all` (as opposed to `remove_from_queue`, called
+/// internally once analysis finishes): also has to drop the hash from
+/// `ANALYZER.queue`, or the worker would just pick it back up despite the
+/// row being gone.
+pub fn remove_from_queue_one(file_hash: &str) {
     let mut state = ANALYZER.lock().unwrap();
     state.queue.retain(|h| h != file_hash);
     drop(state);
