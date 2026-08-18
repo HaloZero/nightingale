@@ -98,6 +98,8 @@ pub struct Song {
     pub title: String,
     pub artist: String,
     pub album: String,
+    #[serde(default = "default_genre")]
+    pub genre: String,
     pub duration_secs: f64,
     pub album_art_path: Option<PathBuf>,
     pub is_analyzed: bool,
@@ -150,6 +152,10 @@ fn default_tempo() -> f64 {
     1.0
 }
 
+fn default_genre() -> String {
+    "Unknown Genre".to_string()
+}
+
 #[derive(Debug, Clone)]
 pub struct TranscriptMetaInfo {
     pub source: TranscriptSource,
@@ -167,6 +173,7 @@ struct FileDerivedFields {
     title: String,
     artist: String,
     album: String,
+    genre: String,
     duration_secs: f64,
     album_art_path: Option<PathBuf>,
     has_lrc_file: bool,
@@ -174,7 +181,7 @@ struct FileDerivedFields {
 }
 
 fn read_file_derived_fields(path: &Path, is_video: bool, cache: &CacheDir) -> FileDerivedFields {
-    let (mut title, mut artist, mut album, duration_secs, cover_bytes) = if is_video {
+    let (mut title, mut artist, mut album, mut genre, duration_secs, cover_bytes) = if is_video {
         read_video_metadata(path)
     } else {
         read_metadata(path)
@@ -192,6 +199,9 @@ fn read_file_derived_fields(path: &Path, is_video: bool, cache: &CacheDir) -> Fi
     }
     if album.is_empty() {
         album = "Unknown Album".to_string();
+    }
+    if genre.is_empty() {
+        genre = default_genre();
     }
 
     // Content-addressed: writes only if a cover with this exact hash isn't
@@ -214,6 +224,7 @@ fn read_file_derived_fields(path: &Path, is_video: bool, cache: &CacheDir) -> Fi
         title,
         artist,
         album,
+        genre,
         duration_secs,
         album_art_path,
         has_lrc_file,
@@ -241,6 +252,7 @@ impl Song {
             title,
             artist,
             album,
+            genre,
             duration_secs,
             album_art_path,
             has_lrc_file,
@@ -253,6 +265,7 @@ impl Song {
             title,
             artist,
             album,
+            genre,
             duration_secs,
             album_art_path,
             is_analyzed,
@@ -287,6 +300,7 @@ impl Song {
             title,
             artist,
             album,
+            genre,
             duration_secs,
             album_art_path,
             has_lrc_file,
@@ -296,6 +310,7 @@ impl Song {
         self.title = title;
         self.artist = artist;
         self.album = album;
+        self.genre = genre;
         self.duration_secs = duration_secs;
         self.album_art_path = album_art_path;
         self.has_lrc_file = has_lrc_file;
@@ -398,7 +413,7 @@ pub fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo 
     }
 }
 
-fn read_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) {
+fn read_metadata(path: &Path) -> (String, String, String, String, f64, Option<Vec<u8>>) {
     // Logged so lofty's own internal warnings (e.g. "Skipping empty \"data\"
     // atom") -- which never carry a file path themselves, since that code is
     // several layers below anything that has one -- can be attributed to a
@@ -406,7 +421,16 @@ fn read_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) 
     debug!("Reading tags: {}", path.display());
     let tagged = match lofty::read_from_path(path) {
         Ok(t) => t,
-        Err(_) => return (String::new(), String::new(), String::new(), 0.0, None),
+        Err(_) => {
+            return (
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                0.0,
+                None,
+            );
+        }
     };
 
     let properties = tagged.properties();
@@ -419,6 +443,7 @@ fn read_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) 
                 String::new(),
                 String::new(),
                 String::new(),
+                String::new(),
                 duration_secs,
                 None,
             );
@@ -428,10 +453,11 @@ fn read_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) 
     let title = tag.title().map(|s| s.to_string()).unwrap_or_default();
     let artist = tag.artist().map(|s| s.to_string()).unwrap_or_default();
     let album = tag.album().map(|s| s.to_string()).unwrap_or_default();
+    let genre = tag.genre().map(|s| s.to_string()).unwrap_or_default();
 
     let album_art = tag.pictures().first().map(|pic| pic.data().to_vec());
 
-    (title, artist, album, duration_secs, album_art)
+    (title, artist, album, genre, duration_secs, album_art)
 }
 
 /// Whether `path`'s own tags carry non-empty lyrics (ID3 `USLT` / MP4
@@ -460,7 +486,7 @@ pub(crate) fn has_sidecar_lrc(path: &Path) -> bool {
     path.with_extension("lrc").is_file()
 }
 
-fn read_video_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<u8>>) {
+fn read_video_metadata(path: &Path) -> (String, String, String, String, f64, Option<Vec<u8>>) {
     let ffmpeg = crate::vendor::ffmpeg_path();
 
     // Just probe the header -- no output file means ffmpeg reads metadata and exits immediately.
@@ -473,6 +499,7 @@ fn read_video_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<
     let mut title = String::new();
     let mut artist = String::new();
     let mut album = String::new();
+    let mut genre = String::new();
     let mut duration_secs = 0.0;
 
     if let Ok(output) = probe {
@@ -493,12 +520,15 @@ fn read_video_metadata(path: &Path) -> (String, String, String, f64, Option<Vec<
             if let Some(val) = strip_meta_tag(trimmed, "album") {
                 album = val;
             }
+            if let Some(val) = strip_meta_tag(trimmed, "genre") {
+                genre = val;
+            }
         }
     }
 
     let album_art = extract_video_thumbnail(&ffmpeg, path);
 
-    (title, artist, album, duration_secs, album_art)
+    (title, artist, album, genre, duration_secs, album_art)
 }
 
 fn extract_video_thumbnail(ffmpeg: &Path, video_path: &Path) -> Option<Vec<u8>> {

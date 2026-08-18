@@ -39,7 +39,7 @@ export const useSongsMeta = () => {
 
 export const useSongs = () => {
   const { search } = useSearch();
-  const { artist, album, playlist, query, status, transcript_source, language } =
+  const { artist, album, genre, playlist, query, status, transcript_source, language } =
     useLibraryFilter();
 
   return useInfiniteQuery({
@@ -48,6 +48,7 @@ export const useSongs = () => {
       search,
       artist,
       album,
+      genre,
       playlist,
       query,
       status,
@@ -60,6 +61,7 @@ export const useSongs = () => {
         filters: {
           artist: artist ?? null,
           album: album ?? null,
+          genre: genre ?? null,
           playlist: playlist ?? null,
           query: query ?? null,
           status: status ?? null,

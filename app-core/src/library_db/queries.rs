@@ -128,6 +128,7 @@ fn append_structural_filters(
 ) {
     let artist = filters.artist.as_deref();
     let album = filters.album.as_deref();
+    let genre = filters.genre.as_deref();
     let playlist = filters.playlist.as_deref();
     let query = filters.query.as_deref();
     let status = filters.status.as_deref();
@@ -165,6 +166,10 @@ fn append_structural_filters(
             where_parts.push("s.album = ?".to_string());
             bind_strings.push(al.to_string());
         }
+    }
+    if let Some(g) = genre.filter(|s| !s.is_empty()) {
+        where_parts.push("s.genre = ?".to_string());
+        bind_strings.push(g.to_string());
     }
     if let Some(q) = query.filter(|s| !s.is_empty()) {
         match q {
@@ -634,6 +639,33 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut stmt = c.prepare(
+            "SELECT s.genre, COUNT(*) AS cnt,
+                    COALESCE(SUM(CASE WHEN s.is_analyzed = 1 THEN 1 ELSE 0 END), 0) AS analysed,
+                    COALESCE(SUM(CASE WHEN aq.status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
+                    COALESCE(SUM(CASE WHEN aq.status = 'analyzing' THEN 1 ELSE 0 END), 0) AS analysing
+             FROM songs s LEFT JOIN analysis_queue aq ON aq.file_hash = s.file_hash
+             GROUP BY s.genre
+             ORDER BY s.genre COLLATE NOCASE",
+        )?;
+        let genres: Vec<LibraryMenuItem> = stmt
+            .query_map([], |r| {
+                let genre: String = r.get(0)?;
+                let cnt: i64 = r.get(1)?;
+                let analysed: i64 = r.get(2)?;
+                let queued: i64 = r.get(3)?;
+                let analysing: i64 = r.get(4)?;
+                Ok(LibraryMenuItem {
+                    value: genre.clone(),
+                    label: genre,
+                    analysed_count: analysed as u64,
+                    queued_count: queued as u64,
+                    analysing_count: analysing as u64,
+                    count: cnt as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut stmt = c.prepare(
             "SELECT s.artist, s.album, COUNT(*) AS cnt,
                     COALESCE(SUM(CASE WHEN s.is_analyzed = 1 THEN 1 ELSE 0 END), 0) AS analysed,
                     COALESCE(SUM(CASE WHEN aq.status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
@@ -725,6 +757,7 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             no_metadata,
             artists,
             albums,
+            genres,
             playlists,
             languages,
         })

@@ -3,6 +3,13 @@
 export type LibraryMenuFilters = {
   artist: string | null;
   album: string | null;
+  /**
+   * File/source-tagged genre, exact match against `Song.genre` (a real
+   * column, always populated -- untagged songs read as `"Unknown
+   * Genre"`). Unlike `language` below, this is scanned metadata, not
+   * analysis-derived.
+   */
+  genre: string | null;
   playlist: string | null;
   query: string | null;
   status: string | null;

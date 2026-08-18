@@ -22,6 +22,7 @@ pub struct LibraryMenuItems {
     pub no_metadata: Vec<LibraryMenuItem>,
     pub artists: Vec<LibraryMenuItem>,
     pub albums: Vec<LibraryMenuItem>,
+    pub genres: Vec<LibraryMenuItem>,
     pub playlists: Vec<LibraryMenuItem>,
     pub languages: Vec<LibraryMenuItem>,
 }

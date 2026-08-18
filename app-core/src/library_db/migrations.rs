@@ -60,6 +60,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     // SCHEMA_VERSION would otherwise never reach it.
     ensure_lyrics_columns(conn)?;
     ensure_analysis_timings_columns(conn)?;
+    ensure_genre_column(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -82,6 +83,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
                 title TEXT NOT NULL,
                 artist TEXT NOT NULL,
                 album TEXT NOT NULL,
+                genre TEXT NOT NULL DEFAULT 'Unknown Genre',
                 duration_secs REAL NOT NULL,
                 album_art_path TEXT,
                 is_analyzed INTEGER NOT NULL,
@@ -203,6 +205,35 @@ fn ensure_lyrics_columns(conn: &Connection) -> rusqlite::Result<()> {
     if !existing.contains("has_embedded_lyrics") {
         conn.execute(
             "ALTER TABLE songs ADD COLUMN has_embedded_lyrics INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+/// Adds the `genre` column for DBs created before genre browsing existed.
+/// Same version-decoupled existence-check shape as [`ensure_lyrics_columns`]
+/// -- pre-existing rows read as "Unknown Genre" until the next scan
+/// repopulates them from file tags / source metadata.
+fn ensure_genre_column(conn: &Connection) -> rusqlite::Result<()> {
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'songs'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !table_exists {
+        return Ok(());
+    }
+
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('songs')")?;
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?
+    };
+
+    if !existing.contains("genre") {
+        conn.execute(
+            "ALTER TABLE songs ADD COLUMN genre TEXT NOT NULL DEFAULT 'Unknown Genre'",
             [],
         )?;
     }

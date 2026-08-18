@@ -32,9 +32,9 @@ pub(crate) fn transcript_source_to_db(t: Option<TranscriptSource>) -> Option<Str
 }
 
 pub(crate) const INSERT_SONG_SQL: &str = "\
-INSERT INTO songs (path, file_hash, title, artist, album, duration_secs, album_art_path,
+INSERT INTO songs (path, file_hash, title, artist, album, genre, duration_secs, album_art_path,
     is_analyzed, language, transcript_source, is_video, has_lrc_file, has_embedded_lyrics, payload)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)";
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)";
 
 pub(crate) fn insert_song_row_prepared(
     stmt: &mut rusqlite::Statement<'_>,
@@ -51,6 +51,7 @@ pub(crate) fn insert_song_row_prepared(
         song.title,
         song.artist,
         song.album,
+        song.genre,
         song.duration_secs,
         album_art,
         song.is_analyzed as i32,
@@ -225,9 +226,9 @@ pub fn rekey_song(old_hash: &str, new_hash: &str, new_song: &Song) -> rusqlite::
         let tx = c.transaction()?;
         tx.execute(
             "UPDATE songs SET file_hash = ?2, path = ?3, payload = ?4, album_art_path = ?5,
-                title = ?6, artist = ?7, album = ?8, duration_secs = ?9,
-                is_analyzed = ?10, language = ?11, transcript_source = ?12, is_video = ?13,
-                has_lrc_file = ?14, has_embedded_lyrics = ?15
+                title = ?6, artist = ?7, album = ?8, genre = ?9, duration_secs = ?10,
+                is_analyzed = ?11, language = ?12, transcript_source = ?13, is_video = ?14,
+                has_lrc_file = ?15, has_embedded_lyrics = ?16
              WHERE file_hash = ?1",
             params![
                 old_hash,
@@ -238,6 +239,7 @@ pub fn rekey_song(old_hash: &str, new_hash: &str, new_song: &Song) -> rusqlite::
                 new_song.title,
                 new_song.artist,
                 new_song.album,
+                new_song.genre,
                 new_song.duration_secs,
                 new_song.is_analyzed as i32,
                 new_song.language,
@@ -271,15 +273,16 @@ pub fn update_song_fields(file_hash: &str, song: &Song) -> rusqlite::Result<()> 
         .map(|p| p.to_string_lossy().into_owned());
     with_conn_mut(|c| {
         c.execute(
-            "UPDATE songs SET title = ?2, artist = ?3, album = ?4, duration_secs = ?5,
-                album_art_path = ?6, is_analyzed = ?7, language = ?8, transcript_source = ?9,
-                is_video = ?10, has_lrc_file = ?11, has_embedded_lyrics = ?12, payload = ?13
+            "UPDATE songs SET title = ?2, artist = ?3, album = ?4, genre = ?5, duration_secs = ?6,
+                album_art_path = ?7, is_analyzed = ?8, language = ?9, transcript_source = ?10,
+                is_video = ?11, has_lrc_file = ?12, has_embedded_lyrics = ?13, payload = ?14
              WHERE file_hash = ?1",
             params![
                 file_hash,
                 song.title,
                 song.artist,
                 song.album,
+                song.genre,
                 song.duration_secs,
                 album_art,
                 song.is_analyzed as i32,

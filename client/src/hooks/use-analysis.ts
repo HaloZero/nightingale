@@ -38,7 +38,7 @@ const withoutAnalysisCache = (song: Song): Song => ({
 
 export const useAnalysis = () => {
   const queryClient = useQueryClient();
-  const { artist, album, playlist, query, status, transcript_source, language } =
+  const { artist, album, genre, playlist, query, status, transcript_source, language } =
     useLibraryFilter();
   const { search } = useSearch();
 
@@ -46,6 +46,7 @@ export const useAnalysis = () => {
     const currentFilters = (): LibraryMenuFilters => ({
       artist,
       album,
+      genre,
       playlist,
       query,
       status,
@@ -189,5 +190,16 @@ export const useAnalysis = () => {
         invalidateSongs,
       ),
     };
-  }, [queryClient, artist, album, playlist, query, status, transcript_source, language, search]);
+  }, [
+    queryClient,
+    artist,
+    album,
+    genre,
+    playlist,
+    query,
+    status,
+    transcript_source,
+    language,
+    search,
+  ]);
 };
