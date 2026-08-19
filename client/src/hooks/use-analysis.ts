@@ -166,8 +166,8 @@ export const useAnalysis = () => {
       reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
       refreshMetadata: wrapResult(refreshMetadata, invalidateSongs),
       refreshMetadataAll: wrapBulk(
-        BulkActionKind.Immediate,
-        "Refreshed metadata",
+        BulkActionKind.Queued,
+        "metadata refresh",
         () => refreshMetadataAll(currentFilters()),
         invalidateSongs,
       ),

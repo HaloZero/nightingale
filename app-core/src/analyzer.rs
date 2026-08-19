@@ -593,10 +593,22 @@ pub fn refresh_metadata(file_hash: &str) -> bool {
     library_db::update_song_fields(file_hash, &song).is_ok()
 }
 
-// Bulk refresh metadata for songs that match filters. Only returns the number of songs that were found and updated
+// Bulk refresh metadata for songs that match filters. Runs on a background
+// thread: refresh_metadata does blocking file I/O plus a LIBRARY_DB
+// lock/unlock per song, so doing this inline for a large filtered set would
+// hold up the shared connection for the whole batch and stall every other
+// command until it finished. Returns the number of songs queued for
+// refresh, not the number actually updated -- callers no longer get that
+// count since the work hasn't happened yet by the time this returns.
 pub fn refresh_metadata_all(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_refreshable(filters).unwrap_or_default();
-    hashes.iter().filter(|hash| refresh_metadata(hash)).count()
+    let count = hashes.len();
+    std::thread::spawn(move || {
+        for hash in &hashes {
+            refresh_metadata(hash);
+        }
+    });
+    count
 }
 
 fn reanalyze(file_hash: &str, full: bool) {
