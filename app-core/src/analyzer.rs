@@ -718,13 +718,20 @@ pub fn refresh_metadata(file_hash: &str) {
 }
 
 /// Bulk "Refresh metadata" -- see `iter_file_hashes_filtered_refreshable`
-/// and `refresh_metadata`.
+/// and `refresh_metadata`. Runs on a background thread: each song is a
+/// separate `LIBRARY_DB` lock/unlock around blocking file I/O (tag reads,
+/// cover writes), so doing this inline in the command handler for a whole
+/// (potentially large) filtered set used to hold up the shared connection
+/// for the entire batch, stalling every other command until it finished.
 pub fn refresh_metadata_all(filters: &LibraryMenuFilters) -> usize {
     let hashes = library_db::iter_file_hashes_filtered_refreshable(filters).unwrap_or_default();
-    for hash in &hashes {
-        refresh_metadata(hash);
-    }
-    hashes.len()
+    let count = hashes.len();
+    std::thread::spawn(move || {
+        for hash in &hashes {
+            refresh_metadata(hash);
+        }
+    });
+    count
 }
 
 fn reanalyze(file_hash: &str, full: bool) {

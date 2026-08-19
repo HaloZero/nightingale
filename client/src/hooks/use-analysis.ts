@@ -123,9 +123,9 @@ export const useAnalysis = () => {
       };
 
     // Same shape as wrapBulk, but for actions that finish synchronously
-    // (refresh metadata doesn't touch the analysis queue at all) rather than
-    // queuing work -- "Queued N songs for..." would be misleading since the
-    // work is already done by the time this resolves.
+    // (removeFromQueueAll doesn't touch the analysis queue asynchronously --
+    // it's done by the time it resolves) rather than queuing work -- "Queued
+    // N songs for..." would be misleading since the work is already done.
     const wrapBulkDone =
       <A extends unknown[]>(
         label: string,
@@ -161,8 +161,8 @@ export const useAnalysis = () => {
       realign: wrap(realign, invalidateSongs),
       reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
       refreshMetadata: wrap(refreshMetadata, invalidateSongs),
-      refreshMetadataAll: wrapBulkDone(
-        "Refreshed metadata",
+      refreshMetadataAll: wrapBulk(
+        "metadata refresh",
         () => refreshMetadataAll(currentFilters()),
         invalidateSongs,
       ),
