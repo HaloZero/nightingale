@@ -14,11 +14,11 @@ import { useSongs } from "@/queries/use-songs";
 import {
   AlignLeftIcon,
   AudioLinesIcon,
-  EllipsisIcon,
   ImageIcon,
   MicIcon,
   RefreshCwIcon,
   Trash2Icon,
+  ZapIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -60,7 +60,7 @@ export const BulkActionsMenu = () => {
             isActionsFocused && "ring-2 ring-primary",
           )}
         >
-          <EllipsisIcon />
+          <ZapIcon />
           <span className="sr-only sm:not-sr-only">Actions</span>
         </Button>
       </DropdownMenuTrigger>
