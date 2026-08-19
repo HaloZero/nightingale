@@ -7,7 +7,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useMenuFocus } from "@/contexts/menu-focus-context";
 import { useAnalysis } from "@/hooks/use-analysis";
+import { cn } from "@/lib/utils";
 import { useSongs } from "@/queries/use-songs";
 import {
   AlignLeftIcon,
@@ -18,9 +20,11 @@ import {
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export const BulkActionsMenu = () => {
   const {
+    enqueueAll,
     realignAll,
     reanalyzeAllFull,
     reanalyzeAllTranscript,
@@ -31,20 +35,41 @@ export const BulkActionsMenu = () => {
   const { data } = useSongs();
   const analyzedCount = data?.pages[0]?.analyzed_count ?? 0;
 
+  const [open, setOpen] = useState(false);
+  const { focus, actionsRef } = useMenuFocus();
+
+  useEffect(() => {
+    actionsRef.current.onConfirmActions = () => setOpen(true);
+    return () => {
+      actionsRef.current.onConfirmActions = null;
+    };
+  }, [actionsRef]);
+
+  const isActionsFocused = focus.active && focus.panel === "songList" && focus.actionsFocused;
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           tabIndex={-1}
           variant="outline"
-          aria-label="More actions on filtered songs"
-          className="w-7 px-0 focus-visible:border-transparent focus-visible:ring-0"
+          data-actions-focus="true"
+          aria-label="Actions on filtered songs"
+          className={cn(
+            "w-7 px-0 focus-visible:border-transparent focus-visible:ring-0 sm:w-auto sm:min-w-28 sm:px-3",
+            isActionsFocused && "ring-2 ring-primary",
+          )}
         >
           <EllipsisIcon />
+          <span className="sr-only sm:not-sr-only">Actions</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">
         <DropdownMenuLabel>All songs</DropdownMenuLabel>
+        <DropdownMenuItem onClick={() => enqueueAll()}>
+          <AudioLinesIcon />
+          Analyze all
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => refreshMetadataAll()}>
           <ImageIcon />
           Refresh metadata

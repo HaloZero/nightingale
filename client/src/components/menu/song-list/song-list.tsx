@@ -119,7 +119,7 @@ export const SongList = () => {
     queueStatus: queue?.entries[song.file_hash],
     index,
     isSelected: selectedKey === songKey(song),
-    isFocused: isSongListActive && !focus.analyzeAllFocused && focus.songIndex === index,
+    isFocused: isSongListActive && !focus.actionsFocused && focus.songIndex === index,
     onSelect: () => selectSong(song),
   });
 

@@ -10,13 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useMenuFocus } from "@/contexts/menu-focus-context";
-import { useAnalysis } from "@/hooks/use-analysis";
 import { useLibraryFilter } from "@/hooks/use-library-filter";
 import { useSearch } from "@/hooks/use-search";
-import { cn } from "@/lib/utils";
-import { AudioLinesIcon, Grid2X2Icon, ListIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Grid2X2Icon, ListIcon } from "lucide-react";
+import { useRef } from "react";
 import { BulkActionsMenu } from "./bulk-actions-menu";
 
 const DEBOUNCE_MS = 500;
@@ -32,22 +29,11 @@ export const Filters = ({ view, onViewChange, isSavingView }: FiltersProps) => {
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { search, setSearch } = useSearch();
   const { status, transcript_source, setLibraryFilter } = useLibraryFilter();
-  const { enqueueAll } = useAnalysis();
-  const { focus, actionsRef } = useMenuFocus();
-
-  useEffect(() => {
-    actionsRef.current.onConfirmAnalyzeAll = enqueueAll;
-    return () => {
-      actionsRef.current.onConfirmAnalyzeAll = null;
-    };
-  }, [actionsRef, enqueueAll]);
 
   const handleChange = (value: string) => {
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setSearch(value), DEBOUNCE_MS);
   };
-
-  const isAnalyzeAllFocused = focus.active && focus.panel === "songList" && focus.analyzeAllFocused;
 
   return (
     <div className="grid w-full grid-cols-2 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] 2xl:grid-cols-[minmax(12rem,1fr)_auto_auto_auto]">
@@ -108,19 +94,6 @@ export const Filters = ({ view, onViewChange, isSavingView }: FiltersProps) => {
         </SelectContent>
       </Select>
       <div className="col-span-2 flex items-center justify-end gap-2 sm:col-span-1">
-        <Button
-          tabIndex={-1}
-          variant="outline"
-          onClick={enqueueAll}
-          data-analyze-all-focus="true"
-          className={cn(
-            "w-7 px-0 focus-visible:border-transparent focus-visible:ring-0 sm:w-auto sm:min-w-28 sm:px-3",
-            isAnalyzeAllFocused && "ring-2 ring-primary",
-          )}
-        >
-          <AudioLinesIcon />
-          <span className="sr-only sm:not-sr-only">Analyze all</span>
-        </Button>
         <BulkActionsMenu />
         <div
           className="flex shrink-0 rounded-md border bg-input/20 p-0.5"

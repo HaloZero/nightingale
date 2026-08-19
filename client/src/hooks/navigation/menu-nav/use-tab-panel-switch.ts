@@ -27,7 +27,7 @@ export function useTabPanelSwitch({ menuFocus, refs, lock }: MenuNavHookOptions)
         return {
           ...prev,
           active: true,
-          analyzeAllFocused: false,
+          actionsFocused: false,
           panel,
           source: "nav",
         };

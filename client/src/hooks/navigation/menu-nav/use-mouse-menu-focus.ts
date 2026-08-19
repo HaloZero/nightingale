@@ -4,7 +4,7 @@ import {
   getHoveredSidebarIndex,
   getHoveredSidebarSubTarget,
   getHoveredSongIndex,
-  isAnalyzeAllTarget,
+  isActionsTarget,
 } from "./dom";
 import type { MenuNavHookOptions } from "./types";
 
@@ -38,7 +38,7 @@ export function useMouseMenuFocus({ menuFocus, refs, lock }: MenuNavHookOptions)
             panel: "sidebar",
             sidebarIndex: subTarget.sidebarIndex,
             sidebarSubIndex: subTarget.sidebarSubIndex,
-            analyzeAllFocused: false,
+            actionsFocused: false,
             source: "mouse",
           };
         });
@@ -60,17 +60,17 @@ export function useMouseMenuFocus({ menuFocus, refs, lock }: MenuNavHookOptions)
             active: true,
             panel: "sidebar",
             sidebarIndex,
-            analyzeAllFocused: false,
+            actionsFocused: false,
             source: "mouse",
           };
         });
         return;
       }
 
-      if (isAnalyzeAllTarget(target)) {
+      if (isActionsTarget(target)) {
         blurActiveTextInput();
         setFocus((prev) => {
-          if (prev.active && prev.panel === "songList" && prev.analyzeAllFocused) {
+          if (prev.active && prev.panel === "songList" && prev.actionsFocused) {
             return prev;
           }
 
@@ -78,7 +78,7 @@ export function useMouseMenuFocus({ menuFocus, refs, lock }: MenuNavHookOptions)
             ...prev,
             active: true,
             panel: "songList",
-            analyzeAllFocused: true,
+            actionsFocused: true,
             source: "mouse",
           };
         });
@@ -92,7 +92,7 @@ export function useMouseMenuFocus({ menuFocus, refs, lock }: MenuNavHookOptions)
           if (
             prev.active &&
             prev.panel === "songList" &&
-            !prev.analyzeAllFocused &&
+            !prev.actionsFocused &&
             prev.songIndex === songIndex
           ) {
             return prev;
@@ -103,7 +103,7 @@ export function useMouseMenuFocus({ menuFocus, refs, lock }: MenuNavHookOptions)
             active: true,
             panel: "songList",
             songIndex,
-            analyzeAllFocused: false,
+            actionsFocused: false,
             source: "mouse",
           };
         });

@@ -81,7 +81,7 @@ function handleConfirmAction(
   refs.lastConfirmAtRef.current = now;
 
   if (focus.panel === "songList") {
-    if (focus.analyzeAllFocused) actionsRef.current.onConfirmAnalyzeAll?.();
+    if (focus.actionsFocused) actionsRef.current.onConfirmActions?.();
     else actionsRef.current.onConfirmSong?.(focus.songIndex);
     return;
   }
@@ -111,12 +111,7 @@ function handleSongGridAction(
 ): boolean {
   const direction = getGridDirection(action);
   const container = scrollRef.current;
-  if (
-    !direction ||
-    focus.panel !== "songList" ||
-    focus.analyzeAllFocused ||
-    !isSongGrid(container)
-  ) {
+  if (!direction || focus.panel !== "songList" || focus.actionsFocused || !isSongGrid(container)) {
     return false;
   }
 
@@ -126,7 +121,7 @@ function handleSongGridAction(
       ...previous,
       active: true,
       songIndex: targetIndex,
-      analyzeAllFocused: false,
+      actionsFocused: false,
       source: "nav",
     }));
     scrollToSong(targetIndex);
@@ -135,17 +130,17 @@ function handleSongGridAction(
 
   setFocus((previous) => {
     let panel = previous.panel;
-    let analyzeAllFocused = false;
+    let actionsFocused = false;
 
     if (direction === "left") panel = "sidebar";
     else if (direction === "right" && actionsRef.current.hasSongDetails) panel = "songDetails";
-    else if (direction === "up") analyzeAllFocused = true;
+    else if (direction === "up") actionsFocused = true;
 
     return {
       ...previous,
       active: true,
       panel,
-      analyzeAllFocused,
+      actionsFocused,
       source: "nav",
     };
   });
@@ -185,7 +180,7 @@ function handleHorizontalAction(
     setFocus((prev) => ({
       ...prev,
       panel: prev.panel === "songList" ? "sidebar" : prev.panel,
-      analyzeAllFocused: false,
+      actionsFocused: false,
       active: true,
       source: "nav",
     }));
@@ -202,7 +197,7 @@ function handleHorizontalAction(
     return {
       ...prev,
       panel,
-      analyzeAllFocused: false,
+      actionsFocused: false,
       active: true,
       source: "nav",
     };
@@ -221,15 +216,15 @@ function handleVerticalAction(
     if (prev.panel === "songList") {
       const songCount = actionsRef.current.songCount;
 
-      if (prev.analyzeAllFocused) {
+      if (prev.actionsFocused) {
         if (action.down) {
-          next.analyzeAllFocused = false;
+          next.actionsFocused = false;
           next.songIndex = 0;
           scrollToSong(0);
         }
       } else if (action.up) {
         if (prev.songIndex <= 0) {
-          next.analyzeAllFocused = true;
+          next.actionsFocused = true;
         } else {
           next.songIndex = prev.songIndex - 1;
           scrollToSong(prev.songIndex - 1);

@@ -18,14 +18,14 @@ export interface MenuFocus {
   songIndex: number;
   sidebarIndex: number;
   sidebarSubIndex: number;
-  analyzeAllFocused: boolean;
+  actionsFocused: boolean;
   source: FocusSource;
 }
 
 export interface MenuFocusActions {
   onConfirmSong: ((index: number) => void) | null;
   onConfirmSidebar: ((index: number) => void) | null;
-  onConfirmAnalyzeAll: (() => void) | null;
+  onConfirmActions: (() => void) | null;
   onSidebarBack: (() => boolean) | null;
   isSidebarBusy: (() => boolean) | null;
   hasSongDetails: boolean;
@@ -55,14 +55,14 @@ const INITIAL_FOCUS: MenuFocus = {
   songIndex: 0,
   sidebarIndex: 0,
   sidebarSubIndex: 0,
-  analyzeAllFocused: false,
+  actionsFocused: false,
   source: "nav",
 };
 
 const INITIAL_ACTIONS: MenuFocusActions = {
   onConfirmSong: null,
   onConfirmSidebar: null,
-  onConfirmAnalyzeAll: null,
+  onConfirmActions: null,
   onSidebarBack: null,
   isSidebarBusy: null,
   hasSongDetails: false,
