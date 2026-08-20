@@ -24,6 +24,10 @@ export const useAnalysisFailureToasts = () => {
 
   const failuresByHashRef = useRef(new Map<string, FailureRecord>());
   const activeToastIdsRef = useRef(new Set<string>());
+  // What we last *toasted* per category (not just computed) -- lets a
+  // manually-dismissed toast stay dismissed until the underlying failure
+  // count/timestamp actually moves, instead of popping back on every poll.
+  const lastToastedRef = useRef(new Map<FailureKind, { count: number; lastFailureAt: number }>());
 
   useEffect(() => {
     if (!data) return;
@@ -57,10 +61,20 @@ export const useAnalysisFailureToasts = () => {
       }
     }
 
+    const lastToasted = lastToastedRef.current;
     const nextActiveToastIds = new Set<string>();
     for (const [kind, { count, lastFailureAt }] of categoryCounts) {
       const toastId = `${TOAST_ID_PREFIX}${kind}`;
       nextActiveToastIds.add(toastId);
+
+      const previous = lastToasted.get(kind);
+      if (previous && previous.count === count && previous.lastFailureAt === lastFailureAt) {
+        // Nothing new since we last showed this category's toast -- if the
+        // user dismissed it, leave it dismissed rather than re-raising it.
+        continue;
+      }
+      lastToasted.set(kind, { count, lastFailureAt });
+
       toast.error(`${labelForFailureKind(kind)}: ${count} song${count === 1 ? "" : "s"} failed`, {
         id: toastId,
         description: `Last failure at ${formatTime(lastFailureAt)}`,
@@ -72,5 +86,9 @@ export const useAnalysisFailureToasts = () => {
       if (!nextActiveToastIds.has(toastId)) toast.dismiss(toastId);
     }
     activeToastIdsRef.current = nextActiveToastIds;
+
+    for (const kind of lastToasted.keys()) {
+      if (!categoryCounts.has(kind)) lastToasted.delete(kind);
+    }
   }, [data]);
 };
