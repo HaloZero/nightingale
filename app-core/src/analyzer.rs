@@ -22,9 +22,8 @@ use crate::source::active_source;
 
 // ─── Analysis queue (persisted to disk) ──────────────────────────────
 
-/// Coarse cause for a `QueuedStatus::Failed`, set at the point in
-/// `process_song`/`finalize_song` where the failure is known -- lets callers
-/// (the UI) group failures without pattern-matching the free-form message.
+/// Coarse cause for a `QueuedStatus::Failed`, so the UI can group failures
+/// without pattern-matching the message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum FailureKind {
@@ -75,7 +74,12 @@ impl FailureKind {
 pub enum QueuedStatus {
     Queued,
     Analyzing(usize),
-    Failed { kind: FailureKind, message: String },
+    Failed {
+        kind: FailureKind,
+        message: String,
+        /// Set via `acknowledge_failures`; resets to false on every new failure.
+        acknowledged: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
@@ -89,13 +93,14 @@ impl AnalysisQueue {
         let entries = library_db::analysis_queue_load_rows()
             .map(|rows| {
                 rows.into_iter()
-                    .map(|(h, st, pct, msg, kind)| {
+                    .map(|(h, st, pct, msg, kind, acknowledged)| {
                         let status = match st.as_str() {
                             "queued" => QueuedStatus::Queued,
                             "analyzing" => QueuedStatus::Analyzing(pct.unwrap_or(0) as usize),
                             "failed" => QueuedStatus::Failed {
                                 kind: kind.as_deref().map(FailureKind::from_db_str).unwrap_or(FailureKind::Other),
                                 message: msg.unwrap_or_default(),
+                                acknowledged,
                             },
                             _ => QueuedStatus::Queued,
                         };
@@ -112,16 +117,17 @@ impl AnalysisQueue {
             .entries
             .iter()
             .map(|(k, v)| match v {
-                QueuedStatus::Queued => (k.clone(), "queued".to_string(), None, None, None),
+                QueuedStatus::Queued => (k.clone(), "queued".to_string(), None, None, None, false),
                 QueuedStatus::Analyzing(p) => {
-                    (k.clone(), "analyzing".to_string(), Some(*p as i64), None, None)
+                    (k.clone(), "analyzing".to_string(), Some(*p as i64), None, None, false)
                 }
-                QueuedStatus::Failed { kind, message } => (
+                QueuedStatus::Failed { kind, message, acknowledged } => (
                     k.clone(),
                     "failed".to_string(),
                     None,
                     Some(message.clone()),
                     Some(kind.as_db_str().to_string()),
+                    *acknowledged,
                 ),
             })
             .collect();
@@ -131,6 +137,12 @@ impl AnalysisQueue {
     pub fn clear() {
         let _ = library_db::analysis_queue_clear();
     }
+}
+
+/// Acknowledges exactly `file_hashes` as `kind` failures, so a failure that
+/// lands after the caller's snapshot isn't swept in too.
+pub fn acknowledge_failures(kind: FailureKind, file_hashes: Vec<String>) {
+    let _ = library_db::analysis_queue_acknowledge_failures(kind.as_db_str(), &file_hashes);
 }
 use crate::vendor::{analyzer_dir, ffmpeg_path, python_path, silent_command};
 
@@ -476,14 +488,14 @@ pub fn mark_stems_only(file_hash: &str) {
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 fn update_queue_status(file_hash: &str, status: QueuedStatus) {
-    let (st, pct, msg, kind) = match &status {
-        QueuedStatus::Queued => ("queued", None, None::<String>, None::<&'static str>),
-        QueuedStatus::Analyzing(p) => ("analyzing", Some(*p as i64), None, None),
-        QueuedStatus::Failed { kind, message } => {
-            ("failed", None, Some(message.clone()), Some(kind.as_db_str()))
+    let (st, pct, msg, kind, acknowledged) = match &status {
+        QueuedStatus::Queued => ("queued", None, None::<String>, None::<&'static str>, false),
+        QueuedStatus::Analyzing(p) => ("analyzing", Some(*p as i64), None, None, false),
+        QueuedStatus::Failed { kind, message, acknowledged } => {
+            ("failed", None, Some(message.clone()), Some(kind.as_db_str()), *acknowledged)
         }
     };
-    let _ = library_db::analysis_queue_upsert_row(file_hash, st, pct, msg.as_deref(), kind);
+    let _ = library_db::analysis_queue_upsert_row(file_hash, st, pct, msg.as_deref(), kind, acknowledged);
 }
 
 fn remove_from_queue(file_hash: &str) {
@@ -592,7 +604,7 @@ pub fn enqueue_all(filters: &LibraryMenuFilters) {
     drop(state);
 
     for hash in &newly_queued {
-        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None, None);
+        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None, None, false);
     }
 
     if should_start {
@@ -893,6 +905,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                 QueuedStatus::Failed {
                     kind: FailureKind::AudioPrep,
                     message: format!("audio prep failed: {e}"),
+                    acknowledged: false,
                 },
             );
             return;
@@ -987,6 +1000,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                 QueuedStatus::Failed {
                     kind: FailureKind::ServerStartup,
                     message: e.to_string(),
+                    acknowledged: false,
                 },
             );
             return;
@@ -1025,6 +1039,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                     QueuedStatus::Failed {
                         kind: FailureKind::GpuOom,
                         message: "CUDA out of memory".into(),
+                        acknowledged: false,
                     },
                 );
                 return;
@@ -1035,6 +1050,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                     QueuedStatus::Failed {
                         kind: FailureKind::Worker,
                         message: msg,
+                        acknowledged: false,
                     },
                 );
                 return;
@@ -1054,6 +1070,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                     QueuedStatus::Failed {
                         kind: FailureKind::ServerCrash,
                         message: format!("Server crashed: {e}"),
+                        acknowledged: false,
                     },
                 );
                 return;
@@ -1084,6 +1101,7 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) {
             QueuedStatus::Failed {
                 kind: FailureKind::MissingOutput,
                 message: "Transcript file not found after analysis".into(),
+                acknowledged: false,
             },
         );
     }

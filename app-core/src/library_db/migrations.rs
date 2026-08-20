@@ -112,7 +112,8 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
                 status TEXT NOT NULL CHECK (status IN ('queued', 'analyzing', 'failed')),
                 analyzing_pct INTEGER,
                 failed_message TEXT,
-                failed_kind TEXT
+                failed_kind TEXT,
+                failed_acknowledged INTEGER NOT NULL DEFAULT 0
             );
         ",
         )?;
@@ -242,10 +243,9 @@ fn ensure_genre_column(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Adds `failed_kind` (app-core's `FailureKind`, e.g. `gpu_oom`,
-/// `server_crash`) alongside the existing free-form `failed_message`, so the
-/// UI can group failures without pattern-matching the message text. Rows
-/// written before this column existed read back as `FailureKind::Other`.
+/// Adds `failed_kind` (app-core's `FailureKind`) and `failed_acknowledged`
+/// for grouping/dismissing failure toasts. Old rows read as `Other` /
+/// unacknowledged.
 fn ensure_analysis_queue_columns(conn: &Connection) -> rusqlite::Result<()> {
     let table_exists: bool = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'analysis_queue'",
@@ -264,6 +264,12 @@ fn ensure_analysis_queue_columns(conn: &Connection) -> rusqlite::Result<()> {
 
     if !existing.contains("failed_kind") {
         conn.execute("ALTER TABLE analysis_queue ADD COLUMN failed_kind TEXT", [])?;
+    }
+    if !existing.contains("failed_acknowledged") {
+        conn.execute(
+            "ALTER TABLE analysis_queue ADD COLUMN failed_acknowledged INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     Ok(())
 }

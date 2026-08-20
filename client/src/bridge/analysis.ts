@@ -1,5 +1,6 @@
 import { invoke, listen } from "./runtime";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
+import type { FailureKind } from "@/types/FailureKind";
 import { ShiftDone } from "@/types/ShiftDone";
 
 export const enqueueOne = async (fileHash: string): Promise<void> => {
@@ -66,6 +67,13 @@ export const removeFromQueue = async (fileHash: string): Promise<void> => {
 
 export const removeFromQueueAll = async (filters: LibraryMenuFilters): Promise<number> => {
   return await invoke<number>("remove_from_queue_all", { filters });
+};
+
+export const acknowledgeAnalysisFailures = async (
+  kind: FailureKind,
+  fileHashes: string[],
+): Promise<void> => {
+  return await invoke<void>("acknowledge_analysis_failures", { kind, fileHashes });
 };
 
 export const shiftTempo = async (fileHash: string, tempo: number): Promise<void> => {

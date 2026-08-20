@@ -10,8 +10,8 @@ mod scanner;
 mod vendor;
 
 use analyzer::{
-    delete_song_cache, enqueue_all, enqueue_one, realign, realign_all,
-    reanalyze_all_force_transcribe, reanalyze_all_full, reanalyze_all_transcript,
+    acknowledge_analysis_failures, delete_song_cache, enqueue_all, enqueue_one, realign,
+    realign_all, reanalyze_all_force_transcribe, reanalyze_all_full, reanalyze_all_transcript,
     reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript, refresh_metadata,
     refresh_metadata_all, remove_from_queue_all, remove_from_queue_one, shift_key, shift_tempo,
 };
@@ -138,6 +138,7 @@ pub fn run() {
             refresh_metadata_all,
             remove_from_queue_one,
             remove_from_queue_all,
+            acknowledge_analysis_failures,
             shift_key,
             shift_tempo,
             // Lyrics

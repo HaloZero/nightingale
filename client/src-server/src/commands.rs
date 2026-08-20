@@ -1,8 +1,8 @@
 use app_core::{
     ensure_mp3_stems_ready_payload, load_lyrics_file, save_lyrics_and_realign,
     search_lrclib_for_hash, shift_key_done_payload, shift_tempo_done_payload, AnalysisQueue,
-    AppConfig, CacheStats, LibraryMenuFilters, LibraryMenuItems, LibrarySource, LoadSongsParams,
-    PixabayVideoDownloaded, ProfileStore, SongsStore,
+    AppConfig, CacheStats, FailureKind, LibraryMenuFilters, LibraryMenuItems, LibrarySource,
+    LoadSongsParams, PixabayVideoDownloaded, ProfileStore, SongsStore,
 };
 use axum::{
     extract::{Path as AxumPath, State},
@@ -376,6 +376,17 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             }
             let args: Args = deserialize(payload)?;
             Ok(Value::from(app_core::remove_from_queue_all(&args.filters)))
+        }
+        "acknowledge_analysis_failures" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                kind: FailureKind,
+                file_hashes: Vec<String>,
+            }
+            let args: Args = deserialize(payload)?;
+            app_core::acknowledge_failures(args.kind, args.file_hashes);
+            Ok(Value::Null)
         }
         "shift_key" => shift_key_cmd(events, payload),
         "shift_tempo" => shift_tempo_cmd(events, payload),

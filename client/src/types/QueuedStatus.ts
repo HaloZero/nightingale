@@ -4,4 +4,14 @@ import type { FailureKind } from "./FailureKind";
 export type QueuedStatus =
   | "Queued"
   | { Analyzing: number }
-  | { Failed: { kind: FailureKind; message: string } };
+  | {
+      Failed: {
+        kind: FailureKind;
+        message: string;
+        /**
+         * Set by `acknowledge_failures`; false whenever this row was
+         * (re)written by a failure, i.e. every failure starts as "new".
+         */
+        acknowledged: boolean;
+      };
+    };

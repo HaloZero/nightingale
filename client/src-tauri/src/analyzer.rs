@@ -1,6 +1,7 @@
 use app_core::{
-    delete_cache as core_delete_cache, enqueue_all as core_enqueue_all,
-    enqueue_one as core_enqueue_one, realign as core_realign, realign_all as core_realign_all,
+    acknowledge_failures as core_acknowledge_failures, delete_cache as core_delete_cache,
+    enqueue_all as core_enqueue_all, enqueue_one as core_enqueue_one, realign as core_realign,
+    realign_all as core_realign_all,
     reanalyze_all_force_transcribe as core_reanalyze_all_force_transcribe,
     reanalyze_all_full as core_reanalyze_all_full,
     reanalyze_all_transcript as core_reanalyze_all_transcript,
@@ -9,13 +10,18 @@ use app_core::{
     refresh_metadata as core_refresh_metadata, refresh_metadata_all as core_refresh_metadata_all,
     remove_from_queue_all as core_remove_from_queue_all,
     remove_from_queue_one as core_remove_from_queue_one, shift_key_done_payload,
-    shift_tempo_done_payload, LibraryMenuFilters,
+    shift_tempo_done_payload, FailureKind, LibraryMenuFilters,
 };
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
 pub fn enqueue_one(file_hash: String) {
     core_enqueue_one(&file_hash);
+}
+
+#[tauri::command]
+pub fn acknowledge_analysis_failures(kind: FailureKind, file_hashes: Vec<String>) {
+    core_acknowledge_failures(kind, file_hashes);
 }
 
 #[tauri::command]

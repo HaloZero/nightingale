@@ -32,8 +32,8 @@ pub mod remote;
 mod songs;
 
 pub use analysis_queue::{
-    analysis_queue_clear, analysis_queue_delete, analysis_queue_load_rows,
-    analysis_queue_save_rows, analysis_queue_upsert_row,
+    analysis_queue_acknowledge_failures, analysis_queue_clear, analysis_queue_delete,
+    analysis_queue_load_rows, analysis_queue_save_rows, analysis_queue_upsert_row,
 };
 pub use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
 pub use migrations::rewrite_legacy_jellyfin_paths;
