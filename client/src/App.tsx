@@ -13,11 +13,18 @@ import { useConfig } from "./queries/use-config";
 import { useUpdate } from "./queries/use-update";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { UPDATES_SUPPORTED } from "./bridge/platform";
+import { useAnalysisFailureToasts } from "./hooks/use-analysis-failure-toasts";
 
 const queryClient = new QueryClient();
 
 const UpdateAutoCheck = () => {
   useUpdate();
+
+  return null;
+};
+
+const AnalysisFailureWatcher = () => {
+  useAnalysisFailureToasts();
 
   return null;
 };
@@ -37,6 +44,7 @@ const InnerWrapper = () => (
     </MenuFocusProvider>
     <Toaster />
     {UPDATES_SUPPORTED && <UpdateAutoCheck />}
+    <AnalysisFailureWatcher />
   </>
 );
 
