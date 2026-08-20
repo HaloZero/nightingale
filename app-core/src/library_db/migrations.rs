@@ -61,6 +61,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_lyrics_columns(conn)?;
     ensure_analysis_timings_columns(conn)?;
     ensure_genre_column(conn)?;
+    ensure_analysis_queue_columns(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -110,7 +111,8 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
                 file_hash TEXT PRIMARY KEY,
                 status TEXT NOT NULL CHECK (status IN ('queued', 'analyzing', 'failed')),
                 analyzing_pct INTEGER,
-                failed_message TEXT
+                failed_message TEXT,
+                failed_kind TEXT
             );
         ",
         )?;
@@ -236,6 +238,32 @@ fn ensure_genre_column(conn: &Connection) -> rusqlite::Result<()> {
             "ALTER TABLE songs ADD COLUMN genre TEXT NOT NULL DEFAULT 'Unknown Genre'",
             [],
         )?;
+    }
+    Ok(())
+}
+
+/// Adds `failed_kind` (app-core's `FailureKind`, e.g. `gpu_oom`,
+/// `server_crash`) alongside the existing free-form `failed_message`, so the
+/// UI can group failures without pattern-matching the message text. Rows
+/// written before this column existed read back as `FailureKind::Other`.
+fn ensure_analysis_queue_columns(conn: &Connection) -> rusqlite::Result<()> {
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'analysis_queue'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !table_exists {
+        return Ok(());
+    }
+
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('analysis_queue')")?;
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?
+    };
+
+    if !existing.contains("failed_kind") {
+        conn.execute("ALTER TABLE analysis_queue ADD COLUMN failed_kind TEXT", [])?;
     }
     Ok(())
 }

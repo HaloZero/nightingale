@@ -22,12 +22,60 @@ use crate::source::active_source;
 
 // ─── Analysis queue (persisted to disk) ──────────────────────────────
 
+/// Coarse cause for a `QueuedStatus::Failed`, set at the point in
+/// `process_song`/`finalize_song` where the failure is known -- lets callers
+/// (the UI) group failures without pattern-matching the free-form message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum FailureKind {
+    /// Couldn't convert/fetch the audio into a form analysis can read.
+    AudioPrep,
+    /// The analyzer server process failed to start.
+    ServerStartup,
+    /// The analyzer server crashed mid-analysis (after a retry).
+    ServerCrash,
+    /// CUDA ran out of GPU memory (after a retry).
+    GpuOom,
+    /// The whisperx worker itself reported an error for this song.
+    Worker,
+    /// The pipeline reported success but no transcript file was produced.
+    MissingOutput,
+    /// Rows written before `FailureKind` existed; kind wasn't recorded.
+    Other,
+}
+
+impl FailureKind {
+    fn as_db_str(self) -> &'static str {
+        match self {
+            FailureKind::AudioPrep => "audio_prep",
+            FailureKind::ServerStartup => "server_startup",
+            FailureKind::ServerCrash => "server_crash",
+            FailureKind::GpuOom => "gpu_oom",
+            FailureKind::Worker => "worker",
+            FailureKind::MissingOutput => "missing_output",
+            FailureKind::Other => "other",
+        }
+    }
+
+    fn from_db_str(s: &str) -> Self {
+        match s {
+            "audio_prep" => FailureKind::AudioPrep,
+            "server_startup" => FailureKind::ServerStartup,
+            "server_crash" => FailureKind::ServerCrash,
+            "gpu_oom" => FailureKind::GpuOom,
+            "worker" => FailureKind::Worker,
+            "missing_output" => FailureKind::MissingOutput,
+            _ => FailureKind::Other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum QueuedStatus {
     Queued,
     Analyzing(usize),
-    Failed(String),
+    Failed { kind: FailureKind, message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
@@ -41,11 +89,14 @@ impl AnalysisQueue {
         let entries = library_db::analysis_queue_load_rows()
             .map(|rows| {
                 rows.into_iter()
-                    .map(|(h, st, pct, msg)| {
+                    .map(|(h, st, pct, msg, kind)| {
                         let status = match st.as_str() {
                             "queued" => QueuedStatus::Queued,
                             "analyzing" => QueuedStatus::Analyzing(pct.unwrap_or(0) as usize),
-                            "failed" => QueuedStatus::Failed(msg.unwrap_or_default()),
+                            "failed" => QueuedStatus::Failed {
+                                kind: kind.as_deref().map(FailureKind::from_db_str).unwrap_or(FailureKind::Other),
+                                message: msg.unwrap_or_default(),
+                            },
                             _ => QueuedStatus::Queued,
                         };
                         (h, status)
@@ -61,11 +112,17 @@ impl AnalysisQueue {
             .entries
             .iter()
             .map(|(k, v)| match v {
-                QueuedStatus::Queued => (k.clone(), "queued".to_string(), None, None),
+                QueuedStatus::Queued => (k.clone(), "queued".to_string(), None, None, None),
                 QueuedStatus::Analyzing(p) => {
-                    (k.clone(), "analyzing".to_string(), Some(*p as i64), None)
+                    (k.clone(), "analyzing".to_string(), Some(*p as i64), None, None)
                 }
-                QueuedStatus::Failed(s) => (k.clone(), "failed".to_string(), None, Some(s.clone())),
+                QueuedStatus::Failed { kind, message } => (
+                    k.clone(),
+                    "failed".to_string(),
+                    None,
+                    Some(message.clone()),
+                    Some(kind.as_db_str().to_string()),
+                ),
             })
             .collect();
         let _ = library_db::analysis_queue_save_rows(&rows);
@@ -419,12 +476,14 @@ pub fn mark_stems_only(file_hash: &str) {
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 fn update_queue_status(file_hash: &str, status: QueuedStatus) {
-    let (st, pct, msg) = match &status {
-        QueuedStatus::Queued => ("queued", None, None::<String>),
-        QueuedStatus::Analyzing(p) => ("analyzing", Some(*p as i64), None::<String>),
-        QueuedStatus::Failed(s) => ("failed", None, Some(s.clone())),
+    let (st, pct, msg, kind) = match &status {
+        QueuedStatus::Queued => ("queued", None, None::<String>, None::<&'static str>),
+        QueuedStatus::Analyzing(p) => ("analyzing", Some(*p as i64), None, None),
+        QueuedStatus::Failed { kind, message } => {
+            ("failed", None, Some(message.clone()), Some(kind.as_db_str()))
+        }
     };
-    let _ = library_db::analysis_queue_upsert_row(file_hash, st, pct, msg.as_deref());
+    let _ = library_db::analysis_queue_upsert_row(file_hash, st, pct, msg.as_deref(), kind);
 }
 
 fn remove_from_queue(file_hash: &str) {
@@ -533,7 +592,7 @@ pub fn enqueue_all(filters: &LibraryMenuFilters) {
     drop(state);
 
     for hash in &newly_queued {
-        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None);
+        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None, None);
     }
 
     if should_start {
@@ -831,7 +890,10 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
             warn!("[analyzer] Failed to prepare audio for analysis: {e}");
             update_queue_status(
                 initial_hash,
-                QueuedStatus::Failed(format!("audio prep failed: {e}")),
+                QueuedStatus::Failed {
+                    kind: FailureKind::AudioPrep,
+                    message: format!("audio prep failed: {e}"),
+                },
             );
             return;
         }
@@ -920,7 +982,13 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
 
         if let Err(e) = ensure_server(&mut guard) {
             warn!("[analyzer] Failed to start server: {e}");
-            update_queue_status(file_hash, QueuedStatus::Failed(e.to_string()));
+            update_queue_status(
+                file_hash,
+                QueuedStatus::Failed {
+                    kind: FailureKind::ServerStartup,
+                    message: e.to_string(),
+                },
+            );
             return;
         }
 
@@ -952,11 +1020,23 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                     update_queue_status(file_hash, QueuedStatus::Analyzing(0));
                     continue;
                 }
-                update_queue_status(file_hash, QueuedStatus::Failed("CUDA out of memory".into()));
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::GpuOom,
+                        message: "CUDA out of memory".into(),
+                    },
+                );
                 return;
             }
             Ok(SongResult::Error(msg)) => {
-                update_queue_status(file_hash, QueuedStatus::Failed(msg));
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::Worker,
+                        message: msg,
+                    },
+                );
                 return;
             }
             Err(e) => {
@@ -971,7 +1051,10 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                 }
                 update_queue_status(
                     file_hash,
-                    QueuedStatus::Failed(format!("Server crashed: {e}")),
+                    QueuedStatus::Failed {
+                        kind: FailureKind::ServerCrash,
+                        message: format!("Server crashed: {e}"),
+                    },
                 );
                 return;
             }
@@ -998,7 +1081,10 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) {
     } else {
         update_queue_status(
             file_hash,
-            QueuedStatus::Failed("Transcript file not found after analysis".into()),
+            QueuedStatus::Failed {
+                kind: FailureKind::MissingOutput,
+                message: "Transcript file not found after analysis".into(),
+            },
         );
     }
 }

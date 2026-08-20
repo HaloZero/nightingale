@@ -3,11 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ANALYSIS_QUEUE } from "@/queries/keys";
 import { loadAnalysisQueue } from "@/bridge/songs";
-import { classifyAnalysisFailure } from "@/lib/analysis-failure";
+import { labelForFailureKind } from "@/lib/analysis-failure";
+import type { FailureKind } from "@/types/FailureKind";
 
 const TOAST_ID_PREFIX = "analysis-queue-failure:";
 
-type FailureRecord = { message: string; firstSeenAt: number };
+type FailureRecord = { kind: FailureKind; firstSeenAt: number };
 
 const formatTime = (ms: number) =>
   new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -34,10 +35,10 @@ export const useAnalysisFailureToasts = () => {
     for (const [hash, status] of Object.entries(entries)) {
       if (typeof status !== "object" || !("Failed" in status)) continue;
       stillFailingHashes.add(hash);
-      const message = status.Failed;
+      const { kind } = status.Failed;
       const existing = failuresByHash.get(hash);
-      if (!existing || existing.message !== message) {
-        failuresByHash.set(hash, { message, firstSeenAt: Date.now() });
+      if (!existing || existing.kind !== kind) {
+        failuresByHash.set(hash, { kind, firstSeenAt: Date.now() });
       }
     }
 
@@ -45,30 +46,22 @@ export const useAnalysisFailureToasts = () => {
       if (!stillFailingHashes.has(hash)) failuresByHash.delete(hash);
     }
 
-    const categoryCounts = new Map<
-      string,
-      { label: string; count: number; lastFailureAt: number }
-    >();
-    for (const { message, firstSeenAt } of failuresByHash.values()) {
-      const category = classifyAnalysisFailure(message);
-      const bucket = categoryCounts.get(category.id);
+    const categoryCounts = new Map<FailureKind, { count: number; lastFailureAt: number }>();
+    for (const { kind, firstSeenAt } of failuresByHash.values()) {
+      const bucket = categoryCounts.get(kind);
       if (bucket) {
         bucket.count += 1;
         bucket.lastFailureAt = Math.max(bucket.lastFailureAt, firstSeenAt);
       } else {
-        categoryCounts.set(category.id, {
-          label: category.label,
-          count: 1,
-          lastFailureAt: firstSeenAt,
-        });
+        categoryCounts.set(kind, { count: 1, lastFailureAt: firstSeenAt });
       }
     }
 
     const nextActiveToastIds = new Set<string>();
-    for (const [categoryId, { label, count, lastFailureAt }] of categoryCounts) {
-      const toastId = `${TOAST_ID_PREFIX}${categoryId}`;
+    for (const [kind, { count, lastFailureAt }] of categoryCounts) {
+      const toastId = `${TOAST_ID_PREFIX}${kind}`;
       nextActiveToastIds.add(toastId);
-      toast.error(`${label}: ${count} song${count === 1 ? "" : "s"} failed`, {
+      toast.error(`${labelForFailureKind(kind)}: ${count} song${count === 1 ? "" : "s"} failed`, {
         id: toastId,
         description: `Last failure at ${formatTime(lastFailureAt)}`,
         duration: Infinity,
