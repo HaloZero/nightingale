@@ -348,8 +348,9 @@ pub(crate) fn fetch_lrclib_lyrics(song: &Song, cache: &CacheDir) -> Option<PathB
 
 /// Local lyrics sources, checked before falling back to the LRCLIB network
 /// lookup (`fetch_lrclib_lyrics`): a `.lrc` sidecar next to the audio file,
-/// then lyrics embedded directly in the file's own tags (ID3 `USLT` / MP4
-/// `©lyr`, via lofty's `ItemKey::Lyrics`). Local is treated as
+/// then lyrics embedded directly in the file's own tags (ID3 `USLT` via
+/// `ItemKey::UnsyncLyrics`, MP4 `©lyr` via `ItemKey::Lyrics` -- see
+/// `read_embedded_lyrics`). Local is treated as
 /// ground-truth-equivalent to the LRCLIB flow -- same shared cache file,
 /// same downstream forced-alignment path (`align_lyrics` in align.py) once
 /// `process_song` passes it through as `cmd_json["lyrics"]`.
@@ -402,7 +403,11 @@ fn read_embedded_lyrics(path: &Path) -> Option<String> {
     debug!("Reading tags: {}", path.display());
     let tagged = lofty::read_from_path(path).ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
-    let text = tag.get_string(lofty::tag::ItemKey::Lyrics)?;
+    // See `song::tag_has_lyrics` -- ID3v2 (MP3) only maps `USLT` to
+    // `ItemKey::UnsyncLyrics`, never `ItemKey::Lyrics`.
+    let text = tag
+        .get_string(lofty::tag::ItemKey::Lyrics)
+        .or_else(|| tag.get_string(lofty::tag::ItemKey::UnsyncLyrics))?;
     if text.trim().is_empty() {
         None
     } else {

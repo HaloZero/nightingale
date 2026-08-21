@@ -131,8 +131,10 @@ pub struct Song {
     #[serde(default)]
     pub has_lrc_file: bool,
     /// True when the audio file's own tags carry non-empty lyrics (ID3
-    /// `USLT` / MP4 `©lyr`, via lofty's `ItemKey::Lyrics`). Always `false`
-    /// for video files (no tag read attempted) and remote-source songs.
+    /// `USLT` via lofty's `ItemKey::UnsyncLyrics`, or MP4 `©lyr` via
+    /// `ItemKey::Lyrics` -- ID3v2 doesn't map to `Lyrics` at all, see
+    /// `tag_has_lyrics`). Always `false` for video files (no tag read
+    /// attempted) and remote-source songs.
     #[serde(default)]
     pub has_embedded_lyrics: bool,
 }
@@ -460,9 +462,13 @@ fn read_metadata(path: &Path) -> (String, String, String, String, f64, Option<Ve
     (title, artist, album, genre, duration_secs, album_art)
 }
 
-/// Whether `path`'s own tags carry non-empty lyrics (ID3 `USLT` / MP4
-/// `©lyr`, whatever lofty maps to `ItemKey::Lyrics`). Re-reads the file
-/// rather than threading a 6th value through `read_metadata`'s tuple --
+/// Whether `path`'s own tags carry non-empty lyrics. Tries `ItemKey::Lyrics`
+/// first (how MP4's `©lyr` is exposed), then falls back to
+/// `ItemKey::UnsyncLyrics` (ID3v2's `USLT` frame is *only* exposed under
+/// that key -- lofty doesn't map ID3v2 to `Lyrics` at all, so MP3s with
+/// embedded lyrics would otherwise silently read as having none). Re-reads
+/// the file rather than threading a 6th value through `read_metadata`'s
+/// tuple --
 /// clarity win over one extra open. `pub(crate)` so `source::folder`'s
 /// rescan pass can reuse the exact same check for already-known songs, not
 /// just brand-new ones (see `Song::has_embedded_lyrics`).
@@ -474,7 +480,12 @@ pub(crate) fn tag_has_lyrics(path: &Path) -> bool {
     let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
         return false;
     };
+    // ID3v2 (MP3) doesn't support `ItemKey::Lyrics` at all -- its `USLT`
+    // frame only maps to `ItemKey::UnsyncLyrics` (lofty's own docs call this
+    // out explicitly). MP4's `©lyr` maps to both, so trying `Lyrics` first
+    // and falling back covers both tag formats.
     tag.get_string(lofty::tag::ItemKey::Lyrics)
+        .or_else(|| tag.get_string(lofty::tag::ItemKey::UnsyncLyrics))
         .is_some_and(|s| !s.trim().is_empty())
 }
 
