@@ -572,7 +572,7 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
         let lyrics = vec![
             LibraryMenuItem {
                 value: "has_external_lyrics".into(),
-                label: "External lyrics found".into(),
+                label: "Has lyrics".into(),
                 analysed_count: external_lyrics_analysed as u64,
                 queued_count: external_lyrics_queued as u64,
                 analysing_count: external_lyrics_analysing as u64,
@@ -580,7 +580,7 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             },
             LibraryMenuItem {
                 value: "no_external_lyrics".into(),
-                label: "No external lyrics".into(),
+                label: "No lyrics".into(),
                 analysed_count: no_external_lyrics_analysed as u64,
                 queued_count: no_external_lyrics_queued as u64,
                 analysing_count: no_external_lyrics_analysing as u64,
