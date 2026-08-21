@@ -183,6 +183,8 @@ fn append_structural_filters(
             "has_external_lyrics" => {
                 where_parts.push("(s.has_lrc_file = 1 OR s.has_embedded_lyrics = 1)".to_string())
             }
+            "no_external_lyrics" => where_parts
+                .push("(s.has_lrc_file = 0 AND s.has_embedded_lyrics = 0)".to_string()),
             _ => {}
         }
     }
@@ -467,7 +469,14 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             external_lyrics_analysed,
             external_lyrics_queued,
             external_lyrics_analysing,
-        ): (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = c
+            no_external_lyrics_total,
+            no_external_lyrics_analysed,
+            no_external_lyrics_queued,
+            no_external_lyrics_analysing,
+        ): (
+            i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64,
+            i64, i64, i64,
+        ) = c
             .query_row(
                 "SELECT
                     (SELECT COUNT(*) FROM songs),
@@ -485,7 +494,11 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
                     (SELECT COUNT(*) FROM songs WHERE has_lrc_file = 1 OR has_embedded_lyrics = 1),
                     (SELECT COUNT(*) FROM songs WHERE (has_lrc_file = 1 OR has_embedded_lyrics = 1) AND is_analyzed = 1),
                     (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE (s.has_lrc_file = 1 OR s.has_embedded_lyrics = 1) AND aq.status = 'queued'),
-                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE (s.has_lrc_file = 1 OR s.has_embedded_lyrics = 1) AND aq.status = 'analyzing')",
+                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE (s.has_lrc_file = 1 OR s.has_embedded_lyrics = 1) AND aq.status = 'analyzing'),
+                    (SELECT COUNT(*) FROM songs WHERE has_lrc_file = 0 AND has_embedded_lyrics = 0),
+                    (SELECT COUNT(*) FROM songs WHERE has_lrc_file = 0 AND has_embedded_lyrics = 0 AND is_analyzed = 1),
+                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE s.has_lrc_file = 0 AND s.has_embedded_lyrics = 0 AND aq.status = 'queued'),
+                    (SELECT COUNT(*) FROM songs s JOIN analysis_queue aq ON aq.file_hash = s.file_hash WHERE s.has_lrc_file = 0 AND s.has_embedded_lyrics = 0 AND aq.status = 'analyzing')",
                 [],
                 |r| {
                     Ok((
@@ -505,6 +518,10 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
                         r.get(13)?,
                         r.get(14)?,
                         r.get(15)?,
+                        r.get(16)?,
+                        r.get(17)?,
+                        r.get(18)?,
+                        r.get(19)?,
                     ))
                 },
             )?;
@@ -550,13 +567,24 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
                 analysing_count: usdx_analysing as u64,
                 count: usdx_total as u64,
             },
+        ];
+
+        let lyrics = vec![
             LibraryMenuItem {
                 value: "has_external_lyrics".into(),
-                label: "External Lyrics".into(),
+                label: "External lyrics found".into(),
                 analysed_count: external_lyrics_analysed as u64,
                 queued_count: external_lyrics_queued as u64,
                 analysing_count: external_lyrics_analysing as u64,
                 count: external_lyrics_total as u64,
+            },
+            LibraryMenuItem {
+                value: "no_external_lyrics".into(),
+                label: "No external lyrics".into(),
+                analysed_count: no_external_lyrics_analysed as u64,
+                queued_count: no_external_lyrics_queued as u64,
+                analysing_count: no_external_lyrics_analysing as u64,
+                count: no_external_lyrics_total as u64,
             },
         ];
 
@@ -755,6 +783,7 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
         Ok(LibraryMenuItems {
             hot,
             no_metadata,
+            lyrics,
             artists,
             albums,
             genres,

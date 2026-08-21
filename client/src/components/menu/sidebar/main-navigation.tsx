@@ -17,6 +17,7 @@ import {
   DiscIcon,
   LanguagesIcon,
   ListMusicIcon,
+  MicVocalIcon,
   TagIcon,
   UserIcon,
   type LucideIcon,
@@ -54,6 +55,7 @@ type NavSectionConfig = {
 const NAV_SECTIONS: NavSectionConfig[] = [
   { section: "hot", label: "Quick Filters", icon: Flame },
   { section: "no_metadata", label: "No Metadata", icon: FileQuestionMark },
+  { section: "lyrics", label: "Lyrics", icon: MicVocalIcon },
   { section: "artists", label: "Artists", icon: UserIcon },
   { section: "albums", label: "Albums", icon: DiscIcon },
   { section: "genres", label: "Genres", icon: TagIcon },

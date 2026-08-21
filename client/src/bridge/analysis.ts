@@ -27,6 +27,10 @@ export const realign = async (fileHash: string, language?: string): Promise<void
   return await invoke<void>("realign", { fileHash, language });
 };
 
+export const setSongLanguage = async (fileHash: string, language?: string): Promise<void> => {
+  return await invoke<void>("set_song_language", { fileHash, language });
+};
+
 export const reanalyzeForceTranscribe = async (fileHash: string): Promise<void> => {
   return await invoke<void>("reanalyze_force_transcribe", { fileHash });
 };

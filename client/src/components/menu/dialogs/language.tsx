@@ -23,7 +23,8 @@ import { useDialogNav } from "@/hooks/navigation/use-dialog-nav";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { LANGUAGES } from "@/lib/languages";
-import { realign, reanalyzeTranscript } from "@/bridge/analysis";
+import { ANALYSIS_MODE_DESCRIPTIONS, type AnalysisMode } from "@/lib/analysis-mode";
+import { realign, reanalyzeTranscript, setSongLanguage } from "@/bridge/analysis";
 import { Song } from "@/types/Song";
 
 export function isLanguageDialogMode(mode: DialogMode): mode is { mode: "language"; song: Song } {
@@ -39,7 +40,7 @@ export const SelectLanguageDialog = () => {
   const currentLanguage = languageDialog?.song.language ?? undefined;
 
   const [language, setLanguage] = useState<string | undefined>(currentLanguage);
-  const [analysisMode, setAnalysisMode] = useState<"force" | "realign">("force");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("force");
 
   useEffect(() => {
     setLanguage(currentLanguage);
@@ -99,7 +100,7 @@ export const SelectLanguageDialog = () => {
               <Label htmlFor="analysis-mode-select">Mode</Label>
               <Select
                 value={analysisMode}
-                onValueChange={(mode) => setAnalysisMode(mode as "force" | "realign")}
+                onValueChange={(mode) => setAnalysisMode(mode as AnalysisMode)}
               >
                 <SelectTrigger
                   id="analysis-mode-select"
@@ -115,9 +116,13 @@ export const SelectLanguageDialog = () => {
                     <SelectLabel>Mode</SelectLabel>
                     <SelectItem value="force">Force transcript</SelectItem>
                     <SelectItem value="realign">Realign saved lyrics</SelectItem>
+                    <SelectItem value="set_only">Just set language</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {ANALYSIS_MODE_DESCRIPTIONS[analysisMode]}
+              </p>
             </Field>
           </FieldGroup>
           <DialogFooter>
@@ -134,11 +139,13 @@ export const SelectLanguageDialog = () => {
               </Button>
             </DialogClose>
             <Button
-              disabled={!language || (language === song.language && analysisMode === "force")}
+              disabled={!language || (language === song.language && analysisMode !== "realign")}
               onClick={() => {
                 if (language) {
                   if (analysisMode === "realign") {
                     realign(song.file_hash, language);
+                  } else if (analysisMode === "set_only") {
+                    setSongLanguage(song.file_hash, language);
                   } else {
                     reanalyzeTranscript(song.file_hash, language);
                   }

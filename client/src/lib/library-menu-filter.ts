@@ -4,6 +4,7 @@ import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 export type LibraryMenuSection =
   | "hot"
   | "no_metadata"
+  | "lyrics"
   | "artists"
   | "albums"
   | "genres"
@@ -28,12 +29,16 @@ const HOT_FILTERS: Record<string, LibraryMenuFilters> = {
   analysed: { ...EMPTY_LIBRARY_FILTER, query: "analysed" },
   videos: { ...EMPTY_LIBRARY_FILTER, query: "videos" },
   usdx: { ...EMPTY_LIBRARY_FILTER, query: "usdx" },
-  has_external_lyrics: { ...EMPTY_LIBRARY_FILTER, query: "has_external_lyrics" },
 };
 
 const NO_METADATA_FILTERS: Record<string, LibraryMenuFilters> = {
   unknown_artist: { ...EMPTY_LIBRARY_FILTER, artist: "unknown_artist" },
   unknown_album: { ...EMPTY_LIBRARY_FILTER, album: "unknown_album" },
+};
+
+const LYRICS_FILTERS: Record<string, LibraryMenuFilters> = {
+  has_external_lyrics: { ...EMPTY_LIBRARY_FILTER, query: "has_external_lyrics" },
+  no_external_lyrics: { ...EMPTY_LIBRARY_FILTER, query: "no_external_lyrics" },
 };
 
 export function libraryFilterFromMenuSelection(
@@ -45,6 +50,8 @@ export function libraryFilterFromMenuSelection(
       return HOT_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
     case "no_metadata":
       return NO_METADATA_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
+    case "lyrics":
+      return LYRICS_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
     case "artists":
       return { ...EMPTY_LIBRARY_FILTER, artist: item.value };
     case "albums":

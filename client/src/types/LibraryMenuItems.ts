@@ -4,6 +4,7 @@ import type { LibraryMenuItem } from "./LibraryMenuItem";
 export type LibraryMenuItems = {
   hot: Array<LibraryMenuItem>;
   no_metadata: Array<LibraryMenuItem>;
+  lyrics: Array<LibraryMenuItem>;
   artists: Array<LibraryMenuItem>;
   albums: Array<LibraryMenuItem>;
   genres: Array<LibraryMenuItem>;

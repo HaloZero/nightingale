@@ -24,6 +24,7 @@ import { useAnalysis } from "@/hooks/use-analysis";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { LANGUAGES } from "@/lib/languages";
+import { ANALYSIS_MODE_DESCRIPTIONS } from "@/lib/analysis-mode";
 
 export function isBulkLanguageDialogMode(mode: DialogMode): mode is { mode: "bulk-language" } {
   return mode !== null && typeof mode === "object" && mode.mode === "bulk-language";
@@ -116,6 +117,9 @@ export const BulkSelectLanguageDialog = () => {
                   </SelectGroup>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {ANALYSIS_MODE_DESCRIPTIONS[analysisMode]}
+              </p>
             </Field>
           </FieldGroup>
           <DialogFooter>

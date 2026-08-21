@@ -9,7 +9,8 @@ use app_core::{
     reanalyze_full as core_reanalyze_full, reanalyze_transcript as core_reanalyze_transcript,
     refresh_metadata as core_refresh_metadata, refresh_metadata_all as core_refresh_metadata_all,
     remove_from_queue_all as core_remove_from_queue_all,
-    remove_from_queue_one as core_remove_from_queue_one, shift_key_done_payload,
+    remove_from_queue_one as core_remove_from_queue_one,
+    set_song_language as core_set_song_language, shift_key_done_payload,
     shift_tempo_done_payload, FailureKind, LibraryMenuFilters,
 };
 use tauri::{AppHandle, Emitter};
@@ -47,6 +48,11 @@ pub fn reanalyze_full(file_hash: String) {
 #[tauri::command]
 pub fn realign(file_hash: String, language: Option<String>) {
     core_realign(&file_hash, language);
+}
+
+#[tauri::command]
+pub fn set_song_language(file_hash: String, language: Option<String>) {
+    core_set_song_language(&file_hash, language);
 }
 
 #[tauri::command]

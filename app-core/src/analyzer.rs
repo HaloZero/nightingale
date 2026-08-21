@@ -639,6 +639,23 @@ pub fn delete_cache(file_hash: &str) {
     update_song_analyzed(file_hash, false, None, None, None, None);
 }
 
+/// Sets a song's stored `language` directly, with no other side effect: no
+/// re-transcription, no re-alignment, no cache/queue changes, and no
+/// `language_override` write (that field only affects a *future* re-run's
+/// language detection -- see `reanalyze_transcript`/`realign`). For when the
+/// detected/tagged language is simply wrong and nothing else needs to change.
+pub fn set_song_language(file_hash: &str, language: Option<String>) {
+    if is_usdx_song(file_hash) {
+        return;
+    }
+
+    let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
+        return;
+    };
+    song.language = language;
+    let _ = library_db::update_song_fields(file_hash, &song);
+}
+
 pub fn reanalyze_transcript(file_hash: &str, language: Option<String>) {
     if is_usdx_song(file_hash) {
         return;

@@ -305,6 +305,18 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             app_core::reanalyze_force_transcribe(&args.file_hash);
             Ok(Value::Null)
         }
+        "set_song_language" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                file_hash: String,
+                #[serde(default)]
+                language: Option<String>,
+            }
+            let args: Args = deserialize(payload)?;
+            app_core::set_song_language(&args.file_hash, args.language);
+            Ok(Value::Null)
+        }
         "reanalyze_all_full" => {
             #[derive(Deserialize)]
             struct Args {

@@ -13,7 +13,8 @@ use analyzer::{
     acknowledge_analysis_failures, delete_song_cache, enqueue_all, enqueue_one, realign,
     realign_all, reanalyze_all_force_transcribe, reanalyze_all_full, reanalyze_all_transcript,
     reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript, refresh_metadata,
-    refresh_metadata_all, remove_from_queue_all, remove_from_queue_one, shift_key, shift_tempo,
+    refresh_metadata_all, remove_from_queue_all, remove_from_queue_one, set_song_language,
+    shift_key, shift_tempo,
 };
 use app_core::{AppConfig, SongsStore};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -129,6 +130,7 @@ pub fn run() {
             reanalyze_transcript,
             reanalyze_full,
             realign,
+            set_song_language,
             reanalyze_force_transcribe,
             reanalyze_all_full,
             reanalyze_all_transcript,
