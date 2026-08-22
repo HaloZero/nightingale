@@ -62,6 +62,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_analysis_timings_columns(conn)?;
     ensure_genre_column(conn)?;
     ensure_analysis_queue_columns(conn)?;
+    ensure_parallel_analysis_timings_table(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -291,6 +292,33 @@ fn ensure_analysis_queue_columns(conn: &Connection) -> rusqlite::Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// Coarse wall-clock timing for `parallel_analysis` dispatches, distinct
+/// from `analysis_timings` -- that table only has per-stage data for runs
+/// the *local* analyzer pipeline actually executed, so it has nothing to
+/// say about a song offloaded to a peer. `CREATE TABLE IF NOT EXISTS` is
+/// itself idempotent, so (like the `ensure_*` functions above) this just
+/// runs unconditionally on every connection rather than needing a
+/// `SCHEMA_VERSION` bump.
+fn ensure_parallel_analysis_timings_table(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS parallel_analysis_timings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_hash TEXT NOT NULL,
+            peer_url TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            already_analyzed_on_peer INTEGER NOT NULL,
+            poll_attempts INTEGER,
+            total_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_parallel_analysis_timings_file_hash
+            ON parallel_analysis_timings(file_hash);
+        CREATE INDEX IF NOT EXISTS idx_parallel_analysis_timings_started_at
+            ON parallel_analysis_timings(started_at);
+    ",
+    )
 }
 
 /// Splits the old combined `transcribe_or_align_ms` timing into separate

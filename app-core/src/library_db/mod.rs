@@ -26,6 +26,7 @@ mod analysis_timings;
 mod connection;
 mod migrations;
 mod parallel_mismatches;
+mod parallel_timings;
 mod playlists;
 mod queries;
 mod rebase;
@@ -39,6 +40,7 @@ pub use analysis_queue::{
 pub use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
 pub use migrations::rewrite_legacy_jellyfin_paths;
 pub use parallel_mismatches::{clear_parallel_analysis_mismatch, record_parallel_analysis_mismatch};
+pub use parallel_timings::{ParallelAnalysisTimingRow, insert_parallel_analysis_timing};
 pub use playlists::{PlaylistDefinition, PlaylistSongKeyKind, replace_all_playlists};
 pub use queries::{
     iter_file_hashes_filtered_full_reanalyzable, iter_file_hashes_filtered_not_analyzed,

@@ -4,7 +4,12 @@
 Locates config.json the same way app-core does (NIGHTINGALE_DATA_PATH env
 var, else ~/.nightingale), reads `data_path` from it to find songs.db, then
 reports how many songs were analyzed in the lookback window and estimates
-how long the remaining library will take at that rate.
+how long the remaining library will take at that rate. Also reports on
+songs completed via `parallel_analysis` (peer offload) in the same window,
+from the separate `parallel_analysis_timings` table -- `analysis_timings`
+only has per-stage data for runs the local pipeline actually executed, so
+it has nothing to say about songs a peer analyzed. The combined rate/ETA
+below accounts for both, since offloaded songs shrink "remaining" too.
 
 Usage:
     python3 scripts/analysis_progress.py              # last 24 hours
@@ -133,6 +138,44 @@ def main() -> int:
             (cutoff,),
         ).fetchone()
         events_window, distinct_songs_window, avg_ms_window = row
+
+        parallel_events_window = 0
+        parallel_distinct_window = 0
+        parallel_avg_ms_window = None
+        parallel_instant_window = 0
+        combined_distinct_window = distinct_songs_window
+        try:
+            row = conn.execute(
+                """
+                SELECT COUNT(*), COUNT(DISTINCT file_hash), AVG(total_ms),
+                       COALESCE(SUM(already_analyzed_on_peer), 0)
+                FROM parallel_analysis_timings
+                WHERE started_at >= ?
+                """,
+                (cutoff,),
+            ).fetchone()
+            (
+                parallel_events_window,
+                parallel_distinct_window,
+                parallel_avg_ms_window,
+                parallel_instant_window,
+            ) = row
+
+            combined_distinct_window = conn.execute(
+                """
+                SELECT COUNT(*) FROM (
+                    SELECT file_hash FROM analysis_timings WHERE started_at >= ?
+                    UNION
+                    SELECT file_hash FROM parallel_analysis_timings WHERE started_at >= ?
+                )
+                """,
+                (cutoff, cutoff),
+            ).fetchone()[0]
+        except sqlite3.OperationalError:
+            # `parallel_analysis_timings` doesn't exist yet -- an older
+            # app-core that's never run the migration creating it, or this
+            # instance has never used parallel analysis. Not an error.
+            pass
     finally:
         conn.close()
 
@@ -142,21 +185,44 @@ def main() -> int:
     print(f"Remaining:  {remaining} songs")
     print()
 
-    print(f"Last {window}:")
+    print(f"Last {window} (local analysis):")
     print(f"  Songs analyzed:   {distinct_songs_window}")
     if events_window != distinct_songs_window:
         print(f"  Analysis runs:    {events_window} (includes re-analysis)")
 
-    if distinct_songs_window == 0:
+    avg_seconds = (avg_ms_window or 0) / 1000
+    wall_clock_rate_per_hour = distinct_songs_window / args.hours
+    if distinct_songs_window > 0:
+        print(f"  Avg time/song:    {fmt_duration(avg_seconds)}")
+        print(f"  Wall-clock rate:  {wall_clock_rate_per_hour:.2f} songs/hour "
+              f"({distinct_songs_window} songs / {window}, includes any idle time)")
+
+    if parallel_distinct_window > 0:
+        parallel_avg_seconds = (parallel_avg_ms_window or 0) / 1000
+        parallel_rate_per_hour = parallel_distinct_window / args.hours
+        print()
+        print(f"Last {window} (parallel analysis / peer offload):")
+        print(f"  Songs completed:  {parallel_distinct_window}")
+        if parallel_events_window != parallel_distinct_window:
+            print(f"  Dispatches:       {parallel_events_window} (includes re-analysis)")
+        if parallel_instant_window:
+            print(f"  Already on peer:  {parallel_instant_window} "
+                  f"(peer had already analyzed it -- fetch-only, no wait)")
+        print(f"  Avg time/song:    {fmt_duration(parallel_avg_seconds)} "
+              f"(wall-clock: trigger/fetch + wait, not just analysis)")
+        print(f"  Rate:             {parallel_rate_per_hour:.2f} songs/hour")
+
+    if combined_distinct_window == 0:
         print()
         print(f"No analysis activity in the past {window} -- can't estimate time remaining.")
         return 0
 
-    avg_seconds = (avg_ms_window or 0) / 1000
-    wall_clock_rate_per_hour = distinct_songs_window / args.hours
-    print(f"  Avg time/song:    {fmt_duration(avg_seconds)}")
-    print(f"  Wall-clock rate:  {wall_clock_rate_per_hour:.2f} songs/hour "
-          f"({distinct_songs_window} songs / {window}, includes any idle time)")
+    combined_rate_per_hour = combined_distinct_window / args.hours
+    if parallel_distinct_window > 0:
+        print()
+        print(f"Combined (local + parallel), last {window}:")
+        print(f"  Songs analyzed:   {combined_distinct_window}")
+        print(f"  Rate:             {combined_rate_per_hour:.2f} songs/hour")
     print()
 
     if remaining <= 0:
@@ -166,11 +232,12 @@ def main() -> int:
     print(f"Estimated time remaining ({remaining} songs):")
     if avg_seconds > 0:
         active_eta = remaining * avg_seconds
-        print(f"  If analysis runs continuously (avg {fmt_duration(avg_seconds)}/song): "
+        print(f"  If local analysis runs continuously (avg {fmt_duration(avg_seconds)}/song): "
               f"~{fmt_duration(active_eta)}")
-    if wall_clock_rate_per_hour > 0:
-        wall_eta_hours = remaining / wall_clock_rate_per_hour
-        print(f"  At last-{window} wall-clock rate ({wall_clock_rate_per_hour:.2f} songs/hour): "
+    if combined_rate_per_hour > 0:
+        wall_eta_hours = remaining / combined_rate_per_hour
+        label = "combined local+parallel" if parallel_distinct_window > 0 else f"last-{window}"
+        print(f"  At {label} wall-clock rate ({combined_rate_per_hour:.2f} songs/hour): "
               f"~{fmt_duration(wall_eta_hours * 3600)}")
 
     return 0

@@ -253,6 +253,13 @@ fn dispatcher_loop() {
 }
 
 fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome {
+    // Coarse wall-clock timing for `parallel_analysis_timings`, recorded
+    // only on a successful `Done` below -- covers this whole function, not
+    // just the trigger/poll phase, since even the "already analyzed"
+    // fetch-only path is worth knowing the cost of.
+    let started = std::time::Instant::now();
+    let mut poll_attempts: Option<u32> = None;
+
     if !ping(base_url) {
         warn!(
             "[parallel_analysis] {label}: peer {base_url} did not respond to ping, treating as down"
@@ -334,6 +341,8 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
         }
     };
 
+    let already_analyzed_on_peer = peer_song.is_analyzed;
+
     if !peer_song.is_analyzed {
         info!("[parallel_analysis] {label}: triggering analysis on peer");
         match trigger(base_url, file_hash) {
@@ -348,8 +357,9 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
         crate::analyzer::update_queue_status(file_hash, QueuedStatus::Analyzing(0));
 
         match poll_until_done(base_url, file_hash, label) {
-            PollOutcome::Done => {
+            PollOutcome::Done(attempts) => {
                 info!("[parallel_analysis] {label}: peer finished analyzing");
+                poll_attempts = Some(attempts);
             }
             PollOutcome::GaveUp(reason) => {
                 crate::analyzer::return_to_front(file_hash);
@@ -375,6 +385,14 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
     // Check its result rather than assuming "we downloaded fine" means "the
     // song is now marked analyzed".
     if crate::analyzer::finalize_peer_analysis(file_hash) {
+        record_timing(
+            file_hash,
+            base_url,
+            already_analyzed_on_peer,
+            poll_attempts,
+            started.elapsed().as_millis() as u64,
+            label,
+        );
         DispatchOutcome::Done
     } else {
         warn!(
@@ -419,8 +437,41 @@ fn clear_mismatch(file_hash: &str, label: &str) {
     }
 }
 
+/// Records a successful dispatch's wall-clock cost to
+/// `parallel_analysis_timings` -- gated on the same `track_analysis_timings`
+/// setting the local pipeline's own `analysis_timings` uses, since they're
+/// the same "is this diagnostic worth the write" opt-in. Read the table with
+/// `scripts/analysis_progress.py`.
+fn record_timing(
+    file_hash: &str,
+    peer_url: &str,
+    already_analyzed_on_peer: bool,
+    poll_attempts: Option<u32>,
+    total_ms: u64,
+    label: &str,
+) {
+    if !AppConfig::load().track_analysis_timings() {
+        return;
+    }
+    info!(
+        "[parallel_analysis] {label}: total_ms={total_ms} already_analyzed_on_peer={already_analyzed_on_peer} poll_attempts={poll_attempts:?}"
+    );
+    let row = library_db::ParallelAnalysisTimingRow {
+        file_hash,
+        peer_url,
+        already_analyzed_on_peer,
+        poll_attempts,
+        total_ms,
+    };
+    if let Err(e) = library_db::insert_parallel_analysis_timing(&row) {
+        warn!("[parallel_analysis] {label}: failed to record parallel analysis timing: {e}");
+    }
+}
+
 enum PollOutcome {
-    Done,
+    /// Carries which poll attempt (1-based) confirmed completion, recorded
+    /// in `parallel_analysis_timings`.
+    Done(u32),
     /// Carries a short human-readable reason, propagated up into
     /// `DispatchOutcome::Rejected` so the dispatcher's own log line names
     /// the cause without needing to scroll up to find it.
@@ -431,6 +482,13 @@ enum PollOutcome {
 /// Polls the peer's queue every `POLL_INTERVAL` for up to `POLL_ATTEMPTS`
 /// (== 20 minutes), mirroring reported progress onto the local queue row.
 fn poll_until_done(base_url: &str, file_hash: &str, label: &str) -> PollOutcome {
+    // The "still going" states (Analyzing/Queued) repeat every tick for as
+    // long as the peer's working -- at a 3s `POLL_INTERVAL` that's a lot of
+    // near-identical lines. Only log those two when the status actually
+    // changed since the last logged one, or every 5th poll as a heartbeat so
+    // a long-running analysis still shows up periodically.
+    let mut last_logged: Option<QueuedStatus> = None;
+
     for attempt in 1..=POLL_ATTEMPTS {
         std::thread::sleep(POLL_INTERVAL);
 
@@ -444,16 +502,22 @@ fn poll_until_done(base_url: &str, file_hash: &str, label: &str) -> PollOutcome 
                 warn!("[parallel_analysis] {label}: peer reported failure: {message}");
                 return PollOutcome::GaveUp(format!("peer reported failure: {message}"));
             }
-            Ok(Some(QueuedStatus::Analyzing(pct))) => {
-                info!(
-                    "[parallel_analysis] {label}: peer analyzing ({pct}%) [poll {attempt}/{POLL_ATTEMPTS}]"
-                );
+            Ok(Some(status @ QueuedStatus::Analyzing(pct))) => {
+                if last_logged.as_ref() != Some(&status) || attempt % 5 == 0 {
+                    info!(
+                        "[parallel_analysis] {label}: peer analyzing ({pct}%) [poll {attempt}/{POLL_ATTEMPTS}]"
+                    );
+                    last_logged = Some(status);
+                }
                 crate::analyzer::update_queue_status(file_hash, QueuedStatus::Analyzing(pct));
             }
-            Ok(Some(QueuedStatus::Queued)) => {
-                info!(
-                    "[parallel_analysis] {label}: still queued on peer [poll {attempt}/{POLL_ATTEMPTS}]"
-                );
+            Ok(Some(status @ QueuedStatus::Queued)) => {
+                if last_logged.as_ref() != Some(&status) || attempt % 5 == 0 {
+                    info!(
+                        "[parallel_analysis] {label}: still queued on peer [poll {attempt}/{POLL_ATTEMPTS}]"
+                    );
+                    last_logged = Some(status);
+                }
             }
             Ok(None) => {
                 info!(
@@ -462,7 +526,7 @@ fn poll_until_done(base_url: &str, file_hash: &str, label: &str) -> PollOutcome 
                 return match peer_song(base_url, file_hash) {
                     Ok(Some(song)) if song.is_analyzed => {
                         info!("[parallel_analysis] {label}: peer confirms is_analyzed=true");
-                        PollOutcome::Done
+                        PollOutcome::Done(attempt)
                     }
                     Ok(Some(song)) => {
                         warn!(
