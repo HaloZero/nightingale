@@ -227,9 +227,15 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
                 url: String,
             }
             let args: Args = deserialize(payload)?;
+            tracing::info!(
+                "[cmd] parallel_analysis_ping received url={:?} (len={})",
+                args.url,
+                args.url.len()
+            );
             let alive = tokio::task::spawn_blocking(move || app_core::parallel_analysis_ping(&args.url))
                 .await
                 .map_err(blocking_task_err)?;
+            tracing::info!("[cmd] parallel_analysis_ping result alive={alive}");
             Ok(Value::Bool(alive))
         }
         "load_songs" => {
