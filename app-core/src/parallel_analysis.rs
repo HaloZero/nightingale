@@ -809,23 +809,17 @@ fn post_cmd(base_url: &str, name: &str, body: Value) -> Result<Value, PeerError>
     })
 }
 
-#[derive(Deserialize)]
-struct SongsByHashesResponse {
-    processed: Vec<Song>,
-}
-
 fn peer_song(base_url: &str, file_hash: &str) -> Result<Option<Song>, PeerError> {
     let value = post_cmd(
         base_url,
         "load_songs_by_hashes",
         json!({ "fileHashes": [file_hash] }),
     )?;
-    let response: SongsByHashesResponse =
-        serde_json::from_value(value).map_err(|_| PeerError::Other)?;
-    Ok(response
-        .processed
-        .into_iter()
-        .find(|s| s.file_hash == file_hash))
+    // `load_songs_by_hashes` (unlike `load_songs`) returns a bare
+    // `Vec<Song>`, not a `SongsStore`-shaped `{ processed: [...] }` object --
+    // deserializing into the wrapper here silently failed every call.
+    let songs: Vec<Song> = serde_json::from_value(value).map_err(|_| PeerError::Other)?;
+    Ok(songs.into_iter().find(|s| s.file_hash == file_hash))
 }
 
 /// Looks the peer up by *path relative to its own library root* rather than
