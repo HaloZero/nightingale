@@ -61,7 +61,21 @@ pub fn manual_ping(url: &str) -> bool {
         info!("[parallel_analysis] manual ping: blank url, not pinging");
         return false;
     }
-    ping(url)
+    let alive = ping(url);
+    // `PEER_DOWN.swap` returns the previous value -- if it was true, the
+    // dispatcher is currently paused waiting on the hourly backoff thread's
+    // next wake-up (up to an hour away). A successful manual ping is itself
+    // proof the peer's back, so clear the flag and resume right away rather
+    // than making the user wait on that thread. It's left running (not
+    // touching `BACKOFF_RUNNING`); it'll just no-op harmlessly next time it
+    // wakes, same as if it had found the peer alive itself.
+    if alive && PEER_DOWN.swap(false, Ordering::SeqCst) {
+        info!(
+            "[parallel_analysis] manual ping: peer was marked down, clearing that and resuming dispatcher"
+        );
+        ensure_dispatcher_running();
+    }
+    alive
 }
 
 /// Server-side half of the peer protocol, exposed via the
