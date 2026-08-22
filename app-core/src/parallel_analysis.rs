@@ -21,7 +21,9 @@
 //! Every network call and every dispatch decision logs through `tracing`
 //! under the `[parallel_analysis]` prefix -- `RUST_LOG=info` (or `debug`)
 //! shows the full trail for a stuck/failing peer (`nightingale.log` for the
-//! Tauri build, stdout for `client/src-server`).
+//! Tauri build, stdout for `client/src-server`). Per-song lines are tagged
+//! with `describe()`'s `"<filename> (<hash>)"` label rather than a bare
+//! hash, so a log is scannable without cross-referencing the library.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -117,11 +119,43 @@ fn relative_song_path(song_path: &Path) -> Option<PathBuf> {
 /// peer records why). Returns `None` (treated by the caller as "peer
 /// doesn't have this song") if this instance isn't folder-sourced either.
 pub fn song_at_path(relative_path: &Path) -> Option<Song> {
-    let root = folder_root()?;
+    let Some(root) = folder_root() else {
+        warn!(
+            "[parallel_analysis] server: got a load_song_by_path request for {relative_path:?} \
+             but this instance isn't folder-sourced -- nothing to resolve it against"
+        );
+        return None;
+    };
     let absolute = root.join(relative_path);
-    library_db::load_song_by_path(&absolute.to_string_lossy())
+    let song = library_db::load_song_by_path(&absolute.to_string_lossy())
+        .ok()
+        .flatten();
+    match &song {
+        Some(s) => info!(
+            "[parallel_analysis] server: load_song_by_path {relative_path:?} -> found, hash={} is_analyzed={}",
+            s.file_hash, s.is_analyzed
+        ),
+        None => info!(
+            "[parallel_analysis] server: load_song_by_path {relative_path:?} -> nothing at {absolute:?}"
+        ),
+    }
+    song
+}
+
+/// "<filename> (<hash>)" label for log lines -- scanning logs for a bare
+/// hash means cross-referencing the library by hand every time; this makes
+/// the actual file obvious at a glance. Falls back to just the hash if the
+/// song can't be found locally (e.g. deleted out from under an in-flight
+/// dispatch).
+fn describe(file_hash: &str) -> String {
+    let filename = library_db::load_song_by_hash(file_hash)
         .ok()
         .flatten()
+        .and_then(|song| song.path.file_name().map(|n| n.to_string_lossy().into_owned()));
+    match filename {
+        Some(name) => format!("{name} ({file_hash})"),
+        None => file_hash.to_string(),
+    }
 }
 
 /// Starts the dispatcher thread if parallel analysis is enabled, a peer is
@@ -160,8 +194,10 @@ enum DispatchOutcome {
     Done,
     /// Peer doesn't have this song, or failed/timed out analyzing it, or the
     /// downloaded results were unusable -- handed back to the local queue;
-    /// worth trying other queued songs against the peer.
-    Rejected,
+    /// worth trying other queued songs against the peer. Carries a short
+    /// human-readable reason so the dispatcher's own log line is
+    /// self-contained -- no need to scroll up to find out why.
+    Rejected(String),
     /// Peer is unreachable -- handed back to the local queue, dispatcher
     /// stops entirely until the peer's confirmed alive again.
     PeerDown,
@@ -188,21 +224,22 @@ fn dispatcher_loop() {
             info!("[parallel_analysis] dispatcher: stopping, nothing left to claim");
             break;
         };
+        let label = describe(&file_hash);
 
-        info!("[parallel_analysis] dispatcher: dispatching {file_hash} to {base_url}");
-        match dispatch_one(&base_url, &file_hash) {
+        info!("[parallel_analysis] dispatcher: dispatching {label} to {base_url}");
+        match dispatch_one(&base_url, &file_hash, &label) {
             DispatchOutcome::Done => {
-                info!("[parallel_analysis] dispatcher: {file_hash} completed via peer");
+                info!("[parallel_analysis] dispatcher: {label} completed via peer");
             }
-            DispatchOutcome::Rejected => {
+            DispatchOutcome::Rejected(reason) => {
                 info!(
-                    "[parallel_analysis] dispatcher: {file_hash} rejected by peer, returned to local queue"
+                    "[parallel_analysis] dispatcher: {label} rejected by peer ({reason}), returned to local queue"
                 );
                 skip.insert(file_hash);
             }
             DispatchOutcome::PeerDown => {
                 warn!(
-                    "[parallel_analysis] dispatcher: peer {base_url} went down mid-dispatch, stopping"
+                    "[parallel_analysis] dispatcher: peer {base_url} went down mid-dispatch ({label}), stopping"
                 );
                 crate::analyzer::return_to_front(&file_hash);
                 enter_down_backoff();
@@ -215,17 +252,17 @@ fn dispatcher_loop() {
     crate::analyzer::stop_parallel_dispatcher();
 }
 
-fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
+fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome {
     if !ping(base_url) {
         warn!(
-            "[parallel_analysis] {file_hash}: peer {base_url} did not respond to ping, treating as down"
+            "[parallel_analysis] {label}: peer {base_url} did not respond to ping, treating as down"
         );
         return DispatchOutcome::PeerDown;
     }
 
     let Some(local_song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
-        warn!("[parallel_analysis] {file_hash}: no longer in local library, skipping");
-        return DispatchOutcome::Rejected;
+        warn!("[parallel_analysis] {label}: no longer in local library, skipping");
+        return DispatchOutcome::Rejected("no longer in local library".to_string());
     };
     // Recorded on a mismatch as the human-readable "which local file"
     // pointer (see `record_mismatch`); the peer lookup itself uses the
@@ -234,13 +271,15 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
 
     let Some(relative_path) = relative_song_path(&local_song.path) else {
         warn!(
-            "[parallel_analysis] {file_hash}: can't determine a library-relative path for {local_path:?} (not a folder-sourced library, or the file isn't under the configured library root) -- skipping peer offload"
+            "[parallel_analysis] {label}: can't determine a library-relative path for {local_path:?} (not a folder-sourced library, or the file isn't under the configured library root) -- skipping peer offload"
         );
         crate::analyzer::return_to_front(file_hash);
-        return DispatchOutcome::Rejected;
+        return DispatchOutcome::Rejected(
+            "not folder-sourced, or file isn't under the library root".to_string(),
+        );
     };
     let relative_path = relative_path.to_string_lossy().into_owned();
-    info!("[parallel_analysis] {file_hash}: checking peer for relative path {relative_path:?}");
+    info!("[parallel_analysis] {label}: checking peer for relative path {relative_path:?}");
 
     // Libraries are assumed to mirror the same relative structure, so a
     // peer lookup is done by *path* (not hash): that's what lets a
@@ -251,12 +290,12 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
     let peer_song = match peer_song_by_path(base_url, &relative_path) {
         Ok(song) => song,
         Err(PeerError::Unreachable) => {
-            warn!("[parallel_analysis] {file_hash}: peer unreachable during path lookup");
+            warn!("[parallel_analysis] {label}: peer unreachable during path lookup");
             return DispatchOutcome::PeerDown;
         }
         Err(PeerError::Other) => {
             warn!(
-                "[parallel_analysis] {file_hash}: path lookup on peer failed (non-network), treating as no match"
+                "[parallel_analysis] {label}: path lookup on peer failed (non-network), treating as no match"
             );
             None
         }
@@ -265,65 +304,70 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
     let peer_song = match peer_song {
         None => {
             info!(
-                "[parallel_analysis] {file_hash}: peer has nothing at relative path {relative_path:?}"
+                "[parallel_analysis] {label}: peer has nothing at relative path {relative_path:?}"
             );
-            record_mismatch(file_hash, &local_path, base_url, None);
+            record_mismatch(file_hash, &local_path, base_url, None, label);
             crate::analyzer::return_to_front(file_hash);
-            return DispatchOutcome::Rejected;
+            return DispatchOutcome::Rejected(format!(
+                "peer has nothing at relative path {relative_path:?}"
+            ));
         }
         Some(song) if song.file_hash != file_hash => {
             warn!(
-                "[parallel_analysis] {file_hash}: peer has a different hash at relative path {relative_path:?} (peer hash={})",
+                "[parallel_analysis] {label}: peer has a different hash at relative path {relative_path:?} (peer hash={})",
                 song.file_hash
             );
-            record_mismatch(file_hash, &local_path, base_url, Some(&song.file_hash));
+            record_mismatch(file_hash, &local_path, base_url, Some(&song.file_hash), label);
             crate::analyzer::return_to_front(file_hash);
-            return DispatchOutcome::Rejected;
+            return DispatchOutcome::Rejected(format!(
+                "peer has a different hash at {relative_path:?} (peer hash={})",
+                song.file_hash
+            ));
         }
         Some(song) => {
             info!(
-                "[parallel_analysis] {file_hash}: matched on peer (already analyzed={})",
+                "[parallel_analysis] {label}: matched on peer (already analyzed={})",
                 song.is_analyzed
             );
-            clear_mismatch(file_hash);
+            clear_mismatch(file_hash, label);
             song
         }
     };
 
     if !peer_song.is_analyzed {
-        info!("[parallel_analysis] {file_hash}: triggering analysis on peer");
+        info!("[parallel_analysis] {label}: triggering analysis on peer");
         match trigger(base_url, file_hash) {
             Ok(()) => {}
             Err(PeerError::Unreachable) => return DispatchOutcome::PeerDown,
             Err(PeerError::Other) => {
-                warn!("[parallel_analysis] {file_hash}: failed to trigger analysis on peer");
+                warn!("[parallel_analysis] {label}: failed to trigger analysis on peer");
                 crate::analyzer::return_to_front(file_hash);
-                return DispatchOutcome::Rejected;
+                return DispatchOutcome::Rejected("failed to trigger analysis on peer".to_string());
             }
         }
         crate::analyzer::update_queue_status(file_hash, QueuedStatus::Analyzing(0));
 
-        match poll_until_done(base_url, file_hash) {
+        match poll_until_done(base_url, file_hash, label) {
             PollOutcome::Done => {
-                info!("[parallel_analysis] {file_hash}: peer finished analyzing");
+                info!("[parallel_analysis] {label}: peer finished analyzing");
             }
-            PollOutcome::GaveUp => {
+            PollOutcome::GaveUp(reason) => {
                 crate::analyzer::return_to_front(file_hash);
-                return DispatchOutcome::Rejected;
+                return DispatchOutcome::Rejected(reason);
             }
             PollOutcome::PeerDown => return DispatchOutcome::PeerDown,
         }
     } else {
-        info!("[parallel_analysis] {file_hash}: already analyzed on peer, fetching results");
+        info!("[parallel_analysis] {label}: already analyzed on peer, fetching results");
     }
 
-    if !fetch_results(base_url, file_hash) {
-        warn!("[parallel_analysis] {file_hash}: failed to fetch results from peer");
+    if !fetch_results(base_url, file_hash, label) {
+        warn!("[parallel_analysis] {label}: failed to fetch results from peer");
         crate::analyzer::return_to_front(file_hash);
-        return DispatchOutcome::Rejected;
+        return DispatchOutcome::Rejected("failed to fetch results from peer".to_string());
     }
 
-    info!("[parallel_analysis] {file_hash}: results fetched from peer, finalizing locally");
+    info!("[parallel_analysis] {label}: results fetched from peer, finalizing locally");
     // `finalize_peer_analysis` can still fail even after every download
     // reported success -- e.g. the transcript was written but the stems
     // ended up somewhere `CacheDir` doesn't look, or the transcript's
@@ -334,12 +378,16 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
         DispatchOutcome::Done
     } else {
         warn!(
-            "[parallel_analysis] {file_hash}: downloaded results from peer but local finalize \
+            "[parallel_analysis] {label}: downloaded results from peer but local finalize \
              failed (see the [analyzer] Finalize failed line above for which file was missing) \
              -- returning to local queue"
         );
         crate::analyzer::return_to_front(file_hash);
-        DispatchOutcome::Rejected
+        DispatchOutcome::Rejected(
+            "downloaded results from peer but local finalize failed (see [analyzer] Finalize \
+             failed log line above)"
+                .to_string(),
+        )
     }
 }
 
@@ -349,91 +397,135 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
 /// each other (`parallel_analysis` is offloading, not syncing), so this is
 /// always worth surfacing rather than silently retrying forever; read the
 /// table with `scripts/parallel_analysis_mismatches.py`.
-fn record_mismatch(file_hash: &str, path: &str, peer_url: &str, peer_hash: Option<&str>) {
+fn record_mismatch(
+    file_hash: &str,
+    path: &str,
+    peer_url: &str,
+    peer_hash: Option<&str>,
+    label: &str,
+) {
     if let Err(e) =
         library_db::record_parallel_analysis_mismatch(file_hash, path, peer_url, peer_hash)
     {
-        warn!("[parallel_analysis] failed to record mismatch for {file_hash}: {e}");
+        warn!("[parallel_analysis] failed to record mismatch for {label}: {e}");
     }
 }
 
 /// Clears a previously recorded mismatch once a later check finds a match --
 /// keeps the table reflecting current state rather than growing forever.
-fn clear_mismatch(file_hash: &str) {
+fn clear_mismatch(file_hash: &str, label: &str) {
     if let Err(e) = library_db::clear_parallel_analysis_mismatch(file_hash) {
-        warn!("[parallel_analysis] failed to clear mismatch for {file_hash}: {e}");
+        warn!("[parallel_analysis] failed to clear mismatch for {label}: {e}");
     }
 }
 
 enum PollOutcome {
     Done,
-    GaveUp,
+    /// Carries a short human-readable reason, propagated up into
+    /// `DispatchOutcome::Rejected` so the dispatcher's own log line names
+    /// the cause without needing to scroll up to find it.
+    GaveUp(String),
     PeerDown,
 }
 
 /// Polls the peer's queue every `POLL_INTERVAL` for up to `POLL_ATTEMPTS`
 /// (== 20 minutes), mirroring reported progress onto the local queue row.
-fn poll_until_done(base_url: &str, file_hash: &str) -> PollOutcome {
+fn poll_until_done(base_url: &str, file_hash: &str, label: &str) -> PollOutcome {
     for attempt in 1..=POLL_ATTEMPTS {
         std::thread::sleep(POLL_INTERVAL);
 
         if !AppConfig::load().parallel_analysis_enabled() {
-            info!("[parallel_analysis] {file_hash}: disabled mid-poll, giving up on peer");
-            return PollOutcome::GaveUp;
+            info!("[parallel_analysis] {label}: disabled mid-poll, giving up on peer");
+            return PollOutcome::GaveUp("parallel analysis disabled mid-poll".to_string());
         }
 
         match peer_queue_status(base_url, file_hash) {
             Ok(Some(QueuedStatus::Failed { message, .. })) => {
-                warn!("[parallel_analysis] {file_hash}: peer reported failure: {message}");
-                return PollOutcome::GaveUp;
+                warn!("[parallel_analysis] {label}: peer reported failure: {message}");
+                return PollOutcome::GaveUp(format!("peer reported failure: {message}"));
             }
             Ok(Some(QueuedStatus::Analyzing(pct))) => {
                 info!(
-                    "[parallel_analysis] {file_hash}: peer analyzing ({pct}%) [poll {attempt}/{POLL_ATTEMPTS}]"
+                    "[parallel_analysis] {label}: peer analyzing ({pct}%) [poll {attempt}/{POLL_ATTEMPTS}]"
                 );
                 crate::analyzer::update_queue_status(file_hash, QueuedStatus::Analyzing(pct));
             }
             Ok(Some(QueuedStatus::Queued)) => {
                 info!(
-                    "[parallel_analysis] {file_hash}: still queued on peer [poll {attempt}/{POLL_ATTEMPTS}]"
+                    "[parallel_analysis] {label}: still queued on peer [poll {attempt}/{POLL_ATTEMPTS}]"
                 );
             }
             Ok(None) => {
                 info!(
-                    "[parallel_analysis] {file_hash}: no longer queued on peer, checking whether it finished"
+                    "[parallel_analysis] {label}: no longer queued on peer, checking whether it finished"
                 );
                 return match peer_song(base_url, file_hash) {
-                    Ok(Some(song)) if song.is_analyzed => PollOutcome::Done,
-                    Ok(_) => {
-                        warn!(
-                            "[parallel_analysis] {file_hash}: peer dropped it from the queue without analyzing it"
-                        );
-                        PollOutcome::GaveUp
+                    Ok(Some(song)) if song.is_analyzed => {
+                        info!("[parallel_analysis] {label}: peer confirms is_analyzed=true");
+                        PollOutcome::Done
                     }
-                    Err(PeerError::Unreachable) => PollOutcome::PeerDown,
-                    Err(PeerError::Other) => PollOutcome::GaveUp,
+                    Ok(Some(song)) => {
+                        warn!(
+                            "[parallel_analysis] {label}: gone from peer's queue but peer's own \
+                             song row still has is_analyzed=false -- either a genuine failure, or a \
+                             transient race right as the peer finished (will look stale if seen only \
+                             once); is_video={} usdx={}",
+                            song.is_video,
+                            song.usdx.is_some()
+                        );
+                        PollOutcome::GaveUp(
+                            "gone from peer's queue but peer still shows is_analyzed=false"
+                                .to_string(),
+                        )
+                    }
+                    Ok(None) => {
+                        warn!(
+                            "[parallel_analysis] {label}: gone from peer's queue and peer has no \
+                             song row for this hash at all"
+                        );
+                        PollOutcome::GaveUp(
+                            "gone from peer's queue and peer has no song row for this hash"
+                                .to_string(),
+                        )
+                    }
+                    Err(PeerError::Unreachable) => {
+                        warn!(
+                            "[parallel_analysis] {label}: peer unreachable while confirming finish"
+                        );
+                        PollOutcome::PeerDown
+                    }
+                    Err(PeerError::Other) => {
+                        warn!(
+                            "[parallel_analysis] {label}: load_songs_by_hashes call to peer failed \
+                             (non-network, e.g. bad response body) while confirming finish"
+                        );
+                        PollOutcome::GaveUp(
+                            "load_songs_by_hashes call to peer failed while confirming finish"
+                                .to_string(),
+                        )
+                    }
                 };
             }
             Err(PeerError::Unreachable) => {
-                warn!("[parallel_analysis] {file_hash}: peer unreachable mid-poll");
+                warn!("[parallel_analysis] {label}: peer unreachable mid-poll");
                 return PollOutcome::PeerDown;
             }
             Err(PeerError::Other) => {
                 warn!(
-                    "[parallel_analysis] {file_hash}: poll request failed (non-network) [poll {attempt}/{POLL_ATTEMPTS}]"
+                    "[parallel_analysis] {label}: poll request failed (non-network) [poll {attempt}/{POLL_ATTEMPTS}]"
                 );
             }
         }
     }
-    warn!("[parallel_analysis] {file_hash}: timed out after {POLL_ATTEMPTS} polls (20 min), giving up on peer");
-    PollOutcome::GaveUp
+    warn!("[parallel_analysis] {label}: timed out after {POLL_ATTEMPTS} polls (20 min), giving up on peer");
+    PollOutcome::GaveUp(format!("timed out after {POLL_ATTEMPTS} polls (20 min)"))
 }
 
 /// Copies the peer's finished transcript (and, unless the transcript marks
 /// `no_stems`, the instrumental/vocals stems) plus any lyrics file into the
 /// local cache, straight off `/media/<hash>/<kind>` (byte-for-byte, no JSON
 /// round-trip). Returns whether a usable transcript landed locally.
-fn fetch_results(base_url: &str, file_hash: &str) -> bool {
+fn fetch_results(base_url: &str, file_hash: &str, label: &str) -> bool {
     let cache = CacheDir::new();
 
     if !download_to(
@@ -441,18 +533,19 @@ fn fetch_results(base_url: &str, file_hash: &str) -> bool {
         file_hash,
         "transcript",
         &cache.transcript_path(file_hash),
+        label,
     ) {
-        warn!("[parallel_analysis] {file_hash}: failed to fetch transcript from peer");
+        warn!("[parallel_analysis] {label}: failed to fetch transcript from peer");
         return false;
     }
     info!(
-        "[parallel_analysis] {file_hash}: transcript on disk, {} bytes",
+        "[parallel_analysis] {label}: transcript on disk, {} bytes",
         file_len(&cache.transcript_path(file_hash))
     );
 
     let meta = read_transcript_meta(&cache, file_hash);
     info!(
-        "[parallel_analysis] {file_hash}: transcript meta -- no_stems={} source={:?} key={:?} tempo={} language={:?}",
+        "[parallel_analysis] {label}: transcript meta -- no_stems={} source={:?} key={:?} tempo={} language={:?}",
         meta.no_stems, meta.source, meta.key, meta.tempo, meta.language
     );
     if !meta.no_stems {
@@ -461,25 +554,38 @@ fn fetch_results(base_url: &str, file_hash: &str) -> bool {
             file_hash,
             "instrumental",
             &cache.instrumental_path(file_hash),
+            label,
         );
-        let vocals_ok = download_to(base_url, file_hash, "vocals", &cache.vocals_path(file_hash));
+        let vocals_ok = download_to(
+            base_url,
+            file_hash,
+            "vocals",
+            &cache.vocals_path(file_hash),
+            label,
+        );
         if !instrumental_ok || !vocals_ok {
             warn!(
-                "[parallel_analysis] {file_hash}: failed to fetch stems from peer (instrumental_ok={instrumental_ok}, vocals_ok={vocals_ok})"
+                "[parallel_analysis] {label}: failed to fetch stems from peer (instrumental_ok={instrumental_ok}, vocals_ok={vocals_ok})"
             );
             return false;
         }
         info!(
-            "[parallel_analysis] {file_hash}: stems on disk, instrumental={} bytes, vocals={} bytes",
+            "[parallel_analysis] {label}: stems on disk, instrumental={} bytes, vocals={} bytes",
             file_len(&cache.instrumental_path(file_hash)),
             file_len(&cache.vocals_path(file_hash))
         );
     }
 
     // Lyrics is optional/best-effort -- its absence on the peer isn't fatal.
-    if !download_to(base_url, file_hash, "lyrics", &cache.lyrics_path(file_hash)) {
+    if !download_to(
+        base_url,
+        file_hash,
+        "lyrics",
+        &cache.lyrics_path(file_hash),
+        label,
+    ) {
         info!(
-            "[parallel_analysis] {file_hash}: no lyrics file fetched from peer (missing or failed) -- continuing without it"
+            "[parallel_analysis] {label}: no lyrics file fetched from peer (missing or failed) -- continuing without it"
         );
     }
 
@@ -488,7 +594,7 @@ fn fetch_results(base_url: &str, file_hash: &str) -> bool {
     // right after this is a download problem (this would already be false)
     // or something in finalize itself.
     info!(
-        "[parallel_analysis] {file_hash}: transcript_exists()={} going into finalize",
+        "[parallel_analysis] {label}: transcript_exists()={} going into finalize",
         cache.transcript_exists(file_hash)
     );
 
@@ -691,12 +797,12 @@ fn trigger(base_url: &str, file_hash: &str) -> Result<(), PeerError> {
 /// sibling first and renaming into place so a dropped connection never
 /// leaves a truncated file that `analyzer::finalize_peer_analysis` could
 /// mistake for a finished one.
-fn download_to(base_url: &str, file_hash: &str, kind: &str, dest: &Path) -> bool {
+fn download_to(base_url: &str, file_hash: &str, kind: &str, dest: &Path, label: &str) -> bool {
     let url = media_url(base_url, file_hash, kind);
     let resp = match DOWNLOAD_AGENT.get(&url).call() {
         Ok(resp) => resp,
         Err(e) => {
-            warn!("[parallel_analysis] GET {url} failed: {e} ({e:?})");
+            warn!("[parallel_analysis] {label}: GET {url} failed: {e} ({e:?})");
             return false;
         }
     };
@@ -713,17 +819,19 @@ fn download_to(base_url: &str, file_hash: &str, kind: &str, dest: &Path) -> bool
     match write_result {
         Ok(()) => match std::fs::rename(&tmp, dest) {
             Ok(()) => {
-                info!("[parallel_analysis] {file_hash}: downloaded {kind} from {url}");
+                info!("[parallel_analysis] {label}: downloaded {kind} from {url}");
                 true
             }
             Err(e) => {
-                warn!("[parallel_analysis] {url}: downloaded {kind} but failed to move into place: {e}");
+                warn!(
+                    "[parallel_analysis] {label}: downloaded {kind} from {url} but failed to move into place: {e}"
+                );
                 let _ = std::fs::remove_file(&tmp);
                 false
             }
         },
         Err(e) => {
-            warn!("[parallel_analysis] {url}: failed writing {kind} to disk: {e}");
+            warn!("[parallel_analysis] {label}: failed writing {kind} from {url} to disk: {e}");
             let _ = std::fs::remove_file(&tmp);
             false
         }

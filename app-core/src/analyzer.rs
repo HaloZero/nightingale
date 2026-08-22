@@ -1177,7 +1177,15 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) -> bool {
             warn!("[analyzer] Playable source-video conversion failed for {file_hash}: {err}");
         }
         let meta = read_transcript_meta(cache, file_hash);
-        remove_from_queue(file_hash);
+        // `update_song_analyzed` before `remove_from_queue`, deliberately --
+        // each is a separate DB call (lock acquired/released per-call, not
+        // held across both), so a reader on another thread (notably
+        // `parallel_analysis`'s poll, which checks "gone from the queue"
+        // then separately checks `songs.is_analyzed`) could otherwise land
+        // in the gap and see "not queued" + `is_analyzed` still false, and
+        // wrongly conclude the analysis never finished. Committing
+        // `is_analyzed` first means "no longer queued" is trustworthy on
+        // its own by the time anyone can observe it.
         update_song_analyzed(
             file_hash,
             true,
@@ -1186,6 +1194,7 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) -> bool {
             meta.key,
             Some(meta.tempo),
         );
+        remove_from_queue(file_hash);
         info!("[analyzer] Analysis complete for {file_hash}");
         true
     } else {
