@@ -192,6 +192,30 @@ pub fn load_song_by_hash(file_hash: &str) -> rusqlite::Result<Option<Song>> {
     })
 }
 
+/// Looks a song up by its exact library path rather than content hash --
+/// used by `parallel_analysis` to answer a peer's "do you have this file"
+/// check even when the content hash might differ (that mismatch is the
+/// thing being detected, not something to filter out here).
+pub fn load_song_by_path(path: &str) -> rusqlite::Result<Option<Song>> {
+    use rusqlite::OptionalExtension;
+    with_conn(|c| {
+        let mut stmt = c.prepare("SELECT payload FROM songs WHERE path = ?1 LIMIT 1")?;
+        let song = stmt
+            .query_row([path], |r| {
+                let payload: String = r.get(0)?;
+                serde_json::from_str::<Song>(&payload).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })
+            })
+            .optional()?;
+        Ok(song)
+    })
+}
+
 pub fn load_songs_by_hashes(file_hashes: &[String]) -> rusqlite::Result<Vec<Song>> {
     if file_hashes.is_empty() {
         return Ok(Vec::new());

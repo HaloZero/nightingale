@@ -101,6 +101,6 @@ export const onShiftTempoDone = async (cb: (payload: ShiftDone) => void): Promis
   return await listen<ShiftDone>("shift-tempo-done", ({ payload }) => cb(payload));
 };
 
-export const pingParallelAnalysis = async (): Promise<boolean> => {
-  return await invoke<boolean>("parallel_analysis_ping");
+export const pingParallelAnalysis = async (url: string): Promise<boolean> => {
+  return await invoke<boolean>("parallel_analysis_ping", { url });
 };

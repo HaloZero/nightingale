@@ -24,7 +24,7 @@ use crate::song::{Song, SongOrigin};
 use super::connection::{with_conn, with_conn_mut};
 use super::songs::{append_songs, update_library_meta};
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 static MIGRATION_TOTAL: AtomicUsize = AtomicUsize::new(0);
@@ -168,6 +168,25 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
             );
             CREATE INDEX IF NOT EXISTS idx_analysis_timings_file_hash
                 ON analysis_timings(file_hash);
+        ",
+        )?;
+    }
+    if v < 4 {
+        conn.execute_batch(
+            "
+            -- Songs `parallel_analysis` expected to match on a peer instance
+            -- (same path, same content hash) but didn't. One row per local
+            -- song currently mismatched -- cleared (see
+            -- `clear_parallel_analysis_mismatch`) once a later check finds a
+            -- match, so this only ever reflects the current state, not a
+            -- historical log.
+            CREATE TABLE IF NOT EXISTS parallel_analysis_mismatches (
+                file_hash TEXT PRIMARY KEY,
+                path TEXT NOT NULL,
+                peer_url TEXT NOT NULL,
+                peer_hash TEXT,
+                detected_at TEXT NOT NULL
+            );
         ",
         )?;
     }

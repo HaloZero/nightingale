@@ -43,13 +43,28 @@ static BACKOFF_RUNNING: AtomicBool = AtomicBool::new(false);
 // ─── Public entry points ────────────────────────────────────────────────
 
 /// Used by the "ping" button in settings: a fresh, synchronous liveness
-/// check against the configured peer. `false` if no peer is configured.
-pub fn manual_ping() -> bool {
-    let config = AppConfig::load();
-    let Some(url) = config.parallel_analysis_url() else {
+/// check against `url` directly -- deliberately *not* `AppConfig::load()`'s
+/// `parallel_analysis_url`, since the button needs to test whatever's
+/// currently typed in the field, not whatever was last saved (the save is a
+/// separate, unawaited request from the settings page, so reading the saved
+/// config here would race it and could ping a stale/empty URL). `false` if
+/// `url` is blank.
+pub fn manual_ping(url: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() {
         return false;
-    };
+    }
     ping(url)
+}
+
+/// Server-side half of the peer protocol, exposed via the
+/// `load_song_by_path` command: lets a peer instance check whether *this*
+/// instance has the same file at the same path before offloading a song to
+/// it (and, if the hashes then don't match, that the peer records why).
+pub fn song_at_path(path: &Path) -> Option<Song> {
+    library_db::load_song_by_path(&path.to_string_lossy())
+        .ok()
+        .flatten()
 }
 
 /// Starts the dispatcher thread if parallel analysis is enabled, a peer is
@@ -133,16 +148,35 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
         // Song vanished locally (deleted mid-queue) -- nothing to hand off.
         return DispatchOutcome::Rejected;
     };
+    let path = local_song.path.to_string_lossy().into_owned();
 
-    let peer_song = match peer_song(base_url, file_hash) {
+    // Libraries are assumed to mirror each other, so a peer lookup is done
+    // by *path* (not hash): that's what lets a same-path-different-content
+    // song be told apart from one the peer genuinely doesn't have, and
+    // recorded in `parallel_analysis_mismatches` either way (see
+    // `record_mismatch`) instead of silently falling back to local
+    // processing with no trace of why.
+    let peer_song = match peer_song_by_path(base_url, &path) {
         Ok(song) => song,
         Err(PeerError::Unreachable) => return DispatchOutcome::PeerDown,
         Err(PeerError::Other) => None,
     };
 
-    let Some(peer_song) = peer_song.filter(|s| s.path == local_song.path) else {
-        crate::analyzer::return_to_front(file_hash);
-        return DispatchOutcome::Rejected;
+    let peer_song = match peer_song {
+        None => {
+            record_mismatch(file_hash, &path, base_url, None);
+            crate::analyzer::return_to_front(file_hash);
+            return DispatchOutcome::Rejected;
+        }
+        Some(song) if song.file_hash != file_hash => {
+            record_mismatch(file_hash, &path, base_url, Some(&song.file_hash));
+            crate::analyzer::return_to_front(file_hash);
+            return DispatchOutcome::Rejected;
+        }
+        Some(song) => {
+            clear_mismatch(file_hash);
+            song
+        }
     };
 
     if !peer_song.is_analyzed {
@@ -173,6 +207,26 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
         crate::analyzer::return_to_front(file_hash);
         DispatchOutcome::Rejected
     }
+}
+
+/// Records that `file_hash` (at `path`) didn't match on `peer_url` --
+/// `peer_hash` is `None` when the peer had nothing at that path at all, or
+/// `Some` with the peer's differing hash. Libraries are assumed to mirror
+/// each other (`parallel_analysis` is offloading, not syncing), so this is
+/// always worth surfacing rather than silently retrying forever; read the
+/// table with `scripts/parallel_analysis_mismatches.py`.
+fn record_mismatch(file_hash: &str, path: &str, peer_url: &str, peer_hash: Option<&str>) {
+    if let Err(e) =
+        library_db::record_parallel_analysis_mismatch(file_hash, path, peer_url, peer_hash)
+    {
+        warn!("[parallel_analysis] failed to record mismatch for {file_hash}: {e}");
+    }
+}
+
+/// Clears a previously recorded mismatch once a later check finds a match --
+/// keeps the table reflecting current state rather than growing forever.
+fn clear_mismatch(file_hash: &str) {
+    let _ = library_db::clear_parallel_analysis_mismatch(file_hash);
 }
 
 enum PollOutcome {
@@ -331,17 +385,33 @@ static DOWNLOAD_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
     ureq::Agent::new_with_config(config)
 });
 
+/// Users type peer addresses the way a browser address bar accepts them --
+/// `192.168.1.170:8080`, no scheme -- but `ureq` requires an absolute URI
+/// and fails to even parse a schemeless one (surfacing as "peer
+/// unreachable" with nothing in the logs to explain why, since it never
+/// gets far enough to attempt a connection). Default to `http://` so typing
+/// it the browser way still works; an explicit `http://`/`https://` is left
+/// alone.
+fn normalize_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    }
+}
+
 fn cmd_url(base_url: &str, name: &str) -> String {
-    format!("{}/api/cmd/{name}", base_url.trim_end_matches('/'))
+    format!("{}/api/cmd/{name}", normalize_base_url(base_url))
 }
 
 fn media_url(base_url: &str, file_hash: &str, kind: &str) -> String {
-    format!("{}/media/{file_hash}/{kind}", base_url.trim_end_matches('/'))
+    format!("{}/media/{file_hash}/{kind}", normalize_base_url(base_url))
 }
 
 fn ping(base_url: &str) -> bool {
     CMD_AGENT
-        .get(format!("{}/api/bootstrap", base_url.trim_end_matches('/')))
+        .get(format!("{}/api/bootstrap", normalize_base_url(base_url)))
         .call()
         .is_ok()
 }
@@ -373,6 +443,13 @@ fn peer_song(base_url: &str, file_hash: &str) -> Result<Option<Song>, PeerError>
         .processed
         .into_iter()
         .find(|s| s.file_hash == file_hash))
+}
+
+/// Looks the peer up by *path* rather than hash -- see `song_at_path` for
+/// the server side of this call.
+fn peer_song_by_path(base_url: &str, path: &str) -> Result<Option<Song>, PeerError> {
+    let value = post_cmd(base_url, "load_song_by_path", json!({ "path": path }))?;
+    serde_json::from_value(value).map_err(|_| PeerError::Other)
 }
 
 #[derive(Deserialize)]

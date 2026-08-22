@@ -144,10 +144,15 @@ export const SettingsPage = () => {
   };
 
   const pingParallel = async () => {
-    if (pingStatus === "loading" || parallelUrl.trim().length === 0) return;
+    const url = parallelUrl.trim();
+    if (pingStatus === "loading" || url.length === 0) return;
+    // Also persist whatever's being tested -- if you're pinging it, you
+    // want it saved, and it means the field never silently drifts from
+    // what Ping last confirmed reachable.
+    commitParallelUrl();
     setPingStatus("loading");
     try {
-      const alive = await pingParallelAnalysis();
+      const alive = await pingParallelAnalysis(url);
       setPingStatus(alive ? "alive" : "unreachable");
     } catch {
       setPingStatus("unreachable");

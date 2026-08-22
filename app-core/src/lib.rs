@@ -41,7 +41,7 @@ pub use lyrics::{
 pub use media_server::MediaEndpoint;
 pub use parallel_analysis::{
     ensure_dispatcher_running as parallel_analysis_ensure_dispatcher_running,
-    manual_ping as parallel_analysis_ping,
+    manual_ping as parallel_analysis_ping, song_at_path as parallel_analysis_song_at_path,
 };
 pub use playback::{
     AudioPaths, PixabayVideoDownloaded, ShiftDone, ShiftResult, StemsReady,

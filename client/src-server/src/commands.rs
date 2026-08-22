@@ -222,7 +222,12 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             Ok(serde_json::to_value(result).map_err(serde_err)?)
         }
         "parallel_analysis_ping" => {
-            let alive = tokio::task::spawn_blocking(app_core::parallel_analysis_ping)
+            #[derive(Deserialize)]
+            struct Args {
+                url: String,
+            }
+            let args: Args = deserialize(payload)?;
+            let alive = tokio::task::spawn_blocking(move || app_core::parallel_analysis_ping(&args.url))
                 .await
                 .map_err(blocking_task_err)?;
             Ok(Value::Bool(alive))
@@ -246,6 +251,19 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
                 serde_json::to_value(SongsStore::load_by_hashes(&args.file_hashes))
                     .map_err(serde_err)?,
             )
+        }
+        // Peer-to-peer lookup for `parallel_analysis`: a peer instance
+        // checks whether *this* one has the same file at the same path
+        // (and, if so, whether the content hash also matches) before
+        // offloading a song here.
+        "load_song_by_path" => {
+            #[derive(Deserialize)]
+            struct Args {
+                path: std::path::PathBuf,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(serde_json::to_value(app_core::parallel_analysis_song_at_path(&args.path))
+                .map_err(serde_err)?)
         }
         "load_songs_meta" => Ok(serde_json::to_value(SongsStore::load_meta()).map_err(serde_err)?),
         "load_analysis_queue" => {
