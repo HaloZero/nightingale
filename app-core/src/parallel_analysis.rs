@@ -39,9 +39,9 @@ use crate::config::{AppConfig, LibrarySource};
 use crate::library_db;
 use crate::song::{Song, read_transcript_meta};
 
-/// How many times to poll the peer for completion, 60s apart (== 20 min).
-const POLL_ATTEMPTS: u32 = 20;
-const POLL_INTERVAL: Duration = Duration::from_secs(60);
+/// How many times to poll the peer for completion, 3s apart (== 20 min).
+const POLL_ATTEMPTS: u32 = 400;
+const POLL_INTERVAL: Duration = Duration::from_secs(3);
 /// How long to wait before re-checking a peer that failed a liveness check.
 const BACKOFF_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -317,12 +317,27 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
         info!("[parallel_analysis] {file_hash}: already analyzed on peer, fetching results");
     }
 
-    if fetch_results(base_url, file_hash) {
-        info!("[parallel_analysis] {file_hash}: results fetched from peer, finalizing locally");
-        crate::analyzer::finalize_peer_analysis(file_hash);
+    if !fetch_results(base_url, file_hash) {
+        warn!("[parallel_analysis] {file_hash}: failed to fetch results from peer");
+        crate::analyzer::return_to_front(file_hash);
+        return DispatchOutcome::Rejected;
+    }
+
+    info!("[parallel_analysis] {file_hash}: results fetched from peer, finalizing locally");
+    // `finalize_peer_analysis` can still fail even after every download
+    // reported success -- e.g. the transcript was written but the stems
+    // ended up somewhere `CacheDir` doesn't look, or the transcript's
+    // `no_stems` flag doesn't say what `fetch_results` thought it did.
+    // Check its result rather than assuming "we downloaded fine" means "the
+    // song is now marked analyzed".
+    if crate::analyzer::finalize_peer_analysis(file_hash) {
         DispatchOutcome::Done
     } else {
-        warn!("[parallel_analysis] {file_hash}: failed to fetch results from peer");
+        warn!(
+            "[parallel_analysis] {file_hash}: downloaded results from peer but local finalize \
+             failed (see the [analyzer] Finalize failed line above for which file was missing) \
+             -- returning to local queue"
+        );
         crate::analyzer::return_to_front(file_hash);
         DispatchOutcome::Rejected
     }
@@ -430,8 +445,16 @@ fn fetch_results(base_url: &str, file_hash: &str) -> bool {
         warn!("[parallel_analysis] {file_hash}: failed to fetch transcript from peer");
         return false;
     }
+    info!(
+        "[parallel_analysis] {file_hash}: transcript on disk, {} bytes",
+        file_len(&cache.transcript_path(file_hash))
+    );
 
     let meta = read_transcript_meta(&cache, file_hash);
+    info!(
+        "[parallel_analysis] {file_hash}: transcript meta -- no_stems={} source={:?} key={:?} tempo={} language={:?}",
+        meta.no_stems, meta.source, meta.key, meta.tempo, meta.language
+    );
     if !meta.no_stems {
         let instrumental_ok = download_to(
             base_url,
@@ -446,6 +469,11 @@ fn fetch_results(base_url: &str, file_hash: &str) -> bool {
             );
             return false;
         }
+        info!(
+            "[parallel_analysis] {file_hash}: stems on disk, instrumental={} bytes, vocals={} bytes",
+            file_len(&cache.instrumental_path(file_hash)),
+            file_len(&cache.vocals_path(file_hash))
+        );
     }
 
     // Lyrics is optional/best-effort -- its absence on the peer isn't fatal.
@@ -455,7 +483,20 @@ fn fetch_results(base_url: &str, file_hash: &str) -> bool {
         );
     }
 
+    // Same check `analyzer::finalize_song` is about to make -- logging it
+    // here, before finalize runs, pins down whether a "finalize failed"
+    // right after this is a download problem (this would already be false)
+    // or something in finalize itself.
+    info!(
+        "[parallel_analysis] {file_hash}: transcript_exists()={} going into finalize",
+        cache.transcript_exists(file_hash)
+    );
+
     true
+}
+
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
 // ─── Liveness backoff ────────────────────────────────────────────────────

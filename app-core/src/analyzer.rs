@@ -612,8 +612,11 @@ pub(crate) fn stop_parallel_dispatcher() {
 /// the local cache: runs the exact same "mark analyzed" path a locally-run
 /// analysis would (playable-video conversion, transcript meta read, queue
 /// removal, song update).
-pub fn finalize_peer_analysis(file_hash: &str) {
-    finalize_song(file_hash, &CacheDir::new());
+/// Returns whether the song actually ended up marked analyzed -- see
+/// `finalize_song`'s doc comment for why the caller must check this instead
+/// of assuming success.
+pub fn finalize_peer_analysis(file_hash: &str) -> bool {
+    finalize_song(file_hash, &CacheDir::new())
 }
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -1163,7 +1166,12 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
     }
 }
 
-fn finalize_song(file_hash: &str, cache: &CacheDir) {
+/// Returns whether the song actually ended up marked analyzed. Callers that
+/// can't otherwise tell whether finalization succeeded -- notably
+/// `finalize_peer_analysis`, whose caller has no other way to know the
+/// "mark as analyzed" step actually landed -- must check this rather than
+/// assuming success just because they got this far.
+fn finalize_song(file_hash: &str, cache: &CacheDir) -> bool {
     if cache.transcript_exists(file_hash) {
         if let Err(err) = crate::playback::ensure_playable_source_video(file_hash) {
             warn!("[analyzer] Playable source-video conversion failed for {file_hash}: {err}");
@@ -1179,7 +1187,15 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) {
             Some(meta.tempo),
         );
         info!("[analyzer] Analysis complete for {file_hash}");
+        true
     } else {
+        warn!(
+            "[analyzer] Finalize failed for {file_hash}: transcript_exists() is false \
+             (transcript_path.is_file()={}, instrumental.is_file()={}, vocals.is_file()={})",
+            cache.transcript_path(file_hash).is_file(),
+            cache.instrumental_path(file_hash).is_file(),
+            cache.vocals_path(file_hash).is_file(),
+        );
         update_queue_status(
             file_hash,
             QueuedStatus::Failed {
@@ -1188,6 +1204,7 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) {
                 acknowledged: false,
             },
         );
+        false
     }
 }
 
