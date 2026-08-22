@@ -6,6 +6,13 @@
 //! backlog concurrently. See `analyzer::claim_from_back_excluding` for why
 //! the two workers can't double-claim a hash.
 //!
+//! Both instances are assumed to be `Folder`-sourced libraries mirroring the
+//! same *relative* directory structure, not necessarily living at the same
+//! absolute filesystem path (different usernames, mount points, or OSes are
+//! fine). A song is only handed off once the peer confirms it has the same
+//! file at that same relative path with the same content hash -- see
+//! `relative_song_path`/`song_at_path`.
+//!
 //! Every peer call goes through the same HTTP surface the browser client
 //! uses (`/api/cmd/*`, `/media/<hash>/<kind>`) -- no separate protocol, no
 //! auth beyond whatever already gates that port (matches the existing
@@ -17,7 +24,7 @@
 //! Tauri build, stdout for `client/src-server`).
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -28,7 +35,7 @@ use tracing::{info, warn};
 
 use crate::analyzer::QueuedStatus;
 use crate::cache::CacheDir;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LibrarySource};
 use crate::library_db;
 use crate::song::{Song, read_transcript_meta};
 
@@ -78,12 +85,41 @@ pub fn manual_ping(url: &str) -> bool {
     alive
 }
 
+/// This instance's own folder-library root, if configured as a `Folder`
+/// source -- the only source kind `parallel_analysis` can mirror against,
+/// since remote-sourced libraries (Jellyfin/Navidrome/Plex) have no
+/// meaningful "same relative path" of their own.
+fn folder_root() -> Option<PathBuf> {
+    match AppConfig::load().library_source {
+        Some(LibrarySource::Folder { path }) => Some(path),
+        _ => None,
+    }
+}
+
+/// `song_path` relative to this instance's own library root -- what's sent
+/// to the peer instead of the full absolute path. The two instances are
+/// assumed to mirror the same *relative* directory structure under each
+/// one's own root, not to live at the identical absolute filesystem path
+/// (different usernames/mount points/OSes are fine as long as the folder
+/// layout underneath matches). Returns `None` if this instance isn't
+/// folder-sourced, or `song_path` somehow isn't under its own root.
+fn relative_song_path(song_path: &Path) -> Option<PathBuf> {
+    let root = folder_root()?;
+    song_path.strip_prefix(&root).ok().map(Path::to_path_buf)
+}
+
 /// Server-side half of the peer protocol, exposed via the
-/// `load_song_by_path` command: lets a peer instance check whether *this*
-/// instance has the same file at the same path before offloading a song to
-/// it (and, if the hashes then don't match, that the peer records why).
-pub fn song_at_path(path: &Path) -> Option<Song> {
-    library_db::load_song_by_path(&path.to_string_lossy())
+/// `load_song_by_path` command: given a path *relative to the peer's own
+/// library root* (see `relative_song_path`), resolves it against *this*
+/// instance's own root and looks the result up -- lets a peer check whether
+/// this instance has the same file at the same relative path before
+/// offloading a song to it (and, if the hashes then don't match, that the
+/// peer records why). Returns `None` (treated by the caller as "peer
+/// doesn't have this song") if this instance isn't folder-sourced either.
+pub fn song_at_path(relative_path: &Path) -> Option<Song> {
+    let root = folder_root()?;
+    let absolute = root.join(relative_path);
+    library_db::load_song_by_path(&absolute.to_string_lossy())
         .ok()
         .flatten()
 }
@@ -191,16 +227,28 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
         warn!("[parallel_analysis] {file_hash}: no longer in local library, skipping");
         return DispatchOutcome::Rejected;
     };
-    let path = local_song.path.to_string_lossy().into_owned();
-    info!("[parallel_analysis] {file_hash}: checking peer for path {path:?}");
+    // Recorded on a mismatch as the human-readable "which local file"
+    // pointer (see `record_mismatch`); the peer lookup itself uses the
+    // *relative* path below, not this.
+    let local_path = local_song.path.to_string_lossy().into_owned();
 
-    // Libraries are assumed to mirror each other, so a peer lookup is done
-    // by *path* (not hash): that's what lets a same-path-different-content
-    // song be told apart from one the peer genuinely doesn't have, and
-    // recorded in `parallel_analysis_mismatches` either way (see
-    // `record_mismatch`) instead of silently falling back to local
-    // processing with no trace of why.
-    let peer_song = match peer_song_by_path(base_url, &path) {
+    let Some(relative_path) = relative_song_path(&local_song.path) else {
+        warn!(
+            "[parallel_analysis] {file_hash}: can't determine a library-relative path for {local_path:?} (not a folder-sourced library, or the file isn't under the configured library root) -- skipping peer offload"
+        );
+        crate::analyzer::return_to_front(file_hash);
+        return DispatchOutcome::Rejected;
+    };
+    let relative_path = relative_path.to_string_lossy().into_owned();
+    info!("[parallel_analysis] {file_hash}: checking peer for relative path {relative_path:?}");
+
+    // Libraries are assumed to mirror the same relative structure, so a
+    // peer lookup is done by *path* (not hash): that's what lets a
+    // same-path-different-content song be told apart from one the peer
+    // genuinely doesn't have, and recorded in `parallel_analysis_mismatches`
+    // either way (see `record_mismatch`) instead of silently falling back
+    // to local processing with no trace of why.
+    let peer_song = match peer_song_by_path(base_url, &relative_path) {
         Ok(song) => song,
         Err(PeerError::Unreachable) => {
             warn!("[parallel_analysis] {file_hash}: peer unreachable during path lookup");
@@ -216,17 +264,19 @@ fn dispatch_one(base_url: &str, file_hash: &str) -> DispatchOutcome {
 
     let peer_song = match peer_song {
         None => {
-            info!("[parallel_analysis] {file_hash}: peer has nothing at {path:?}");
-            record_mismatch(file_hash, &path, base_url, None);
+            info!(
+                "[parallel_analysis] {file_hash}: peer has nothing at relative path {relative_path:?}"
+            );
+            record_mismatch(file_hash, &local_path, base_url, None);
             crate::analyzer::return_to_front(file_hash);
             return DispatchOutcome::Rejected;
         }
         Some(song) if song.file_hash != file_hash => {
             warn!(
-                "[parallel_analysis] {file_hash}: peer has a different hash at {path:?} (peer hash={})",
+                "[parallel_analysis] {file_hash}: peer has a different hash at relative path {relative_path:?} (peer hash={})",
                 song.file_hash
             );
-            record_mismatch(file_hash, &path, base_url, Some(&song.file_hash));
+            record_mismatch(file_hash, &local_path, base_url, Some(&song.file_hash));
             crate::analyzer::return_to_front(file_hash);
             return DispatchOutcome::Rejected;
         }
@@ -567,10 +617,16 @@ fn peer_song(base_url: &str, file_hash: &str) -> Result<Option<Song>, PeerError>
         .find(|s| s.file_hash == file_hash))
 }
 
-/// Looks the peer up by *path* rather than hash -- see `song_at_path` for
-/// the server side of this call.
-fn peer_song_by_path(base_url: &str, path: &str) -> Result<Option<Song>, PeerError> {
-    let value = post_cmd(base_url, "load_song_by_path", json!({ "path": path }))?;
+/// Looks the peer up by *path relative to its own library root* rather than
+/// hash or absolute path -- see `song_at_path` for the server side of this
+/// call, which resolves `relative_path` against the peer's own root before
+/// querying.
+fn peer_song_by_path(base_url: &str, relative_path: &str) -> Result<Option<Song>, PeerError> {
+    let value = post_cmd(
+        base_url,
+        "load_song_by_path",
+        json!({ "path": relative_path }),
+    )?;
     serde_json::from_value(value).map_err(|_| PeerError::Other)
 }
 

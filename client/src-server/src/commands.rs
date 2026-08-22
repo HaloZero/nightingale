@@ -260,8 +260,8 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         }
         // Peer-to-peer lookup for `parallel_analysis`: a peer instance
         // checks whether *this* one has the same file at the same path
-        // (and, if so, whether the content hash also matches) before
-        // offloading a song here.
+        // relative to its own library root (and, if so, whether the
+        // content hash also matches) before offloading a song here.
         "load_song_by_path" => {
             #[derive(Deserialize)]
             struct Args {
