@@ -96,6 +96,8 @@ export const DEFAULTS = {
   track_analysis_timings: true,
   lyrics_vertical_position: "bottom",
   lyrics_horizontal_position: "center",
+  parallel_analysis_enabled: false,
+  parallel_analysis_url: "",
 } satisfies Pick<
   AppConfig,
   | "separator"
@@ -113,6 +115,8 @@ export const DEFAULTS = {
   | "track_analysis_timings"
   | "lyrics_vertical_position"
   | "lyrics_horizontal_position"
+  | "parallel_analysis_enabled"
+  | "parallel_analysis_url"
 >;
 
 export const MIC_MONITOR_GAIN_STEP = 0.01;
@@ -141,9 +145,11 @@ export const NAV = {
 // The Whisper-only "Model size" + "Beam Size" fields sit right after the
 // transcription model, so every later field shifts by two segments when
 // Parakeet hides them. Fields that aren't rendered map to -1 so focus rings
-// never match them.
-export function getAnalysisNav(isParakeet: boolean) {
-  return isParakeet
+// never match them. `showParallelAnalysis` is `false` in the Tauri desktop
+// build (the section isn't rendered there -- server-only feature), so its
+// three segments are similarly omitted/`-1`'d rather than shifting anything.
+export function getAnalysisNav(isParakeet: boolean, showParallelAnalysis: boolean) {
+  const base = isParakeet
     ? {
         separator: 1,
         asrEngine: 2,
@@ -170,9 +176,22 @@ export function getAnalysisNav(isParakeet: boolean) {
         useExternalLyrics: 10,
         restoreAnalyze: 11,
       };
+
+  const next = Math.max(...Object.values(base)) + 1;
+
+  return {
+    ...base,
+    parallelAnalysisEnabled: showParallelAnalysis ? next : -1,
+    parallelAnalysisUrl: showParallelAnalysis ? next + 1 : -1,
+    parallelAnalysisPing: showParallelAnalysis ? next + 2 : -1,
+  };
 }
 
-export function getSettingsStops(tab: SettingsTab, isParakeet: boolean) {
+export function getSettingsStops(
+  tab: SettingsTab,
+  isParakeet: boolean,
+  showParallelAnalysis: boolean,
+) {
   if (tab === "general") {
     return [2, 2, 1, 1, 2, 1, 1, 2];
   }
@@ -181,8 +200,12 @@ export function getSettingsStops(tab: SettingsTab, isParakeet: boolean) {
   // restoreAnalyze's own toggles -- each appended after every existing field
   // rather than inserted mid-sequence, so none of the indices above have to
   // shift. footerSegment (Restore Defaults / Close) is derived as
-  // `stops.length - 1`, so it stays correct automatically.
-  return isParakeet
-    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2, 2]
-    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2, 2];
+  // `stops.length - 1`, so it stays correct automatically. Parallel
+  // analysis's own [2 (Off/On), 1 (URL field), 1 (Ping button)] is appended
+  // the same way, only when `showParallelAnalysis` is true.
+  const base = isParakeet
+    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2]
+    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2];
+
+  return showParallelAnalysis ? [...base, 2, 1, 1, 2] : [...base, 2];
 }

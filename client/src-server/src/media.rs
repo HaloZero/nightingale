@@ -78,6 +78,22 @@ pub async fn handle_hashed(
         "instrumental" => Some(app_core::get_audio_paths(&hash).instrumental),
         "vocals" => app_core::get_audio_paths(&hash).vocals,
         "source-video" | "video" => app_core::ensure_playable_source_video(&hash).ok().flatten(),
+        // Peer-to-peer transfer channel for `parallel_analysis`: lets a
+        // peer instance pull a finished analysis's transcript/lyrics back
+        // over the same hash-keyed route the browser already uses for
+        // stems, rather than a separate protocol.
+        "transcript" => Some(
+            app_core::CacheDir::new()
+                .transcript_path(&hash)
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        "lyrics" => Some(
+            app_core::CacheDir::new()
+                .lyrics_path(&hash)
+                .to_string_lossy()
+                .into_owned(),
+        ),
         _ => None,
     };
 

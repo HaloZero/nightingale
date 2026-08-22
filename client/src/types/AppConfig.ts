@@ -68,4 +68,17 @@ export type AppConfig = {
   refresh_lyrics_on_scan: boolean | null;
   song_list_view: string | null;
   language_overrides: { [key in string]: string } | null;
+  /**
+   * Whether this instance offloads the tail of its analysis queue to
+   * another Nightingale instance (see `parallel_analysis_url`) instead of
+   * only processing it locally. Off by default -- no peer is configured
+   * out of the box.
+   */
+  parallel_analysis_enabled: boolean | null;
+  /**
+   * Base URL (e.g. `http://otherhost:8080`) of the peer Nightingale
+   * instance to offload analysis to. Only consulted when
+   * `parallel_analysis_enabled` is true.
+   */
+  parallel_analysis_url: string | null;
 };

@@ -100,3 +100,7 @@ export const onShiftKeyDone = async (cb: (payload: ShiftDone) => void): Promise<
 export const onShiftTempoDone = async (cb: (payload: ShiftDone) => void): Promise<() => void> => {
   return await listen<ShiftDone>("shift-tempo-done", ({ payload }) => cb(payload));
 };
+
+export const pingParallelAnalysis = async (): Promise<boolean> => {
+  return await invoke<boolean>("parallel_analysis_ping");
+};

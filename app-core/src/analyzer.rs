@@ -462,6 +462,11 @@ struct AnalyzerState {
     queue: VecDeque<String>,
     active_hash: Option<String>,
     worker_running: bool,
+    /// Whether `parallel_analysis`'s dispatcher thread is currently draining
+    /// the back of `queue` to hand songs to a peer instance. Owned here
+    /// (rather than in `parallel_analysis`) so it can be checked/flipped
+    /// under the same lock as `queue` itself.
+    parallel_worker_running: bool,
 }
 
 static ANALYZER: LazyLock<Mutex<AnalyzerState>> = LazyLock::new(|| {
@@ -469,6 +474,7 @@ static ANALYZER: LazyLock<Mutex<AnalyzerState>> = LazyLock::new(|| {
         queue: VecDeque::new(),
         active_hash: None,
         worker_running: false,
+        parallel_worker_running: false,
     })
 });
 
@@ -487,7 +493,7 @@ pub fn mark_stems_only(file_hash: &str) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-fn update_queue_status(file_hash: &str, status: QueuedStatus) {
+pub(crate) fn update_queue_status(file_hash: &str, status: QueuedStatus) {
     let (st, pct, msg, kind, acknowledged) = match &status {
         QueuedStatus::Queued => ("queued", None, None::<String>, None::<&'static str>, false),
         QueuedStatus::Analyzing(p) => ("analyzing", Some(*p as i64), None, None, false),
@@ -553,6 +559,63 @@ fn ensure_worker_running(state: &mut AnalyzerState) {
     }
 }
 
+// ─── Parallel analysis (peer offload) ─────────────────────────────────
+//
+// `parallel_analysis` drains the *back* of the same queue the local worker
+// drains from the front (see `claim_from_back_excluding`), so a hash can
+// only ever be claimed once -- no separate locking is needed to keep the two
+// workers from double-processing a song.
+
+/// Pops the most-recently-queued hash not in `skip` for `parallel_analysis`'s
+/// dispatcher. Symmetric to the local worker's `queue.pop_front()`, except it
+/// skips hashes the peer has already rejected/failed/timed out on this run
+/// (so one stuck song can't spin the dispatcher in a tight retry loop while
+/// leaving the rest of the queue untouched).
+pub(crate) fn claim_from_back_excluding(skip: &std::collections::HashSet<String>) -> Option<String> {
+    let mut state = ANALYZER.lock().unwrap();
+    let idx = state.queue.iter().rposition(|h| !skip.contains(h))?;
+    state.queue.remove(idx)
+}
+
+/// Hands a hash `parallel_analysis` couldn't (or no longer can) get the peer
+/// to process back to the *local* worker: pushed to the front so it's picked
+/// up promptly, with its queue row reset to `Queued` in case it had been
+/// marked `Analyzing` while the peer had it.
+pub(crate) fn return_to_front(file_hash: &str) {
+    let mut state = ANALYZER.lock().unwrap();
+    if !state.queue.iter().any(|h| h == file_hash) {
+        state.queue.push_front(file_hash.to_string());
+    }
+    update_queue_status(file_hash, QueuedStatus::Queued);
+    ensure_worker_running(&mut state);
+}
+
+/// Flips `parallel_worker_running` on if it's off and there's work to do,
+/// returning whether the caller should spawn the dispatcher thread. Mirrors
+/// `ensure_worker_running`'s start-once semantics for the local worker.
+pub(crate) fn try_start_parallel_dispatcher() -> bool {
+    let mut state = ANALYZER.lock().unwrap();
+    if !state.parallel_worker_running && !state.queue.is_empty() {
+        state.parallel_worker_running = true;
+        true
+    } else {
+        false
+    }
+}
+
+pub(crate) fn stop_parallel_dispatcher() {
+    ANALYZER.lock().unwrap().parallel_worker_running = false;
+}
+
+/// Public counterpart to the private `finalize_song`, called once
+/// `parallel_analysis` has copied a peer's finished stems/transcript into
+/// the local cache: runs the exact same "mark analyzed" path a locally-run
+/// analysis would (playable-video conversion, transcript meta read, queue
+/// removal, song update).
+pub fn finalize_peer_analysis(file_hash: &str) {
+    finalize_song(file_hash, &CacheDir::new());
+}
+
 // ─── Public API ──────────────────────────────────────────────────────
 
 pub(crate) fn is_usdx_song(file_hash: &str) -> bool {
@@ -576,6 +639,8 @@ pub fn enqueue_one(file_hash: &str) {
         update_queue_status(file_hash, QueuedStatus::Queued);
     }
     ensure_worker_running(&mut state);
+    drop(state);
+    crate::parallel_analysis::ensure_dispatcher_running();
 }
 
 pub fn enqueue_all(filters: &LibraryMenuFilters) {
@@ -610,6 +675,8 @@ pub fn enqueue_all(filters: &LibraryMenuFilters) {
     if should_start {
         spawn_worker();
     }
+
+    crate::parallel_analysis::ensure_dispatcher_running();
 }
 
 pub fn shutdown_server() {

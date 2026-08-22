@@ -8,6 +8,7 @@ mod library_model;
 mod lrc;
 mod lyrics;
 pub mod media_server;
+mod parallel_analysis;
 mod playback;
 mod profile;
 mod scanner;
@@ -38,6 +39,10 @@ pub use lyrics::{
     save_lyrics_and_realign, search_lrclib_for_hash,
 };
 pub use media_server::MediaEndpoint;
+pub use parallel_analysis::{
+    ensure_dispatcher_running as parallel_analysis_ensure_dispatcher_running,
+    manual_ping as parallel_analysis_ping,
+};
 pub use playback::{
     AudioPaths, PixabayVideoDownloaded, ShiftDone, ShiftResult, StemsReady,
     download_pixabay_videos, ensure_mp3_stems, ensure_mp3_stems_ready_payload,

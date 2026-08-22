@@ -228,6 +228,15 @@ pub struct AppConfig {
     pub refresh_lyrics_on_scan: Option<bool>,
     pub song_list_view: Option<String>,
     pub language_overrides: Option<HashMap<String, String>>,
+    /// Whether this instance offloads the tail of its analysis queue to
+    /// another Nightingale instance (see `parallel_analysis_url`) instead of
+    /// only processing it locally. Off by default -- no peer is configured
+    /// out of the box.
+    pub parallel_analysis_enabled: Option<bool>,
+    /// Base URL (e.g. `http://otherhost:8080`) of the peer Nightingale
+    /// instance to offload analysis to. Only consulted when
+    /// `parallel_analysis_enabled` is true.
+    pub parallel_analysis_url: Option<String>,
 }
 
 fn default_data_path_option() -> Option<PathBuf> {
@@ -267,6 +276,8 @@ impl Default for AppConfig {
             refresh_lyrics_on_scan: None,
             song_list_view: None,
             language_overrides: None,
+            parallel_analysis_enabled: None,
+            parallel_analysis_url: None,
         }
     }
 }
@@ -465,6 +476,18 @@ impl AppConfig {
         self.language_overrides
             .get_or_insert_with(HashMap::new)
             .insert(file_hash, lang);
+    }
+
+    pub fn parallel_analysis_enabled(&self) -> bool {
+        self.parallel_analysis_enabled.unwrap_or(false)
+    }
+
+    /// The configured peer base URL, trimmed, or `None` when unset/blank.
+    pub fn parallel_analysis_url(&self) -> Option<&str> {
+        self.parallel_analysis_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 }
 

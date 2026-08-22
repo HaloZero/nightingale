@@ -1,14 +1,18 @@
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Field, FieldGroup } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { setFullScreen, isFullScreen as tauriIsFullScreen } from "@/bridge/fullScreen";
+import { pingParallelAnalysis } from "@/bridge/analysis";
+import { isTauri } from "@/bridge/runtime";
 import { useMicDevices } from "@/queries/use-mic-devices";
 import { useConfigMutation } from "@/mutations/use-config-mutation";
 import { useConfig } from "@/queries/use-config";
 import type { AppConfig } from "@/types/AppConfig";
+import { CheckCircle2Icon, Loader2Icon, XCircleIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import {
@@ -54,11 +58,22 @@ export const SettingsPage = () => {
   const [vocalThresholdPct, setVocalThresholdPct] = useState(
     config?.vocal_detection_threshold_pct ?? DEFAULTS.vocal_detection_threshold_pct,
   );
+  const [parallelUrl, setParallelUrl] = useState(
+    config?.parallel_analysis_url ?? DEFAULTS.parallel_analysis_url,
+  );
+  const [pingStatus, setPingStatus] = useState<"idle" | "loading" | "alive" | "unreachable">(
+    "idle",
+  );
 
   const close = () => navigate("/");
   const asrEngine = config?.asr_engine ?? DEFAULTS.asr_engine;
   const isParakeet = asrEngine === "parakeet";
-  const analysisNav = getAnalysisNav(isParakeet);
+  // Parallel analysis offloads work to another self-hosted Nightingale
+  // instance over HTTP -- there's nothing for the Tauri desktop app to point
+  // at itself, so the section (and its nav segments, see `getSettingsStops`)
+  // only exists in the web/server build.
+  const showParallelAnalysis = !isTauri;
+  const analysisNav = getAnalysisNav(isParakeet, showParallelAnalysis);
 
   const micOptions = useMemo(
     () => [
@@ -86,6 +101,10 @@ export const SettingsPage = () => {
       config?.vocal_detection_threshold_pct ?? DEFAULTS.vocal_detection_threshold_pct,
     );
   }, [config?.vocal_detection_threshold_pct]);
+
+  useEffect(() => {
+    setParallelUrl(config?.parallel_analysis_url ?? DEFAULTS.parallel_analysis_url);
+  }, [config?.parallel_analysis_url]);
 
   useEffect(() => {
     const updateIsFullScreen = async () => {
@@ -116,17 +135,39 @@ export const SettingsPage = () => {
     mutate({ fullscreen });
   };
 
+  const commitParallelUrl = () => {
+    const trimmed = parallelUrl.trim();
+    setParallelUrl(trimmed);
+    if (trimmed !== (config?.parallel_analysis_url ?? "")) {
+      mutate({ parallel_analysis_url: trimmed || null });
+    }
+  };
+
+  const pingParallel = async () => {
+    if (pingStatus === "loading" || parallelUrl.trim().length === 0) return;
+    setPingStatus("loading");
+    try {
+      const alive = await pingParallelAnalysis();
+      setPingStatus(alive ? "alive" : "unreachable");
+    } catch {
+      setPingStatus("unreachable");
+    }
+  };
+
   const resetDefaults = () => {
     mutate(DEFAULTS);
     setMicMonitorGain(DEFAULTS.mic_monitor_gain);
     setMicLatencySec(DEFAULTS.mic_latency_compensation_sec);
     setVocalThresholdPct(DEFAULTS.vocal_detection_threshold_pct);
+    setParallelUrl(DEFAULTS.parallel_analysis_url);
+    setPingStatus("idle");
   };
 
   const { footerSegment, getFocusClassName, syncFocusFromElement } = useSettingsNavigation({
     containerRef,
     tab,
     isParakeet,
+    showParallelAnalysis,
     micMonitorGain,
     micLatencySec,
     vocalThresholdPct,
@@ -459,6 +500,76 @@ export const SettingsPage = () => {
                   </Button>
                 </ButtonGroup>
               </Field>
+
+              {showParallelAnalysis && (
+                <>
+                  <Field>
+                    <Label>Parallel analysis</Label>
+                    <Hint>
+                      Offload queued songs to another Nightingale server instead of only analyzing
+                      them here. Songs are only sent over once confirmed present (same file and
+                      path) on the peer.
+                    </Hint>
+                    <ButtonGroup>
+                      <Button
+                        variant={config?.parallel_analysis_enabled === true ? "outline" : "default"}
+                        onClick={() => mutate({ parallel_analysis_enabled: false })}
+                        className={getFocusClassName(analysisNav.parallelAnalysisEnabled, 0)}
+                      >
+                        Off
+                      </Button>
+                      <Button
+                        variant={config?.parallel_analysis_enabled === true ? "default" : "outline"}
+                        onClick={() => mutate({ parallel_analysis_enabled: true })}
+                        className={getFocusClassName(analysisNav.parallelAnalysisEnabled, 1)}
+                      >
+                        On
+                      </Button>
+                    </ButtonGroup>
+                  </Field>
+
+                  <Field>
+                    <Label htmlFor="parallel-analysis-url-1">Peer server address</Label>
+                    <Hint>
+                      Base URL of the other Nightingale instance, e.g. http://otherhost:8080
+                    </Hint>
+                    <div className="flex gap-2">
+                      <Input
+                        id="parallel-analysis-url-1"
+                        placeholder="http://otherhost:8080"
+                        value={parallelUrl}
+                        onChange={(event) => {
+                          setParallelUrl(event.target.value);
+                          setPingStatus("idle");
+                        }}
+                        onBlur={commitParallelUrl}
+                        className={getFocusClassName(analysisNav.parallelAnalysisUrl)}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={pingParallel}
+                        className={getFocusClassName(analysisNav.parallelAnalysisPing)}
+                      >
+                        {pingStatus === "loading" ? (
+                          <Loader2Icon className="size-4 animate-spin" />
+                        ) : pingStatus === "alive" ? (
+                          <CheckCircle2Icon className="size-4 text-chart-3" />
+                        ) : pingStatus === "unreachable" ? (
+                          <XCircleIcon className="size-4 text-destructive" />
+                        ) : null}
+                        Ping
+                      </Button>
+                    </div>
+                    {pingStatus === "alive" && (
+                      <p className="text-sm text-muted-foreground">Peer is reachable.</p>
+                    )}
+                    {pingStatus === "unreachable" && (
+                      <p className="text-sm text-destructive">Peer did not respond.</p>
+                    )}
+                  </Field>
+                </>
+              )}
             </FieldGroup>
           </TabsContent>
         </Tabs>

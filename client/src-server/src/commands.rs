@@ -221,6 +221,12 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
                 .map_err(blocking_task_err)?;
             Ok(serde_json::to_value(result).map_err(serde_err)?)
         }
+        "parallel_analysis_ping" => {
+            let alive = tokio::task::spawn_blocking(app_core::parallel_analysis_ping)
+                .await
+                .map_err(blocking_task_err)?;
+            Ok(Value::Bool(alive))
+        }
         "load_songs" => {
             #[derive(Deserialize)]
             struct Args {
@@ -518,10 +524,19 @@ struct SaveConfigArgs {
 
 fn save_config_cmd(payload: Value) -> CmdResult {
     let SaveConfigArgs { config } = deserialize(payload)?;
-    let was_auto_analyze = AppConfig::load().auto_analyze();
+    let previous = AppConfig::load();
+    let was_auto_analyze = previous.auto_analyze();
+    let was_parallel = (previous.parallel_analysis_enabled(), previous.parallel_analysis_url().map(str::to_string));
     config.save();
     if config.auto_analyze() && !was_auto_analyze {
         app_core::enqueue_all(&app_core::LibraryMenuFilters::default());
+    }
+    // Kick the dispatcher immediately on enable (or a URL change while
+    // already enabled) rather than waiting for the next `enqueue_one` --
+    // matches the `auto_analyze` transition handling above.
+    let now_parallel = (config.parallel_analysis_enabled(), config.parallel_analysis_url().map(str::to_string));
+    if now_parallel.0 && now_parallel != was_parallel {
+        app_core::parallel_analysis_ensure_dispatcher_running();
     }
     // Web mode has no server-side cpal monitor stream, so `mic_monitor_gain`
     // is consumed entirely by the browser's monitor GainNode.
