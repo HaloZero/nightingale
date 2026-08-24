@@ -13,7 +13,9 @@ pub fn save_config(config: AppConfig) -> AppConfig {
     config.save();
     set_monitor_gain(config.mic_monitor_gain());
     if config.auto_analyze() && !was_auto_analyze {
-        app_core::enqueue_all(&app_core::LibraryMenuFilters::default());
+        let _ = app_core::enqueue(app_core::SongTarget::Filter {
+            filters: app_core::LibraryMenuFilters::default(),
+        });
     }
     config
 }

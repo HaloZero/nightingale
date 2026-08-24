@@ -1,8 +1,8 @@
 use app_core::{
     ensure_mp3_stems_ready_payload, load_lyrics_file, save_lyrics_and_realign,
     search_lrclib_for_hash, shift_key_done_payload, shift_tempo_done_payload, AnalysisQueue,
-    AppConfig, CacheStats, LibraryMenuFilters, LibraryMenuItems, LibrarySource, LoadSongsParams,
-    PixabayVideoDownloaded, ProfileStore, SongsStore,
+    AppConfig, CacheStats, LibraryMenuItems, LibrarySource, LoadSongsParams,
+    PixabayVideoDownloaded, ProfileStore, SongTarget, SongsStore,
 };
 use axum::{
     extract::{Path as AxumPath, State},
@@ -252,116 +252,51 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         }
 
         // ── Analyzer ─────────────────────────────────────────────────────
-        "enqueue_one" => {
-            let args: FileHashArgs = deserialize(payload)?;
-            app_core::enqueue_one(&args.file_hash);
-            Ok(Value::Null)
-        }
-        "enqueue_all" => {
-            #[derive(Deserialize)]
-            struct Args {
-                filters: LibraryMenuFilters,
-            }
-            let args: Args = deserialize(payload)?;
-            app_core::enqueue_all(&args.filters);
-            Ok(Value::Null)
+        "enqueue" => {
+            let args: SongTargetArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::enqueue(args.target).map_err(ApiError::internal)?,
+            ))
         }
         "delete_song_cache" => {
-            let args: FileHashArgs = deserialize(payload)?;
-            app_core::delete_cache(&args.file_hash);
-            Ok(Value::Null)
+            let args: SongTargetArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::delete_cache(args.target).map_err(ApiError::internal)?,
+            ))
         }
         "reanalyze_transcript" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                file_hash: String,
-                #[serde(default)]
-                language: Option<String>,
-            }
-            let args: Args = deserialize(payload)?;
-            app_core::reanalyze_transcript(&args.file_hash, args.language);
-            Ok(Value::Null)
+            let args: SongTargetLanguageArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::reanalyze_transcript(args.target, args.language)
+                    .map_err(ApiError::internal)?,
+            ))
         }
         "reanalyze_full" => {
-            let args: FileHashArgs = deserialize(payload)?;
-            app_core::reanalyze_full(&args.file_hash);
-            Ok(Value::Null)
+            let args: SongTargetArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::reanalyze_full(args.target).map_err(ApiError::internal)?,
+            ))
         }
         "realign" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                file_hash: String,
-                #[serde(default)]
-                language: Option<String>,
-            }
-            let args: Args = deserialize(payload)?;
-            app_core::realign(&args.file_hash, args.language);
-            Ok(Value::Null)
+            let args: SongTargetLanguageArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::realign(args.target, args.language).map_err(ApiError::internal)?,
+            ))
         }
         "reanalyze_force_transcribe" => {
-            let args: FileHashArgs = deserialize(payload)?;
-            app_core::reanalyze_force_transcribe(&args.file_hash);
-            Ok(Value::Null)
-        }
-        "reanalyze_all_full" => {
-            #[derive(Deserialize)]
-            struct Args {
-                filters: LibraryMenuFilters,
-            }
-            let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::reanalyze_all_full(&args.filters)))
-        }
-        "reanalyze_all_transcript" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                filters: LibraryMenuFilters,
-                #[serde(default)]
-                language: Option<String>,
-            }
-            let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::reanalyze_all_transcript(
-                &args.filters,
-                args.language,
-            )))
-        }
-        "reanalyze_all_force_transcribe" => {
-            #[derive(Deserialize)]
-            struct Args {
-                filters: LibraryMenuFilters,
-            }
-            let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::reanalyze_all_force_transcribe(
-                &args.filters,
-            )))
-        }
-        "realign_all" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                filters: LibraryMenuFilters,
-                #[serde(default)]
-                language: Option<String>,
-            }
-            let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::realign_all(
-                &args.filters,
-                args.language,
-            )))
+            let args: SongTargetArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::reanalyze_force_transcribe(args.target).map_err(ApiError::internal)?,
+            ))
         }
         "refresh_metadata" => {
-            let args: FileHashArgs = deserialize(payload)?;
-            Ok(Value::from(app_core::refresh_metadata(&args.file_hash)))
-        }
-        "refresh_metadata_all" => {
-            #[derive(Deserialize)]
-            struct Args {
-                filters: LibraryMenuFilters,
-            }
-            let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::refresh_metadata_all(&args.filters)))
+            let args: SongTargetArgs = deserialize(payload)?;
+            let count =
+                tokio::task::spawn_blocking(move || app_core::refresh_metadata(args.target))
+                    .await
+                    .map_err(|e| ApiError::internal(e.to_string()))?
+                    .map_err(ApiError::internal)?;
+            Ok(Value::from(count))
         }
         "shift_key" => shift_key_cmd(events, payload),
         "shift_tempo" => shift_tempo_cmd(events, payload),
@@ -475,6 +410,18 @@ struct FileHashArgs {
 }
 
 #[derive(Deserialize)]
+struct SongTargetArgs {
+    target: SongTarget,
+}
+
+#[derive(Deserialize)]
+struct SongTargetLanguageArgs {
+    target: SongTarget,
+    #[serde(default)]
+    language: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct SaveConfigArgs {
     config: AppConfig,
 }
@@ -484,7 +431,9 @@ fn save_config_cmd(payload: Value) -> CmdResult {
     let was_auto_analyze = AppConfig::load().auto_analyze();
     config.save();
     if config.auto_analyze() && !was_auto_analyze {
-        app_core::enqueue_all(&app_core::LibraryMenuFilters::default());
+        let _ = app_core::enqueue(SongTarget::Filter {
+            filters: app_core::LibraryMenuFilters::default(),
+        });
     }
     // Web mode has no server-side cpal monitor stream, so `mic_monitor_gain`
     // is consumed entirely by the browser's monitor GainNode.

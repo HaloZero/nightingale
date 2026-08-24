@@ -19,6 +19,14 @@ pub struct LibraryMenuFilters {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum SongTarget {
+    Hashes { hashes: Vec<String> },
+    Filter { filters: LibraryMenuFilters },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LoadSongsParams {
     pub search: Option<String>,

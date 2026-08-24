@@ -7,8 +7,10 @@ export type SongsStore = {
   processed: Array<Song>;
   processed_count: number;
   /**
-   * Count of songs matching the current filter that are already analyzed.
-   * Lets the frontend gate analyzed-only bulk actions
+   * Count of songs matching the current filter that are already analyzed
+   * -- lets the frontend gate analyzed-only bulk actions (e.g. full
+   * reanalysis, refetch lyrics & align) without paging in every song in
+   * the filtered set.
    */
   analyzed_count: number;
 };

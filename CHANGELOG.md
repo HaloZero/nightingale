@@ -16,7 +16,7 @@ below.
 ### Improvements
 
 - Change "AI generated" to "AI transcribed" in song list.
-- We now have a bulk-actions menu on songs and adds a new Refresh Metadata action to refresh a song from disk without having to add and remove it
+- Add bulk song actions and a Refresh Metadata action for reloading tags and artwork from disk.
 
 ## [1.1.0] - 2026-08-14
 

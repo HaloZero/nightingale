@@ -23,7 +23,7 @@ import { useDialogNav } from "@/hooks/navigation/use-dialog-nav";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { LANGUAGES } from "@/lib/languages";
-import { realign, reanalyzeTranscript } from "@/bridge/analysis";
+import { realign, reanalyzeTranscript, songsByHashes } from "@/bridge/analysis";
 import { Song } from "@/types/Song";
 
 export function isLanguageDialogMode(mode: DialogMode): mode is { mode: "language"; song: Song } {
@@ -137,10 +137,11 @@ export const SelectLanguageDialog = () => {
               disabled={!language || (language === song.language && analysisMode === "force")}
               onClick={() => {
                 if (language) {
+                  const target = songsByHashes([song.file_hash]);
                   if (analysisMode === "realign") {
-                    realign(song.file_hash, language);
+                    realign(target, language);
                   } else {
-                    reanalyzeTranscript(song.file_hash, language);
+                    reanalyzeTranscript(target, language);
                   }
                 }
 

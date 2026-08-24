@@ -153,7 +153,7 @@ export function buildActionGroups({
         {
           icon: ImageIcon,
           title: "Refresh metadata",
-          description: "Re-read title, artist, album, cover art, and lyrics source from the file.",
+          description: "Re-read title, artist, album, duration, and cover art from the file.",
           onClick: run(
             `Refreshed metadata for "${song.title}"`,
             () => analysis.refreshMetadata(song.file_hash),

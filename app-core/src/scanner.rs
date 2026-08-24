@@ -12,7 +12,7 @@ use crate::{
     cache::CacheDir,
     config::AppConfig,
     library_db,
-    library_model::{LibraryMenuFilters, LoadSongsParams, SongsMeta, SongsStore},
+    library_model::{LibraryMenuFilters, LoadSongsParams, SongTarget, SongsMeta, SongsStore},
     source::{ScanContext, active_source_from_config},
 };
 
@@ -94,7 +94,9 @@ pub fn start_scan() {
         if library_db::scan_generation_is_current(scan_generation)
             && AppConfig::load().auto_analyze()
         {
-            analyzer::enqueue_all(&LibraryMenuFilters::default());
+            let _ = analyzer::enqueue(SongTarget::Filter {
+                filters: LibraryMenuFilters::default(),
+            });
         }
     });
 }

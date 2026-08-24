@@ -18,7 +18,7 @@ import {
   MicIcon,
   RefreshCwIcon,
   Trash2Icon,
-  ZapIcon,
+  EllipsisIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -53,15 +53,16 @@ export const BulkActionsMenu = () => {
         <Button
           tabIndex={-1}
           variant="outline"
+          size="icon"
           data-actions-focus="true"
           aria-label="Actions on filtered songs"
+          title="Actions"
           className={cn(
-            "w-7 px-0 focus-visible:border-transparent focus-visible:ring-0 sm:w-auto sm:min-w-28 sm:px-3",
+            "border-input bg-input/20 focus-visible:border-transparent focus-visible:ring-0 dark:bg-input/30",
             isActionsFocused && "ring-2 ring-primary",
           )}
         >
-          <ZapIcon />
-          <span className="sr-only sm:not-sr-only">Actions</span>
+          <EllipsisIcon />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">

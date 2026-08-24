@@ -1,85 +1,47 @@
 use app_core::{
-    delete_cache as core_delete_cache, delete_cache_all as core_delete_cache_all,
-    enqueue_all as core_enqueue_all, enqueue_one as core_enqueue_one, realign as core_realign,
-    realign_all as core_realign_all,
-    reanalyze_all_force_transcribe as core_reanalyze_all_force_transcribe,
-    reanalyze_all_full as core_reanalyze_all_full,
-    reanalyze_all_transcript as core_reanalyze_all_transcript,
+    delete_cache as core_delete_cache, enqueue as core_enqueue, realign as core_realign,
     reanalyze_force_transcribe as core_reanalyze_force_transcribe,
     reanalyze_full as core_reanalyze_full, reanalyze_transcript as core_reanalyze_transcript,
-    refresh_metadata as core_refresh_metadata, refresh_metadata_all as core_refresh_metadata_all,
-    shift_key_done_payload, shift_tempo_done_payload, LibraryMenuFilters,
+    refresh_metadata as core_refresh_metadata, shift_key_done_payload, shift_tempo_done_payload,
+    SongTarget,
 };
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
-pub fn enqueue_one(file_hash: String) {
-    core_enqueue_one(&file_hash);
+pub fn enqueue(target: SongTarget) -> Result<usize, String> {
+    core_enqueue(target)
 }
 
 #[tauri::command]
-pub fn enqueue_all(filters: LibraryMenuFilters) {
-    core_enqueue_all(&filters);
+pub fn delete_song_cache(target: SongTarget) -> Result<usize, String> {
+    core_delete_cache(target)
 }
 
 #[tauri::command]
-pub fn delete_song_cache(file_hash: String) {
-    core_delete_cache(&file_hash);
+pub fn reanalyze_transcript(target: SongTarget, language: Option<String>) -> Result<usize, String> {
+    core_reanalyze_transcript(target, language)
 }
 
 #[tauri::command]
-pub fn delete_song_cache_all(filters: LibraryMenuFilters) -> usize {
-    core_delete_cache_all(&filters)
+pub fn reanalyze_full(target: SongTarget) -> Result<usize, String> {
+    core_reanalyze_full(target)
 }
 
 #[tauri::command]
-pub fn reanalyze_transcript(file_hash: String, language: Option<String>) {
-    core_reanalyze_transcript(&file_hash, language);
+pub fn realign(target: SongTarget, language: Option<String>) -> Result<usize, String> {
+    core_realign(target, language)
 }
 
 #[tauri::command]
-pub fn reanalyze_full(file_hash: String) {
-    core_reanalyze_full(&file_hash);
+pub fn reanalyze_force_transcribe(target: SongTarget) -> Result<usize, String> {
+    core_reanalyze_force_transcribe(target)
 }
 
 #[tauri::command]
-pub fn realign(file_hash: String, language: Option<String>) {
-    core_realign(&file_hash, language);
-}
-
-#[tauri::command]
-pub fn reanalyze_force_transcribe(file_hash: String) {
-    core_reanalyze_force_transcribe(&file_hash);
-}
-
-#[tauri::command]
-pub fn reanalyze_all_full(filters: LibraryMenuFilters) -> usize {
-    core_reanalyze_all_full(&filters)
-}
-
-#[tauri::command]
-pub fn reanalyze_all_transcript(filters: LibraryMenuFilters, language: Option<String>) -> usize {
-    core_reanalyze_all_transcript(&filters, language)
-}
-
-#[tauri::command]
-pub fn reanalyze_all_force_transcribe(filters: LibraryMenuFilters) -> usize {
-    core_reanalyze_all_force_transcribe(&filters)
-}
-
-#[tauri::command]
-pub fn realign_all(filters: LibraryMenuFilters, language: Option<String>) -> usize {
-    core_realign_all(&filters, language)
-}
-
-#[tauri::command]
-pub fn refresh_metadata(file_hash: String) -> bool {
-    core_refresh_metadata(&file_hash)
-}
-
-#[tauri::command]
-pub fn refresh_metadata_all(filters: LibraryMenuFilters) -> usize {
-    core_refresh_metadata_all(&filters)
+pub async fn refresh_metadata(target: SongTarget) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || core_refresh_metadata(target))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

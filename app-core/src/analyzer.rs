@@ -15,7 +15,7 @@ use crate::cache::{CacheDir, models_dir};
 use crate::config::AppConfig;
 use crate::error::NightingaleError;
 use crate::library_db;
-use crate::library_model::LibraryMenuFilters;
+use crate::library_model::{LibraryMenuFilters, SongTarget};
 use crate::lyrics::{fetch_lrclib_lyrics, write_lyrics_file};
 use crate::song::{Song, SongOrigin, TranscriptSource, compute_file_hash, read_transcript_meta};
 use crate::source::active_source;
@@ -380,13 +380,6 @@ pub(crate) fn update_song_analyzed(
     let _ = library_db::update_song_fields(file_hash, &song);
 }
 
-fn ensure_worker_running(state: &mut AnalyzerState) {
-    if !state.worker_running && !state.queue.is_empty() {
-        state.worker_running = true;
-        spawn_worker();
-    }
-}
-
 // ─── Public API ──────────────────────────────────────────────────────
 
 pub(crate) fn is_usdx_song(file_hash: &str) -> bool {
@@ -397,34 +390,62 @@ pub(crate) fn is_usdx_song(file_hash: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn enqueue_one(file_hash: &str) {
-    if is_usdx_song(file_hash) {
-        return;
-    }
-    let mut state = ANALYZER.lock().unwrap();
-    if state.active_hash.as_deref() == Some(file_hash) {
-        return;
-    }
-    if !state.queue.iter().any(|h| h == file_hash) {
-        state.queue.push_back(file_hash.to_string());
-        update_queue_status(file_hash, QueuedStatus::Queued);
-    }
-    ensure_worker_running(&mut state);
+fn resolve_target<F>(target: SongTarget, filtered: F) -> Result<Vec<String>, String>
+where
+    F: FnOnce(&LibraryMenuFilters) -> rusqlite::Result<Vec<String>>,
+{
+    let mut hashes = match target {
+        SongTarget::Hashes { hashes } => hashes,
+        SongTarget::Filter { filters } => filtered(&filters).map_err(|e| e.to_string())?,
+    };
+    let mut seen = HashSet::new();
+    hashes.retain(|hash| seen.insert(hash.clone()));
+    Ok(hashes)
 }
 
-pub fn enqueue_all(filters: &LibraryMenuFilters) {
-    let queue = AnalysisQueue::load();
+fn run_for_target<Q, A>(target: SongTarget, filtered: Q, mut action: A) -> Result<usize, String>
+where
+    Q: FnOnce(&LibraryMenuFilters) -> rusqlite::Result<Vec<String>>,
+    A: FnMut(&str) -> Result<bool, String>,
+{
+    let hashes = resolve_target(target, filtered)?;
+    let mut affected = 0;
+    let mut failures = Vec::new();
+
+    for hash in &hashes {
+        match action(hash) {
+            Ok(true) => affected += 1,
+            Ok(false) => {}
+            Err(error) => failures.push(format!("{hash}: {error}")),
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(affected)
+    } else {
+        Err(format!(
+            "Updated {affected} song(s); {} failed: {}",
+            failures.len(),
+            failures.join("; ")
+        ))
+    }
+}
+
+fn enqueue_hashes(mut hashes: Vec<String>, skip_persisted: bool) -> usize {
+    hashes.retain(|hash| !is_usdx_song(hash));
+    let persisted = skip_persisted.then(AnalysisQueue::load);
     let mut state = ANALYZER.lock().unwrap();
-
-    let pending_hashes =
-        library_db::iter_file_hashes_filtered_not_analyzed(filters).unwrap_or_default();
-
     let mut newly_queued = Vec::new();
-    for file_hash in pending_hashes {
-        let dominated = !queue.entries.contains_key(&file_hash);
-        if dominated
-            && state.active_hash.as_deref() != Some(&file_hash)
-            && !state.queue.iter().any(|h| h == &file_hash)
+
+    for file_hash in hashes {
+        if persisted
+            .as_ref()
+            .is_some_and(|queue| queue.entries.contains_key(&file_hash))
+        {
+            continue;
+        }
+        if state.active_hash.as_deref() != Some(&file_hash)
+            && !state.queue.iter().any(|hash| hash == &file_hash)
         {
             state.queue.push_back(file_hash.clone());
             newly_queued.push(file_hash);
@@ -444,6 +465,24 @@ pub fn enqueue_all(filters: &LibraryMenuFilters) {
     if should_start {
         spawn_worker();
     }
+
+    newly_queued.len()
+}
+
+pub(crate) fn enqueue_one(file_hash: &str) {
+    enqueue_hashes(vec![file_hash.to_string()], false);
+}
+
+pub fn enqueue(target: SongTarget) -> Result<usize, String> {
+    let (hashes, skip_persisted) = match target {
+        SongTarget::Hashes { hashes } => (hashes, false),
+        SongTarget::Filter { filters } => (
+            library_db::iter_file_hashes_filtered_not_analyzed(&filters)
+                .map_err(|e| e.to_string())?,
+            true,
+        ),
+    };
+    Ok(enqueue_hashes(hashes, skip_persisted))
 }
 
 pub fn shutdown_server() {
@@ -464,18 +503,27 @@ pub fn shutdown_server() {
     }
 }
 
-pub fn delete_cache(file_hash: &str) {
+fn delete_cache_one(file_hash: &str) -> bool {
     if is_usdx_song(file_hash) {
-        return;
+        return false;
     }
     let cache = CacheDir::new();
     cache.delete_song_cache(file_hash);
     update_song_analyzed(file_hash, false, None, None, None, None);
+    true
 }
 
-pub fn reanalyze_transcript(file_hash: &str, language: Option<String>) {
+pub fn delete_cache(target: SongTarget) -> Result<usize, String> {
+    run_for_target(
+        target,
+        library_db::iter_file_hashes_filtered_full_reanalyzable,
+        |hash| Ok(delete_cache_one(hash)),
+    )
+}
+
+fn reanalyze_transcript_one(file_hash: &str, language: Option<String>) -> bool {
     if is_usdx_song(file_hash) {
-        return;
+        return false;
     }
 
     if let Some(lang) = language {
@@ -486,19 +534,37 @@ pub fn reanalyze_transcript(file_hash: &str, language: Option<String>) {
         }
     }
     reanalyze(file_hash, false);
+    true
 }
 
-pub fn reanalyze_full(file_hash: &str) {
+pub fn reanalyze_transcript(target: SongTarget, language: Option<String>) -> Result<usize, String> {
+    run_for_target(
+        target,
+        library_db::iter_file_hashes_filtered_realignable,
+        |hash| Ok(reanalyze_transcript_one(hash, language.clone())),
+    )
+}
+
+fn reanalyze_full_one(file_hash: &str) -> bool {
     if is_usdx_song(file_hash) {
-        return;
+        return false;
     }
 
     reanalyze(file_hash, true);
+    true
 }
 
-pub fn realign(file_hash: &str, language: Option<String>) {
+pub fn reanalyze_full(target: SongTarget) -> Result<usize, String> {
+    run_for_target(
+        target,
+        library_db::iter_file_hashes_filtered_full_reanalyzable,
+        |hash| Ok(reanalyze_full_one(hash)),
+    )
+}
+
+fn realign_one(file_hash: &str, language: Option<String>) -> bool {
     if is_usdx_song(file_hash) {
-        return;
+        return false;
     }
 
     if let Some(lang) = language.as_ref().filter(|lang| !lang.is_empty()) {
@@ -524,11 +590,20 @@ pub fn realign(file_hash: &str, language: Option<String>) {
         None,
     );
     enqueue_one(file_hash);
+    true
 }
 
-pub fn reanalyze_force_transcribe(file_hash: &str) {
+pub fn realign(target: SongTarget, language: Option<String>) -> Result<usize, String> {
+    run_for_target(
+        target,
+        library_db::iter_file_hashes_filtered_realignable,
+        |hash| Ok(realign_one(hash, language.clone())),
+    )
+}
+
+fn reanalyze_force_transcribe_one(file_hash: &str) -> bool {
     if is_usdx_song(file_hash) {
-        return;
+        return false;
     }
 
     FORCE_TRANSCRIBE
@@ -537,72 +612,38 @@ pub fn reanalyze_force_transcribe(file_hash: &str) {
         .insert(file_hash.to_string());
 
     reanalyze(file_hash, false);
+    true
 }
 
-pub fn reanalyze_all_full(filters: &LibraryMenuFilters) -> usize {
-    let hashes = library_db::iter_file_hashes_filtered_full_reanalyzable(filters).unwrap_or_default();
-    for hash in &hashes {
-        reanalyze_full(hash);
-    }
-    hashes.len()
+pub fn reanalyze_force_transcribe(target: SongTarget) -> Result<usize, String> {
+    run_for_target(
+        target,
+        library_db::iter_file_hashes_filtered_realignable,
+        |hash| Ok(reanalyze_force_transcribe_one(hash)),
+    )
 }
 
-pub fn reanalyze_all_transcript(filters: &LibraryMenuFilters, language: Option<String>) -> usize {
-    let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
-    for hash in &hashes {
-        reanalyze_transcript(hash, language.clone());
-    }
-    hashes.len()
-}
-
-pub fn reanalyze_all_force_transcribe(filters: &LibraryMenuFilters) -> usize {
-    let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
-    for hash in &hashes {
-        reanalyze_force_transcribe(hash);
-    }
-    hashes.len()
-}
-
-pub fn realign_all(filters: &LibraryMenuFilters, language: Option<String>) -> usize {
-    let hashes = library_db::iter_file_hashes_filtered_realignable(filters).unwrap_or_default();
-    for hash in &hashes {
-        realign(hash, language.clone());
-    }
-    hashes.len()
-}
-
-pub fn delete_cache_all(filters: &LibraryMenuFilters) -> usize {
-    let hashes = library_db::iter_file_hashes_filtered_full_reanalyzable(filters).unwrap_or_default();
-    for hash in &hashes {
-        delete_cache(hash);
-    }
-    hashes.len()
-}
-
-// Refresh metadata for a song, this include things like artist, cover, etc.
-// Returns true if it updated song fields or false if it didn't find a song
-pub fn refresh_metadata(file_hash: &str) -> bool {
-    let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
-        return false;
+// Refresh metadata such as artist and cover art without touching analysis-derived fields.
+fn refresh_metadata_one(file_hash: &str) -> Result<bool, String> {
+    let Some(mut song) = library_db::load_song_by_hash(file_hash).map_err(|e| e.to_string())?
+    else {
+        return Ok(false);
     };
     if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
-        return false;
+        return Ok(false);
     }
     let cache = CacheDir::new();
-    song.refresh_metadata(&cache);
-    library_db::update_song_fields(file_hash, &song).is_ok()
+    song.refresh_metadata(&cache).map_err(|e| e.to_string())?;
+    library_db::update_song_fields(file_hash, &song).map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
- // Bulk refresh metadata for songs that match filters. Returns the count of queued songs
-pub fn refresh_metadata_all(filters: &LibraryMenuFilters) -> usize {
-    let hashes = library_db::iter_file_hashes_filtered_refreshable(filters).unwrap_or_default();
-    let count = hashes.len();
-    std::thread::spawn(move || {
-        for hash in &hashes {
-            refresh_metadata(hash);
-        }
-    });
-    count
+pub fn refresh_metadata(target: SongTarget) -> Result<usize, String> {
+    run_for_target(
+        target,
+        library_db::iter_file_hashes_filtered_refreshable,
+        refresh_metadata_one,
+    )
 }
 
 fn reanalyze(file_hash: &str, full: bool) {

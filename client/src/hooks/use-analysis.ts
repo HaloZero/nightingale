@@ -3,19 +3,14 @@ import { useLibraryFilter } from "@/hooks/use-library-filter";
 import { useSearch } from "@/hooks/use-search";
 import {
   deleteSongCache,
-  deleteSongCacheAll,
-  enqueueAll,
-  enqueueOne,
+  enqueue,
   realign,
-  realignAll,
-  reanalyzeAllForceTranscribe,
-  reanalyzeAllFull,
-  reanalyzeAllTranscript,
   reanalyzeForceTranscribe,
   reanalyzeFull,
   reanalyzeTranscript,
   refreshMetadata,
-  refreshMetadataAll,
+  songsByFilter,
+  songsByHashes,
 } from "@/bridge/analysis";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 import type { Song } from "@/types/Song";
@@ -84,32 +79,22 @@ export const useAnalysis = () => {
       );
     };
 
-    const wrap =
-      <A extends unknown[]>(handler: (...args: A) => Promise<void>, invalidate: () => void) =>
-      async (...args: A) => {
-        try {
-          await handler(...args);
-          invalidate();
-        } catch (error: unknown) {
-          toast.error(
-            `Error while running an analysis action: ${error instanceof Error ? error.message : "unknown error"}`,
-          );
-        }
-      };
+    const run = async <R>(handler: () => Promise<R>, invalidate: () => void) => {
+      try {
+        return await handler();
+      } catch (error: unknown) {
+        toast.error(
+          `Error while running an analysis action: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      } finally {
+        invalidate();
+      }
+    };
 
-    const wrapResult =
+    const wrap =
       <A extends unknown[], R>(handler: (...args: A) => Promise<R>, invalidate: () => void) =>
-      async (...args: A): Promise<R | undefined> => {
-        try {
-          const result = await handler(...args);
-          invalidate();
-          return result;
-        } catch (error: unknown) {
-          toast.error(
-            `Error while running an analysis action: ${error instanceof Error ? error.message : "unknown error"}`,
-          );
-          return undefined;
-        }
+      async (...args: A) => {
+        await run(() => handler(...args), invalidate);
       };
 
     const wrapBulk =
@@ -120,73 +105,81 @@ export const useAnalysis = () => {
         invalidate: () => void,
       ) =>
       async (...args: A) => {
-        try {
-          const count = await handler(...args);
-          invalidate();
-          if (count > 0) {
-            toast.success(
-              kind === BulkActionKind.Queued
-                ? `Queued ${count} song${count === 1 ? "" : "s"} for ${label}`
-                : `${label} for ${count} song${count === 1 ? "" : "s"}`,
-            );
-          } else {
-            toast.info(
-              `No eligible songs for ${kind === BulkActionKind.Queued ? label : label.toLowerCase()} in the current filter`,
-            );
-          }
-        } catch (error: unknown) {
-          toast.error(
-            `Error while running a bulk analysis action: ${error instanceof Error ? error.message : "unknown error"}`,
+        const count = await run(() => handler(...args), invalidate);
+        if (count === undefined) return;
+
+        if (count > 0) {
+          toast.success(
+            kind === BulkActionKind.Queued
+              ? `Queued ${count} song${count === 1 ? "" : "s"} for ${label}`
+              : `${label} for ${count} song${count === 1 ? "" : "s"}`,
+          );
+        } else {
+          toast.info(
+            `No eligible songs for ${kind === BulkActionKind.Queued ? label : label.toLowerCase()} in the current filter`,
           );
         }
       };
 
+    const one = (fileHash: string) => songsByHashes([fileHash]);
+    const filtered = () => songsByFilter(currentFilters());
+
     return {
-      enqueueOne: wrap(enqueueOne, invalidateQueue),
-      enqueueAll: wrap(() => enqueueAll(currentFilters()), invalidateQueue),
+      enqueueOne: wrap((fileHash: string) => enqueue(one(fileHash)), invalidateQueue),
+      enqueueAll: wrap(() => enqueue(filtered()), invalidateQueue),
       deleteSongCache: wrap(async (fileHash: string) => {
-        await deleteSongCache(fileHash);
+        await deleteSongCache(one(fileHash));
         markSongCacheDeleted(fileHash);
       }, invalidateSongs),
       deleteSongCacheAll: wrapBulk(
         BulkActionKind.Immediate,
         "Cache deleted",
-        () => deleteSongCacheAll(currentFilters()),
+        () => deleteSongCache(filtered()),
         invalidateSongs,
       ),
-      reanalyzeTranscript: wrap(reanalyzeTranscript, invalidateSongs),
-      reanalyzeFull: wrap(reanalyzeFull, invalidateSongs),
-      realign: wrap(realign, invalidateSongs),
+      reanalyzeTranscript: wrap(
+        (fileHash: string, language?: string) => reanalyzeTranscript(one(fileHash), language),
+        invalidateSongs,
+      ),
+      reanalyzeFull: wrap((fileHash: string) => reanalyzeFull(one(fileHash)), invalidateSongs),
+      realign: wrap(
+        (fileHash: string, language?: string) => realign(one(fileHash), language),
+        invalidateSongs,
+      ),
       realignAll: wrapBulk(
         BulkActionKind.Queued,
         "realigning",
-        () => realignAll(currentFilters()),
+        () => realign(filtered()),
         invalidateSongs,
       ),
-      reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
-      refreshMetadata: wrapResult(refreshMetadata, invalidateSongs),
+      reanalyzeForceTranscribe: wrap(
+        (fileHash: string) => reanalyzeForceTranscribe(one(fileHash)),
+        invalidateSongs,
+      ),
+      refreshMetadata: (fileHash: string) =>
+        run(async () => (await refreshMetadata(one(fileHash))) > 0, invalidateSongs),
       refreshMetadataAll: wrapBulk(
-        BulkActionKind.Queued,
-        "metadata refresh",
-        () => refreshMetadataAll(currentFilters()),
+        BulkActionKind.Immediate,
+        "Metadata refreshed",
+        () => refreshMetadata(filtered()),
         invalidateSongs,
       ),
       reanalyzeAllFull: wrapBulk(
         BulkActionKind.Queued,
         "full reanalysis",
-        () => reanalyzeAllFull(currentFilters()),
+        () => reanalyzeFull(filtered()),
         invalidateSongs,
       ),
       reanalyzeAllTranscript: wrapBulk(
         BulkActionKind.Queued,
         "refetching lyrics & aligning",
-        (language?: string) => reanalyzeAllTranscript(currentFilters(), language),
+        (language?: string) => reanalyzeTranscript(filtered(), language),
         invalidateSongs,
       ),
       reanalyzeAllForceTranscribe: wrapBulk(
         BulkActionKind.Queued,
         "force transcribing",
-        () => reanalyzeAllForceTranscribe(currentFilters()),
+        () => reanalyzeForceTranscribe(filtered()),
         invalidateSongs,
       ),
     };

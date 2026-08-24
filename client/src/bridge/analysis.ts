@@ -1,67 +1,43 @@
 import { invoke, listen } from "./runtime";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 import { ShiftDone } from "@/types/ShiftDone";
+import type { SongTarget } from "@/types/SongTarget";
 
-export const enqueueOne = async (fileHash: string): Promise<void> => {
-  return await invoke<void>("enqueue_one", { fileHash });
+export const songsByHashes = (hashes: string[]): SongTarget => ({ kind: "hashes", hashes });
+export const songsByFilter = (filters: LibraryMenuFilters): SongTarget => ({
+  kind: "filter",
+  filters,
+});
+
+export const enqueue = async (target: SongTarget): Promise<number> => {
+  return await invoke<number>("enqueue", { target });
 };
 
-export const enqueueAll = async (filters: LibraryMenuFilters): Promise<void> => {
-  return await invoke<void>("enqueue_all", { filters });
+export const deleteSongCache = async (target: SongTarget): Promise<number> => {
+  return await invoke<number>("delete_song_cache", { target });
 };
 
-export const deleteSongCache = async (fileHash: string): Promise<void> => {
-  return await invoke<void>("delete_song_cache", { fileHash });
-};
-
-export const deleteSongCacheAll = async (filters: LibraryMenuFilters): Promise<number> => {
-  return await invoke<number>("delete_song_cache_all", { filters });
-};
-
-export const reanalyzeTranscript = async (fileHash: string, language?: string): Promise<void> => {
-  return await invoke<void>("reanalyze_transcript", { fileHash, language });
-};
-
-export const reanalyzeFull = async (fileHash: string): Promise<void> => {
-  return await invoke<void>("reanalyze_full", { fileHash });
-};
-
-export const realign = async (fileHash: string, language?: string): Promise<void> => {
-  return await invoke<void>("realign", { fileHash, language });
-};
-
-export const reanalyzeForceTranscribe = async (fileHash: string): Promise<void> => {
-  return await invoke<void>("reanalyze_force_transcribe", { fileHash });
-};
-
-export const reanalyzeAllFull = async (filters: LibraryMenuFilters): Promise<number> => {
-  return await invoke<number>("reanalyze_all_full", { filters });
-};
-
-export const reanalyzeAllTranscript = async (
-  filters: LibraryMenuFilters,
+export const reanalyzeTranscript = async (
+  target: SongTarget,
   language?: string,
 ): Promise<number> => {
-  return await invoke<number>("reanalyze_all_transcript", { filters, language });
+  return await invoke<number>("reanalyze_transcript", { target, language });
 };
 
-export const reanalyzeAllForceTranscribe = async (filters: LibraryMenuFilters): Promise<number> => {
-  return await invoke<number>("reanalyze_all_force_transcribe", { filters });
+export const reanalyzeFull = async (target: SongTarget): Promise<number> => {
+  return await invoke<number>("reanalyze_full", { target });
 };
 
-export const realignAll = async (
-  filters: LibraryMenuFilters,
-  language?: string,
-): Promise<number> => {
-  return await invoke<number>("realign_all", { filters, language });
+export const realign = async (target: SongTarget, language?: string): Promise<number> => {
+  return await invoke<number>("realign", { target, language });
 };
 
-export const refreshMetadata = async (fileHash: string): Promise<boolean> => {
-  return await invoke<boolean>("refresh_metadata", { fileHash });
+export const reanalyzeForceTranscribe = async (target: SongTarget): Promise<number> => {
+  return await invoke<number>("reanalyze_force_transcribe", { target });
 };
 
-export const refreshMetadataAll = async (filters: LibraryMenuFilters): Promise<number> => {
-  return await invoke<number>("refresh_metadata_all", { filters });
+export const refreshMetadata = async (target: SongTarget): Promise<number> => {
+  return await invoke<number>("refresh_metadata", { target });
 };
 
 export const shiftTempo = async (fileHash: string, tempo: number): Promise<void> => {
