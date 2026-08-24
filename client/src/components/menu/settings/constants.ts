@@ -98,6 +98,7 @@ export const DEFAULTS = {
   lyrics_horizontal_position: "center",
   parallel_analysis_enabled: false,
   parallel_analysis_url: "",
+  parallel_analysis_only: false,
 } satisfies Pick<
   AppConfig,
   | "separator"
@@ -117,6 +118,7 @@ export const DEFAULTS = {
   | "lyrics_horizontal_position"
   | "parallel_analysis_enabled"
   | "parallel_analysis_url"
+  | "parallel_analysis_only"
 >;
 
 export const MIC_MONITOR_GAIN_STEP = 0.01;
@@ -184,6 +186,7 @@ export function getAnalysisNav(isParakeet: boolean, showParallelAnalysis: boolea
     parallelAnalysisEnabled: showParallelAnalysis ? next : -1,
     parallelAnalysisUrl: showParallelAnalysis ? next + 1 : -1,
     parallelAnalysisPing: showParallelAnalysis ? next + 2 : -1,
+    parallelAnalysisOnly: showParallelAnalysis ? next + 3 : -1,
   };
 }
 
@@ -201,11 +204,12 @@ export function getSettingsStops(
   // rather than inserted mid-sequence, so none of the indices above have to
   // shift. footerSegment (Restore Defaults / Close) is derived as
   // `stops.length - 1`, so it stays correct automatically. Parallel
-  // analysis's own [2 (Off/On), 1 (URL field), 1 (Ping button)] is appended
-  // the same way, only when `showParallelAnalysis` is true.
+  // analysis's own [2 (Off/On), 1 (URL field), 1 (Ping button), 2 (only
+  // Off/On)] is appended the same way, only when `showParallelAnalysis` is
+  // true.
   const base = isParakeet
     ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2]
     : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2];
 
-  return showParallelAnalysis ? [...base, 2, 1, 1, 2] : [...base, 2];
+  return showParallelAnalysis ? [...base, 2, 1, 1, 2, 2] : [...base, 2];
 }

@@ -552,7 +552,14 @@ pub(crate) fn update_song_analyzed(
     let _ = library_db::update_song_fields(file_hash, &song);
 }
 
+/// No-ops when `parallel_analysis_only` is set -- this instance is meant to
+/// rely entirely on a peer via `parallel_analysis::ensure_dispatcher_running`,
+/// so the local worker must never start (including via `return_to_front`'s
+/// peer-rejected fallback).
 fn ensure_worker_running(state: &mut AnalyzerState) {
+    if crate::config::AppConfig::load().parallel_analysis_only() {
+        return;
+    }
     if !state.worker_running && !state.queue.is_empty() {
         state.worker_running = true;
         spawn_worker();
@@ -665,7 +672,9 @@ pub fn enqueue_all(filters: &LibraryMenuFilters) {
         }
     }
 
-    let should_start = !state.worker_running && !state.queue.is_empty();
+    let should_start = !crate::config::AppConfig::load().parallel_analysis_only()
+        && !state.worker_running
+        && !state.queue.is_empty();
     if should_start {
         state.worker_running = true;
     }
@@ -954,8 +963,18 @@ fn spawn_worker() {
         let cache = CacheDir::new();
 
         loop {
+            // Re-checked every iteration (not just at spawn) so flipping
+            // `parallel_analysis_only` on mid-run lets whatever song is
+            // already `active_hash` finish, but stops this worker from
+            // draining anything further -- the rest of the queue is left for
+            // `parallel_analysis`'s dispatcher to claim from the back.
             let file_hash = {
                 let mut state = ANALYZER.lock().unwrap();
+                if crate::config::AppConfig::load().parallel_analysis_only() {
+                    state.worker_running = false;
+                    state.active_hash = None;
+                    return;
+                }
                 match state.queue.pop_front() {
                     Some(hash) => {
                         state.active_hash = Some(hash.clone());

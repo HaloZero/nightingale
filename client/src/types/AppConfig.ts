@@ -81,4 +81,13 @@ export type AppConfig = {
    * `parallel_analysis_enabled` is true.
    */
   parallel_analysis_url: string | null;
+  /**
+   * When on, this instance never processes songs itself -- the local
+   * worker (`analyzer::ensure_worker_running`) never starts, and a peer
+   * rejecting/timing out on a song leaves it queued for the peer to retry
+   * rather than falling back to local processing. Only meaningful
+   * alongside `parallel_analysis_enabled`; off by default so a fresh
+   * install still analyzes locally with no peer configured.
+   */
+  parallel_analysis_only: boolean | null;
 };

@@ -551,6 +551,7 @@ fn save_config_cmd(payload: Value) -> CmdResult {
     let previous = AppConfig::load();
     let was_auto_analyze = previous.auto_analyze();
     let was_parallel = (previous.parallel_analysis_enabled(), previous.parallel_analysis_url().map(str::to_string));
+    let was_parallel_only = previous.parallel_analysis_only();
     config.save();
     if config.auto_analyze() && !was_auto_analyze {
         app_core::enqueue_all(&app_core::LibraryMenuFilters::default());
@@ -560,6 +561,24 @@ fn save_config_cmd(payload: Value) -> CmdResult {
     // matches the `auto_analyze` transition handling above.
     let now_parallel = (config.parallel_analysis_enabled(), config.parallel_analysis_url().map(str::to_string));
     if now_parallel.0 && now_parallel != was_parallel {
+        app_core::parallel_analysis_ensure_dispatcher_running();
+    }
+    // Turning `parallel_analysis_only` off can leave songs sitting queued
+    // that the (gated-off) local worker never picked up -- kick it via the
+    // same `enqueue_all` re-sweep the other transitions above use, rather
+    // than waiting for the next song to be queued.
+    if was_parallel_only && !config.parallel_analysis_only() {
+        app_core::enqueue_all(&app_core::LibraryMenuFilters::default());
+    }
+    // Turning it *on* mid-run: the local worker finishes whatever song it's
+    // already on, then stops draining the queue rather than being killed
+    // outright (see the `parallel_analysis_only` check in `spawn_worker`'s
+    // loop) -- but if the dispatcher had already exited (nothing left for it
+    // to claim, since the local worker was ahead of it in the same queue),
+    // nothing would otherwise wake it back up to pick up what the local
+    // worker leaves behind. Kick it now rather than waiting for the next
+    // `enqueue_one`/`enqueue_all`.
+    if !was_parallel_only && config.parallel_analysis_only() {
         app_core::parallel_analysis_ensure_dispatcher_running();
     }
     // Web mode has no server-side cpal monitor stream, so `mic_monitor_gain`

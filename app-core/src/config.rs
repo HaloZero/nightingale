@@ -237,6 +237,13 @@ pub struct AppConfig {
     /// instance to offload analysis to. Only consulted when
     /// `parallel_analysis_enabled` is true.
     pub parallel_analysis_url: Option<String>,
+    /// When on, this instance never processes songs itself -- the local
+    /// worker (`analyzer::ensure_worker_running`) never starts, and a peer
+    /// rejecting/timing out on a song leaves it queued for the peer to retry
+    /// rather than falling back to local processing. Only meaningful
+    /// alongside `parallel_analysis_enabled`; off by default so a fresh
+    /// install still analyzes locally with no peer configured.
+    pub parallel_analysis_only: Option<bool>,
 }
 
 fn default_data_path_option() -> Option<PathBuf> {
@@ -278,6 +285,7 @@ impl Default for AppConfig {
             language_overrides: None,
             parallel_analysis_enabled: None,
             parallel_analysis_url: None,
+            parallel_analysis_only: None,
         }
     }
 }
@@ -480,6 +488,10 @@ impl AppConfig {
 
     pub fn parallel_analysis_enabled(&self) -> bool {
         self.parallel_analysis_enabled.unwrap_or(false)
+    }
+
+    pub fn parallel_analysis_only(&self) -> bool {
+        self.parallel_analysis_only.unwrap_or(false)
     }
 
     /// The configured peer base URL, trimmed, or `None` when unset/blank.

@@ -45,13 +45,13 @@ use crate::song::{Song, read_transcript_meta};
 const POLL_ATTEMPTS: u32 = 400;
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 /// How long to wait before re-checking a peer that failed a liveness check.
-const BACKOFF_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const BACKOFF_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Set when a liveness/connection check to the peer has failed; cleared once
-/// the hourly backoff thread confirms it's back. Gates whether the
-/// dispatcher is allowed to start a new run.
+/// the backoff thread confirms it's back. Gates whether the dispatcher is
+/// allowed to start a new run.
 static PEER_DOWN: AtomicBool = AtomicBool::new(false);
-/// Guards against spawning more than one hourly backoff thread at once.
+/// Guards against spawning more than one backoff thread at once.
 static BACKOFF_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // ─── Public entry points ────────────────────────────────────────────────
@@ -72,10 +72,10 @@ pub fn manual_ping(url: &str) -> bool {
     }
     let alive = ping(url);
     // `PEER_DOWN.swap` returns the previous value -- if it was true, the
-    // dispatcher is currently paused waiting on the hourly backoff thread's
-    // next wake-up (up to an hour away). A successful manual ping is itself
-    // proof the peer's back, so clear the flag and resume right away rather
-    // than making the user wait on that thread. It's left running (not
+    // dispatcher is currently paused waiting on the backoff thread's next
+    // wake-up (up to `BACKOFF_INTERVAL` away). A successful manual ping is
+    // itself proof the peer's back, so clear the flag and resume right away
+    // rather than making the user wait on that thread. It's left running (not
     // touching `BACKOFF_RUNNING`); it'll just no-op harmlessly next time it
     // wakes, same as if it had found the peer alive itself.
     if alive && PEER_DOWN.swap(false, Ordering::SeqCst) {
@@ -176,7 +176,7 @@ pub fn ensure_dispatcher_running() {
     };
     if PEER_DOWN.load(Ordering::SeqCst) {
         info!(
-            "[parallel_analysis] peer {url} known-down, not starting dispatcher (waiting on hourly backoff)"
+            "[parallel_analysis] peer {url} known-down, not starting dispatcher (waiting on backoff)"
         );
         return;
     }
@@ -672,8 +672,8 @@ fn file_len(path: &Path) -> u64 {
 // ─── Liveness backoff ────────────────────────────────────────────────────
 
 /// Marks the peer down and, unless a backoff thread is already running,
-/// spawns one that re-pings hourly until the peer's back (or the feature's
-/// disabled/repointed), then resumes the dispatcher.
+/// spawns one that re-pings every `BACKOFF_INTERVAL` until the peer's back
+/// (or the feature's disabled/repointed), then resumes the dispatcher.
 fn enter_down_backoff() {
     if BACKOFF_RUNNING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -682,7 +682,9 @@ fn enter_down_backoff() {
         return;
     }
     PEER_DOWN.store(true, Ordering::SeqCst);
-    info!("[parallel_analysis] peer unreachable, pausing until it's back (rechecking hourly)");
+    info!(
+        "[parallel_analysis] peer unreachable, pausing until it's back (rechecking in {BACKOFF_INTERVAL:?})"
+    );
 
     std::thread::spawn(|| {
         loop {

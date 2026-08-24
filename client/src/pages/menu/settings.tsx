@@ -573,6 +573,31 @@ export const SettingsPage = () => {
                       <p className="text-sm text-destructive">Peer did not respond.</p>
                     )}
                   </Field>
+
+                  <Field>
+                    <Label>Parallel analysis only</Label>
+                    <Hint>
+                      Never analyze songs on this instance -- only the peer above processes the
+                      queue. A song the peer rejects or times out on stays queued for the peer to
+                      retry instead of falling back to local analysis.
+                    </Hint>
+                    <ButtonGroup>
+                      <Button
+                        variant={config?.parallel_analysis_only === true ? "outline" : "default"}
+                        onClick={() => mutate({ parallel_analysis_only: false })}
+                        className={getFocusClassName(analysisNav.parallelAnalysisOnly, 0)}
+                      >
+                        Off
+                      </Button>
+                      <Button
+                        variant={config?.parallel_analysis_only === true ? "default" : "outline"}
+                        onClick={() => mutate({ parallel_analysis_only: true })}
+                        className={getFocusClassName(analysisNav.parallelAnalysisOnly, 1)}
+                      >
+                        On
+                      </Button>
+                    </ButtonGroup>
+                  </Field>
                 </>
               )}
             </FieldGroup>
