@@ -18,7 +18,7 @@ use crate::library_db;
 use crate::library_model::{LibraryMenuFilters, SongTarget};
 use crate::lyrics::{fetch_lrclib_lyrics, write_lyrics_file};
 use crate::song::{Song, SongOrigin, TranscriptSource, compute_file_hash, read_transcript_meta};
-use crate::source::active_source;
+use crate::source::{MediaSource, active_source};
 
 // ─── Analysis queue (persisted to disk) ──────────────────────────────
 
@@ -624,25 +624,34 @@ pub fn reanalyze_force_transcribe(target: SongTarget) -> Result<usize, String> {
 }
 
 // Refresh metadata such as artist and cover art without touching analysis-derived fields.
-fn refresh_metadata_one(file_hash: &str) -> Result<bool, String> {
+fn refresh_metadata_one(
+    file_hash: &str,
+    source: &dyn MediaSource,
+    cache: &CacheDir,
+) -> Result<bool, String> {
     let Some(mut song) = library_db::load_song_by_hash(file_hash).map_err(|e| e.to_string())?
     else {
         return Ok(false);
     };
-    if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
+    if song.usdx.is_some() {
         return Ok(false);
     }
-    let cache = CacheDir::new();
-    song.refresh_metadata(&cache).map_err(|e| e.to_string())?;
+    source
+        .refresh_metadata(&mut song, cache)
+        .map_err(|e| e.to_string())?;
     library_db::update_song_fields(file_hash, &song).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
 pub fn refresh_metadata(target: SongTarget) -> Result<usize, String> {
+    let source = active_source()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no active library source".to_string())?;
+    let cache = CacheDir::new();
     run_for_target(
         target,
         library_db::iter_file_hashes_filtered_refreshable,
-        refresh_metadata_one,
+        |hash| refresh_metadata_one(hash, source.as_ref(), &cache),
     )
 }
 

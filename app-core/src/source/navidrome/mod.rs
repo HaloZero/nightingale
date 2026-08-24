@@ -31,7 +31,10 @@ use crate::error::NightingaleError;
 use crate::library_db::{self, PlaylistDefinition, PlaylistSongKeyKind};
 use crate::song::{Song, SongOrigin};
 
-use super::{MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, flush_batch};
+use super::{
+    MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, apply_refreshed_metadata, flush_batch,
+    retained_cover,
+};
 
 pub mod client;
 
@@ -123,6 +126,13 @@ impl NavidromeSource {
         Ok(result.album)
     }
 
+    fn fetch_song(&self, item_id: &str) -> Result<SubsonicSong, NightingaleError> {
+        let result: SongResult =
+            self.client
+                .get_json("get song", "/rest/getSong", &[("id", item_id)])?;
+        Ok(result.song)
+    }
+
     fn fetch_playlists(&self) -> Result<Vec<PlaylistDefinition>, NightingaleError> {
         let result: PlaylistsResult =
             self.client
@@ -157,7 +167,12 @@ impl NavidromeSource {
         Ok(playlists)
     }
 
-    fn build_song(&self, item: &SubsonicSong, cache: &CacheDir) -> Option<Song> {
+    fn build_song(
+        &self,
+        item: &SubsonicSong,
+        cache: &CacheDir,
+        retained_cover: Option<PathBuf>,
+    ) -> Option<Song> {
         if item.id.is_empty() {
             return None;
         }
@@ -176,9 +191,11 @@ impl NavidromeSource {
         let placeholder_path = source_cache_path(cache, &file_hash, container.as_deref());
 
         let cover_tag = item.cover_art.clone().filter(|s| !s.is_empty());
-        let album_art_path = cover_tag
-            .as_deref()
-            .and_then(|tag| self.fetch_cover(cache, tag));
+        let album_art_path = retained_cover.or_else(|| {
+            cover_tag
+                .as_deref()
+                .and_then(|tag| self.fetch_cover(cache, tag))
+        });
 
         Some(Song {
             path: placeholder_path,
@@ -338,7 +355,7 @@ impl MediaSource for NavidromeSource {
                         continue;
                     }
 
-                    if let Some(song) = self.build_song(item, ctx.cache) {
+                    if let Some(song) = self.build_song(item, ctx.cache, None) {
                         batch.push(song);
                     }
 
@@ -377,6 +394,32 @@ impl MediaSource for NavidromeSource {
             Err(error) => warn!("[navidrome] failed to sync playlists: {error}"),
         }
 
+        Ok(())
+    }
+
+    fn refresh_metadata(&self, song: &mut Song, cache: &CacheDir) -> Result<(), NightingaleError> {
+        let (item_id, current_tag) = match &song.origin {
+            SongOrigin::Navidrome {
+                item_id, cover_tag, ..
+            } => (item_id.clone(), cover_tag.clone()),
+            _ => {
+                return Err(NightingaleError::Other(
+                    "Navidrome source asked to refresh a non-Navidrome song".into(),
+                ));
+            }
+        };
+        let item = self.fetch_song(&item_id)?;
+        let next_tag = item.cover_art.clone().filter(|tag| !tag.is_empty());
+        let retained = retained_cover(song, next_tag == current_tag);
+        let refreshed = self.build_song(&item, cache, retained).ok_or_else(|| {
+            NightingaleError::Other(format!("Navidrome item {item_id} has no usable metadata"))
+        })?;
+        if next_tag.is_some() && refreshed.album_art_path.is_none() {
+            return Err(NightingaleError::Other(format!(
+                "failed fetching Navidrome cover for {item_id}"
+            )));
+        }
+        apply_refreshed_metadata(song, refreshed);
         Ok(())
     }
 
@@ -581,6 +624,11 @@ struct PlaylistResult {
 struct PlaylistDetail {
     #[serde(default)]
     entry: Vec<SubsonicSong>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SongResult {
+    song: SubsonicSong,
 }
 
 #[derive(Debug, Deserialize)]

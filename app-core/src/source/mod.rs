@@ -75,6 +75,9 @@ pub trait MediaSource: Send + Sync {
     /// - bailing out when the scan generation has been bumped
     fn scan(&self, ctx: &ScanContext<'_>) -> Result<(), NightingaleError>;
 
+    /// Refresh source-owned metadata without touching analysis state or identity.
+    fn refresh_metadata(&self, song: &mut Song, cache: &CacheDir) -> Result<(), NightingaleError>;
+
     /// Make sure the song's source file is present on disk and return a path
     /// the analyzer (ffmpeg + Python) or the player can read. For `LocalFile`
     /// origins this just hands `song.path` back; remote sources download to
@@ -102,6 +105,27 @@ pub trait MediaSource: Send + Sync {
     ) -> Result<Option<StreamResponse>, NightingaleError> {
         Ok(None)
     }
+}
+
+pub(crate) fn apply_refreshed_metadata(song: &mut Song, refreshed: Song) {
+    song.title = refreshed.title;
+    song.artist = refreshed.artist;
+    song.album = refreshed.album;
+    song.duration_secs = refreshed.duration_secs;
+    song.album_art_path = refreshed.album_art_path;
+    song.is_video = refreshed.is_video;
+    song.origin = refreshed.origin;
+}
+
+pub(crate) fn retained_cover(song: &Song, tag_unchanged: bool) -> Option<PathBuf> {
+    tag_unchanged
+        .then(|| {
+            song.album_art_path
+                .as_ref()
+                .filter(|path| path.is_file())
+                .cloned()
+        })
+        .flatten()
 }
 
 /// Shared by every scan implementation: drain `batch` into the DB if it's

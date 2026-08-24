@@ -23,7 +23,10 @@ use crate::error::NightingaleError;
 use crate::library_db::{self, PlaylistDefinition, PlaylistSongKeyKind};
 use crate::song::{Song, SongOrigin};
 
-use super::{MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, StreamResponse, flush_batch};
+use super::{
+    MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, StreamResponse,
+    apply_refreshed_metadata, flush_batch, retained_cover,
+};
 
 pub mod client;
 
@@ -148,7 +151,23 @@ impl PlexSource {
         Ok(envelope.media_container)
     }
 
-    fn build_song(&self, item: &PlexMetadata, cache: &CacheDir) -> Option<Song> {
+    fn fetch_item(&self, item_id: &str) -> Result<PlexMetadata, NightingaleError> {
+        let path = format!("/library/metadata/{}", urlencoding::encode(item_id));
+        let envelope: MetadataEnvelope = self.client.get_json("get item", &path, &[])?;
+        envelope
+            .media_container
+            .metadata
+            .into_iter()
+            .next()
+            .ok_or_else(|| NightingaleError::Other(format!("Plex item {item_id} not found")))
+    }
+
+    fn build_song(
+        &self,
+        item: &PlexMetadata,
+        cache: &CacheDir,
+        retained_cover: Option<PathBuf>,
+    ) -> Option<Song> {
         if item.rating_key.is_empty() {
             return None;
         }
@@ -175,9 +194,11 @@ impl PlexSource {
             .clone()
             .or_else(|| item.media.first().and_then(|media| media.container.clone()));
         let cover_tag = item.thumb.clone().filter(|path| safe_server_path(path));
-        let album_art_path = cover_tag
-            .as_deref()
-            .and_then(|path| self.fetch_cover(cache, path));
+        let album_art_path = retained_cover.or_else(|| {
+            cover_tag
+                .as_deref()
+                .and_then(|path| self.fetch_cover(cache, path))
+        });
 
         Some(Song {
             path: source_cache_path(cache, &file_hash, container.as_deref()),
@@ -274,7 +295,7 @@ impl PlexSource {
                     }
                     continue;
                 }
-                if let Some(song) = self.build_song(&item, ctx.cache) {
+                if let Some(song) = self.build_song(&item, ctx.cache, None) {
                     state.batch.push(song);
                 }
                 if state.batch.len() >= SCAN_BATCH_SIZE {
@@ -406,6 +427,32 @@ impl MediaSource for PlexSource {
             }
             Err(error) => warn!("[plex] failed to sync playlists: {error}"),
         }
+        Ok(())
+    }
+
+    fn refresh_metadata(&self, song: &mut Song, cache: &CacheDir) -> Result<(), NightingaleError> {
+        let (item_id, current_tag) = match &song.origin {
+            SongOrigin::Plex {
+                item_id, cover_tag, ..
+            } => (item_id.clone(), cover_tag.clone()),
+            _ => {
+                return Err(NightingaleError::Other(
+                    "Plex source asked to refresh a non-Plex song".into(),
+                ));
+            }
+        };
+        let item = self.fetch_item(&item_id)?;
+        let next_tag = item.thumb.clone().filter(|path| safe_server_path(path));
+        let retained = retained_cover(song, next_tag == current_tag);
+        let refreshed = self.build_song(&item, cache, retained).ok_or_else(|| {
+            NightingaleError::Other(format!("Plex item {item_id} has no usable metadata"))
+        })?;
+        if next_tag.is_some() && refreshed.album_art_path.is_none() {
+            return Err(NightingaleError::Other(format!(
+                "failed fetching Plex cover for {item_id}"
+            )));
+        }
+        apply_refreshed_metadata(song, refreshed);
         Ok(())
     }
 

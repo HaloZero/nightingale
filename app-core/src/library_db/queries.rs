@@ -389,13 +389,7 @@ pub fn iter_file_hashes_filtered_full_reanalyzable(
 pub fn iter_file_hashes_filtered_refreshable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
-    iter_file_hashes_filtered(
-        filters,
-        &[
-            "json_extract(s.payload, '$.origin.kind') = 'local_file'",
-            "json_extract(s.payload, '$.usdx') IS NULL",
-        ],
-    )
+    iter_file_hashes_filtered(filters, &["json_extract(s.payload, '$.usdx') IS NULL"])
 }
 
 pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {

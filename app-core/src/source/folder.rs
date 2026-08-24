@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use crate::cache::CacheDir;
 use crate::error::NightingaleError;
 use crate::library_db::{self, PlaylistDefinition, PlaylistSongKeyKind};
-use crate::song::{Song, build_song};
+use crate::song::{Song, SongOrigin, build_song};
 use crate::usdx;
 
 use super::{MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, flush_batch};
@@ -96,6 +96,15 @@ impl MediaSource for FolderSource {
             sync_folder_playlists(&self.root);
         }
         Ok(())
+    }
+
+    fn refresh_metadata(&self, song: &mut Song, cache: &CacheDir) -> Result<(), NightingaleError> {
+        if !matches!(song.origin, SongOrigin::LocalFile) {
+            return Err(NightingaleError::Other(
+                "folder source asked to refresh a remote song".into(),
+            ));
+        }
+        song.refresh_metadata(cache)
     }
 
     fn ensure_local_media(
