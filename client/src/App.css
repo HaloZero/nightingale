@@ -8,6 +8,18 @@
   font-weight: 400;
   font-style: normal;
   font-display: swap;
+  /* This font is 16MB and sits first in --font-sans (the app's default
+     body font, below), so without a unicode-range every page load would
+     eagerly fetch all 16MB before finishing text layout -- even for pages
+     with zero CJK text. unicode-range makes the browser only ever fetch it
+     once it actually needs to render a glyph in one of these blocks (CJK
+     ideographs + common punctuation/symbols + kana + hangul, since this
+     "SC"-labeled Noto CJK file's cmap still covers Japanese/Korean text
+     the same as the other regional variants). */
+  unicode-range:
+    U+2000-206F, U+2E80-2EFF, U+3000-303F, U+3040-30FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3,
+    U+F900-FAFF, U+FF00-FFEF, U+20000-2A6DF, U+2A700-2B73F, U+2B740-2B81F, U+2B820-2CEAF,
+    U+2F800-2FA1F;
 }
 
 @custom-variant dark (&:is(.dark *));
