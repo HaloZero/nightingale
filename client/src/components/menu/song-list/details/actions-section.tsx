@@ -2,9 +2,15 @@ import { Separator } from "@/components/ui/separator";
 import { useAnalysis } from "@/hooks/use-analysis";
 import { useDialog } from "@/hooks/use-dialog";
 import type { Song } from "@/types/Song";
+import {
+  forceRerenderKaraokeVideo,
+  onKaraokeVideoReady,
+  renderKaraokeVideo,
+} from "@/bridge/karaoke-video";
+import { isTauri } from "@/bridge/runtime";
 import { useProfiles } from "@/queries/use-profiles";
 import { TrophyIcon } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, useEffect } from "react";
 import { toast } from "sonner";
 import type { SongStatusInfo } from "../shared/song-status";
 import { ActionItem } from "./action-item";
@@ -33,6 +39,28 @@ export const ActionsSection = ({
     toast.info(message);
   };
 
+  // Unlike the analysis actions above (no completion signal, so `run` just
+  // acks the dispatch), rendering has a real completion event -- worth
+  // reporting the actual outcome instead of only acking that it started.
+  useEffect(() => {
+    if (isTauri) return;
+
+    let unlisten: (() => void) | undefined;
+
+    onKaraokeVideoReady((event) => {
+      if (event.file_hash !== song.file_hash) return;
+      if (event.error) {
+        toast.error(`Karaoke video render failed for "${song.title}": ${event.error}`);
+      } else {
+        toast.success(`Karaoke video ready for "${song.title}"`);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => unlisten?.();
+  }, [song.file_hash, song.title]);
+
   const groups = buildActionGroups({
     song,
     status,
@@ -42,6 +70,15 @@ export const ActionsSection = ({
     onEditLyrics: () => setMode({ mode: "edit-lyrics", song }),
     onChangeLanguage: () => setMode({ mode: "language", song }),
     run,
+    showKaraokeVideoActions: !isTauri,
+    onRenderKaraokeVideo: () => {
+      toast.info(`Rendering karaoke video for "${song.title}"...`);
+      renderKaraokeVideo(song.file_hash);
+    },
+    onForceRerenderKaraokeVideo: () => {
+      toast.info(`Re-rendering karaoke video for "${song.title}"...`);
+      forceRerenderKaraokeVideo(song.file_hash);
+    },
   });
 
   if (hasScores) {

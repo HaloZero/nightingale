@@ -7,6 +7,17 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { setFullScreen, isFullScreen as tauriIsFullScreen } from "@/bridge/fullScreen";
 import { pingParallelAnalysis } from "@/bridge/analysis";
+import {
+  type CountAndCap,
+  buildBackgroundReels,
+  downloadAllPixabayVideos,
+  getBackgroundReelCount,
+  getBackgroundVideoCount,
+  onBackgroundReelsDone,
+  onBackgroundReelsProgress,
+  onPixabayBulkDownloadDone,
+  onPixabayBulkDownloadProgress,
+} from "@/bridge/background-videos";
 import { isTauri } from "@/bridge/runtime";
 import { useMicDevices } from "@/queries/use-mic-devices";
 import { useConfigMutation } from "@/mutations/use-config-mutation";
@@ -18,6 +29,7 @@ import { useNavigate } from "react-router";
 import {
   ALIGN_BACKENDS,
   ASR_ENGINES,
+  BACKGROUND_VIDEO_FLAVORS,
   DEFAULTS,
   LYRICS_HORIZONTAL_POSITIONS,
   LYRICS_VERTICAL_POSITIONS,
@@ -64,6 +76,19 @@ export const SettingsPage = () => {
   const [pingStatus, setPingStatus] = useState<"idle" | "loading" | "alive" | "unreachable">(
     "idle",
   );
+  // Keyed by flavor (`BACKGROUND_VIDEO_FLAVORS`) -- each flavor's download
+  // and reel build run independently, so their status/progress can't share
+  // a single value the way the rest of this page's flat state does.
+  const [pixabayDownloadStatus, setPixabayDownloadStatus] = useState<
+    Record<string, "idle" | "running" | "done">
+  >({});
+  const [pixabayDownloadMessage, setPixabayDownloadMessage] = useState<Record<string, string>>({});
+  const [reelBuildStatus, setReelBuildStatus] = useState<
+    Record<string, "idle" | "running" | "done">
+  >({});
+  const [reelBuildMessage, setReelBuildMessage] = useState<Record<string, string>>({});
+  const [videoCounts, setVideoCounts] = useState<Record<string, CountAndCap>>({});
+  const [reelCounts, setReelCounts] = useState<Record<string, CountAndCap>>({});
 
   const close = () => navigate("/");
   const asrEngine = config?.asr_engine ?? DEFAULTS.asr_engine;
@@ -74,6 +99,10 @@ export const SettingsPage = () => {
   // only exists in the web/server build.
   const showParallelAnalysis = !isTauri;
   const analysisNav = getAnalysisNav(isParakeet, showParallelAnalysis);
+  // Both actions shell out to a vendored ffmpeg against the server's own
+  // data dir -- there's no Tauri-side command for either, so this section
+  // (and its nav segment, see `getSettingsStops`) is server-build only too.
+  const showBackgroundVideos = !isTauri;
 
   const micOptions = useMemo(
     () => [
@@ -113,6 +142,69 @@ export const SettingsPage = () => {
 
     updateIsFullScreen();
   }, []);
+
+  const refreshVideoCount = (flavor: string) => {
+    getBackgroundVideoCount(flavor).then((result) => {
+      setVideoCounts((prev) => ({ ...prev, [flavor]: result }));
+    });
+  };
+
+  const refreshReelCount = (flavor: string) => {
+    getBackgroundReelCount(flavor).then((result) => {
+      setReelCounts((prev) => ({ ...prev, [flavor]: result }));
+    });
+  };
+
+  useEffect(() => {
+    if (!showBackgroundVideos) return;
+
+    for (const { value: flavor } of BACKGROUND_VIDEO_FLAVORS) {
+      refreshVideoCount(flavor);
+      refreshReelCount(flavor);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showBackgroundVideos]);
+
+  useEffect(() => {
+    if (!showBackgroundVideos) return;
+
+    let unlistenDownloadProgress: (() => void) | undefined;
+    let unlistenDownloadDone: (() => void) | undefined;
+    let unlistenReelsProgress: (() => void) | undefined;
+    let unlistenReelsDone: (() => void) | undefined;
+
+    onPixabayBulkDownloadProgress(({ flavor, message }) => {
+      setPixabayDownloadMessage((prev) => ({ ...prev, [flavor]: message }));
+    }).then((fn) => {
+      unlistenDownloadProgress = fn;
+    });
+    onPixabayBulkDownloadDone(({ flavor }) => {
+      setPixabayDownloadStatus((prev) => ({ ...prev, [flavor]: "done" }));
+      setPixabayDownloadMessage((prev) => ({ ...prev, [flavor]: "Download complete." }));
+      refreshVideoCount(flavor);
+    }).then((fn) => {
+      unlistenDownloadDone = fn;
+    });
+    onBackgroundReelsProgress(({ flavor, message }) => {
+      setReelBuildMessage((prev) => ({ ...prev, [flavor]: message }));
+    }).then((fn) => {
+      unlistenReelsProgress = fn;
+    });
+    onBackgroundReelsDone(({ flavor }) => {
+      setReelBuildStatus((prev) => ({ ...prev, [flavor]: "done" }));
+      setReelBuildMessage((prev) => ({ ...prev, [flavor]: "Reels built." }));
+      refreshReelCount(flavor);
+    }).then((fn) => {
+      unlistenReelsDone = fn;
+    });
+
+    return () => {
+      unlistenDownloadProgress?.();
+      unlistenDownloadDone?.();
+      unlistenReelsProgress?.();
+      unlistenReelsDone?.();
+    };
+  }, [showBackgroundVideos]);
 
   const updateMicMonitorGain = (gain: number) => {
     setMicMonitorGain(gain);
@@ -159,6 +251,20 @@ export const SettingsPage = () => {
     }
   };
 
+  const startPixabayDownload = (flavor: string) => {
+    if (pixabayDownloadStatus[flavor] === "running") return;
+    setPixabayDownloadStatus((prev) => ({ ...prev, [flavor]: "running" }));
+    setPixabayDownloadMessage((prev) => ({ ...prev, [flavor]: "Starting download..." }));
+    downloadAllPixabayVideos(flavor);
+  };
+
+  const startReelBuild = (flavor: string) => {
+    if (reelBuildStatus[flavor] === "running") return;
+    setReelBuildStatus((prev) => ({ ...prev, [flavor]: "running" }));
+    setReelBuildMessage((prev) => ({ ...prev, [flavor]: "Starting reel build..." }));
+    buildBackgroundReels(flavor);
+  };
+
   const resetDefaults = () => {
     mutate(DEFAULTS);
     setMicMonitorGain(DEFAULTS.mic_monitor_gain);
@@ -173,6 +279,7 @@ export const SettingsPage = () => {
     tab,
     isParakeet,
     showParallelAnalysis,
+    showBackgroundVideos,
     micMonitorGain,
     micLatencySec,
     vocalThresholdPct,
@@ -307,6 +414,85 @@ export const SettingsPage = () => {
                   }
                 />
               </Field>
+
+              {showBackgroundVideos && (
+                <Field>
+                  <Label>Karaoke video backgrounds</Label>
+                  <Hint>
+                    Download up to 240 Pixabay clips per category and stitch them into looping reels
+                    used as the background for rendered karaoke videos. Both run in the background
+                    and can take several minutes.
+                  </Hint>
+                  <div className="flex flex-col gap-4">
+                    {BACKGROUND_VIDEO_FLAVORS.map(({ value: flavor, label }, flavorIndex) => {
+                      const count = videoCounts[flavor];
+                      const atVideoCap = count !== undefined && count.count >= count.cap;
+                      const reelCount = reelCounts[flavor];
+                      const atReelCap = reelCount !== undefined && reelCount.count >= reelCount.cap;
+
+                      return (
+                        <div key={flavor} className="flex flex-col gap-1.5">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-sm font-medium">{label}</span>
+                            {count && (
+                              <span className="text-xs text-muted-foreground">
+                                {count.count} / {count.cap} cached
+                              </span>
+                            )}
+                            {reelCount && (
+                              <span className="text-xs text-muted-foreground">
+                                {reelCount.count} / {reelCount.cap} reels
+                              </span>
+                            )}
+                          </div>
+                          <ButtonGroup>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={pixabayDownloadStatus[flavor] === "running" || atVideoCap}
+                              onClick={() => startPixabayDownload(flavor)}
+                              className={getFocusClassName(
+                                NAV.general.backgroundVideos,
+                                flavorIndex * 2,
+                              )}
+                            >
+                              {pixabayDownloadStatus[flavor] === "running" && (
+                                <Loader2Icon className="size-4 animate-spin" />
+                              )}
+                              {atVideoCap ? "Cap reached" : "Download videos"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={reelBuildStatus[flavor] === "running"}
+                              onClick={() => startReelBuild(flavor)}
+                              className={getFocusClassName(
+                                NAV.general.backgroundVideos,
+                                flavorIndex * 2 + 1,
+                              )}
+                            >
+                              {reelBuildStatus[flavor] === "running" && (
+                                <Loader2Icon className="size-4 animate-spin" />
+                              )}
+                              {atReelCap ? "Regenerate reels" : "Build reels"}
+                            </Button>
+                          </ButtonGroup>
+                          {pixabayDownloadMessage[flavor] && (
+                            <p className="text-sm text-muted-foreground">
+                              {pixabayDownloadMessage[flavor]}
+                            </p>
+                          )}
+                          {reelBuildMessage[flavor] && (
+                            <p className="text-sm text-muted-foreground">
+                              {reelBuildMessage[flavor]}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
             </FieldGroup>
           </TabsContent>
 

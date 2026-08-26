@@ -501,6 +501,12 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             Ok(serde_json::to_value(path).map_err(serde_err)?)
         }
         "fetch_pixabay_videos" => fetch_pixabay_videos_cmd(events, payload),
+        "download_all_pixabay_videos" => download_all_pixabay_videos_cmd(events, payload),
+        "get_background_video_count" => get_background_video_count_cmd(payload),
+        "get_background_reel_count" => get_background_reel_count_cmd(payload),
+        "build_background_reels" => build_background_reels_cmd(events, payload),
+        "render_karaoke_video" => render_karaoke_video_cmd(events, payload),
+        "force_rerender_karaoke_video" => force_rerender_karaoke_video_cmd(events, payload),
 
         // ── Vendor ───────────────────────────────────────────────────────
         "is_ready" => Ok(Value::Bool(app_core::is_ready())),
@@ -651,6 +657,134 @@ fn fetch_pixabay_videos_cmd(events: std::sync::Arc<EventBus>, payload: Value) ->
     });
 
     Ok(json!(cached))
+}
+
+/// Cheap read-only count (just a directory listing, no download side
+/// effects) -- lets the Settings UI show "N / cap cached" per flavor and
+/// disable the download button once a flavor's already at
+/// `MAX_BULK_DOWNLOAD`, without triggering `fetch_pixabay_videos_cmd`'s
+/// rotation download as a side effect the way reusing that command would.
+fn get_background_video_count_cmd(payload: Value) -> CmdResult {
+    #[derive(Deserialize)]
+    struct Args {
+        flavor: String,
+    }
+    let args: Args = deserialize(payload)?;
+    let count = app_core::get_cached_pixabay_videos(&args.flavor).len();
+
+    Ok(json!({ "count": count, "cap": app_core::MAX_BULK_DOWNLOAD }))
+}
+
+/// Cheap read-only count of built reels for a flavor -- lets the Settings
+/// UI show "N / max reels" and switch the build button's label to
+/// "Regenerate reels" once a flavor already has a full set.
+fn get_background_reel_count_cmd(payload: Value) -> CmdResult {
+    #[derive(Deserialize)]
+    struct Args {
+        flavor: String,
+    }
+    let args: Args = deserialize(payload)?;
+    let count = app_core::count_background_reels(&args.flavor);
+
+    Ok(json!({ "count": count, "cap": app_core::MAX_BACKGROUND_REELS }))
+}
+
+/// Explicit, deliberately-triggered bulk download -- unlike
+/// `fetch_pixabay_videos_cmd` above, this ignores the usual capped
+/// rotation entirely (see `app_core::download_all_pixabay_videos`'s doc
+/// comment for the real resource cost: potentially hundreds of videos,
+/// multiple GB, several minutes). Fire-and-forget thread + progress
+/// events, same shape as the other slow per-flavor/per-file commands in
+/// this file.
+fn download_all_pixabay_videos_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+    #[derive(Deserialize)]
+    struct Args {
+        flavor: String,
+    }
+    let args: Args = deserialize(payload)?;
+
+    let flavor_for_thread = args.flavor.clone();
+    let events_clone = events.clone();
+    std::thread::spawn(move || {
+        let flavor_for_emit = flavor_for_thread.clone();
+        app_core::download_all_pixabay_videos(&flavor_for_thread, move |message| {
+            events_clone.emit(
+                "pixabay-bulk-download-progress",
+                &json!({ "flavor": flavor_for_emit, "message": message }),
+            );
+        });
+        events.emit(
+            "pixabay-bulk-download-done",
+            &json!({ "flavor": args.flavor }),
+        );
+    });
+
+    Ok(Value::Null)
+}
+
+/// Pre-builds a background reel pool for one flavor (`app_core::
+/// build_background_reels`) karaoke video rendering picks from -- explicit,
+/// one-time batch action per flavor. Same fire-and-forget-thread + progress
+/// event pattern as `download_all_pixabay_videos_cmd`.
+fn build_background_reels_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+    #[derive(Deserialize)]
+    struct Args {
+        flavor: String,
+    }
+    let args: Args = deserialize(payload)?;
+
+    let flavor_for_thread = args.flavor.clone();
+    let events_clone = events.clone();
+    std::thread::spawn(move || {
+        let flavor_for_emit = flavor_for_thread.clone();
+        app_core::build_background_reels(&flavor_for_thread, move |message| {
+            events_clone.emit(
+                "background-reels-progress",
+                &json!({ "flavor": flavor_for_emit, "message": message }),
+            );
+        });
+        events.emit("background-reels-done", &json!({ "flavor": args.flavor }));
+    });
+    Ok(Value::Null)
+}
+
+/// Renders (or, with `force`, re-renders) a karaoke video without casting
+/// it -- the explicit "make the video" action, independent of
+/// `/api/cast`'s `chromecast.karaoke_video` path. Fire-and-forget thread +
+/// `"karaoke-video-ready"` event, same shape as `ensure_mp3_stems_cmd`'s
+/// `"stems-ready"`. With `force` omitted/false (the common case, e.g. a
+/// bulk "render everything" pass), this is a no-op for a song whose video
+/// is already fresh relative to its transcript -- see `ensure_karaoke_video`'s
+/// `is_fresh` check -- so re-running it over a whole library only pays for
+/// the songs that actually need it.
+fn render_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        file_hash: String,
+        #[serde(default)]
+        force: bool,
+    }
+    let args: Args = deserialize(payload)?;
+    std::thread::spawn(move || {
+        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash, args.force);
+        events.emit("karaoke-video-ready", &payload);
+    });
+    Ok(Value::Null)
+}
+
+/// Same as `render_karaoke_video_cmd` but always `force`s a fresh render --
+/// a distinct command rather than just exposing `force` on the one above so
+/// the two are unambiguous, separately-triggerable UI actions (e.g. "render
+/// if missing" vs. an explicit "no really, redo it" button), not one action
+/// with a checkbox easy to leave on by accident.
+fn force_rerender_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+    let args: FileHashArgs = deserialize(payload)?;
+    std::thread::spawn(move || {
+        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash, true);
+        events.emit("karaoke-video-ready", &payload);
+    });
+    Ok(Value::Null)
 }
 
 pub mod vendor;

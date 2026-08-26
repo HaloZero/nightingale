@@ -9,6 +9,7 @@ use rusqlite::params;
 
 use crate::library_menu::{LibraryMenuItem, LibraryMenuItems};
 use crate::library_model::{LibraryMenuFilters, LoadSongsParams, SongsMeta, SongsStore};
+use crate::song::Song;
 
 use super::connection::with_conn;
 use super::migrations::{is_song_migration_in_progress, song_migration_done, song_migration_total};
@@ -448,6 +449,20 @@ pub fn iter_file_hashes_filtered_refreshable(
             "json_extract(s.payload, '$.usdx') IS NULL",
         ],
     )
+}
+
+/// Every `SongOrigin::LocalFile` song, for free-text matching (see
+/// `crate::search::find_best_matching_local_song`). Local-file only because
+/// remote-source songs' `path` is a cache placeholder, not real audio --
+/// same filter as `iter_file_hashes_filtered_refreshable`.
+pub fn load_all_local_songs() -> rusqlite::Result<Vec<Song>> {
+    with_conn(|c| {
+        let mut stmt = c.prepare(
+            "SELECT payload FROM songs WHERE json_extract(payload, '$.origin.kind') = 'local_file'",
+        )?;
+        let rows = stmt.query_map([], load_song_from_payload_column)?;
+        rows.collect::<Result<Vec<_>, _>>()
+    })
 }
 
 pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {

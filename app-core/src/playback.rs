@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{LazyLock, Mutex};
 
 use rand::prelude::{IndexedRandom, SliceRandom};
 use serde::Serialize;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use ts_rs::TS;
 
 use crate::cache::{CacheDir, normalize_tempo, videos_dir};
@@ -957,16 +958,96 @@ struct PendingDownload {
     dest: PathBuf,
 }
 
-fn fetch_video_listing(flavor: &str) -> Result<Vec<PendingDownload>, String> {
+fn pixabay_api_key() -> Result<String, String> {
     let api_key = option_env!("PIXABAY_API_KEY")
         .map(|s| s.to_string())
         .or_else(|| std::env::var("PIXABAY_API_KEY").ok())
         .unwrap_or_default();
-
     if api_key.is_empty() {
-        warn!("Pixabay fetch for {flavor}: PIXABAY_API_KEY not set");
         return Err("PIXABAY_API_KEY not set".into());
     }
+    Ok(api_key)
+}
+
+/// One page of Pixabay's video search results for a single keyword. Shared
+/// by the single-random-pick path (`fetch_video_listing`) and the
+/// exhaustive `download_all_pixabay_videos` pager -- both just parse a page
+/// of hits into candidate downloads, they differ only in how many pages/
+/// keywords they walk.
+fn fetch_listing_page(
+    api_key: &str,
+    keyword: &str,
+    category: &str,
+    order: &str,
+    page: u32,
+    dir: &Path,
+) -> Result<(Vec<PendingDownload>, u64), String> {
+    let url = format!(
+        "https://pixabay.com/api/videos/?key={}&q={}&video_type=film&category={}&per_page={}&page={}&safesearch=true&order={}",
+        api_key,
+        urlencode_query(keyword),
+        category,
+        PIXABAY_PER_PAGE,
+        page,
+        order,
+    );
+
+    let mut response = ureq::get(&url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .map_err(|e| {
+            warn!("Pixabay listing request failed for {keyword} (page {page}): {e}");
+            e.to_string()
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body_text = response.body_mut().read_to_string().unwrap_or_default();
+        warn!("Pixabay listing request failed for {keyword} (page {page}): http status: {status}: {body_text}");
+        return Err(format!("http status: {status}"));
+    }
+
+    let body: serde_json::Value = response.body_mut().read_json().map_err(|e| {
+        warn!("Pixabay listing response for {keyword} was not valid JSON: {e}");
+        e.to_string()
+    })?;
+
+    let hits = body["hits"].as_array().ok_or_else(|| {
+        warn!("Pixabay listing for {keyword} had no `hits` array: {body}");
+        "No hits in Pixabay response".to_string()
+    })?;
+    let total_hits = body["totalHits"].as_u64().unwrap_or(0);
+
+    let results: Vec<PendingDownload> = hits
+        .iter()
+        .filter_map(|hit| {
+            let video_id = hit["id"].as_u64().unwrap_or(0);
+            let video_url = hit["videos"]["large"]["url"]
+                .as_str()
+                .or_else(|| hit["videos"]["medium"]["url"].as_str())?;
+            Some(PendingDownload {
+                url: video_url.to_string(),
+                dest: dir.join(format!("{video_id}.mp4")),
+            })
+        })
+        .collect();
+
+    info!(
+        "Pixabay listing for {keyword} (page {page}, {order}): {} hits, {} usable, {total_hits} total available",
+        hits.len(),
+        results.len()
+    );
+
+    Ok((results, total_hits))
+}
+
+fn fetch_video_listing(flavor: &str) -> Result<Vec<PendingDownload>, String> {
+    let api_key = pixabay_api_key().map_err(|e| {
+        warn!("Pixabay fetch for {flavor}: {e}");
+        e
+    })?;
 
     let config = flavor_config(flavor);
     let mut rng = rand::rng();
@@ -982,64 +1063,339 @@ fn fetch_video_listing(flavor: &str) -> Result<Vec<PendingDownload>, String> {
         "latest"
     };
 
-    let url = format!(
-        "https://pixabay.com/api/videos/?key={}&q={}&video_type=film&category={}&per_page={}&safesearch=true&order={}",
-        api_key,
-        urlencode_query(keyword),
-        config.category,
-        PIXABAY_PER_PAGE,
-        order,
-    );
-
-    let mut response = ureq::get(&url)
-        .config()
-        .http_status_as_error(false)
-        .build()
-        .call()
-        .map_err(|e| {
-            warn!("Pixabay listing request failed for {flavor} ({keyword}): {e}");
-            e.to_string()
-        })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let body_text = response.body_mut().read_to_string().unwrap_or_default();
-        warn!("Pixabay listing request failed for {flavor} ({keyword}): http status: {status}: {body_text}");
-        return Err(format!("http status: {status}"));
-    }
-
-    let body: serde_json::Value = response.body_mut().read_json().map_err(|e| {
-        warn!("Pixabay listing response for {flavor} was not valid JSON: {e}");
-        e.to_string()
-    })?;
-
-    let hits = body["hits"].as_array().ok_or_else(|| {
-        warn!("Pixabay listing for {flavor} had no `hits` array: {body}");
-        "No hits in Pixabay response".to_string()
-    })?;
-
-    let mut results: Vec<PendingDownload> = hits
-        .iter()
-        .filter_map(|hit| {
-            let video_id = hit["id"].as_u64().unwrap_or(0);
-            let video_url = hit["videos"]["large"]["url"]
-                .as_str()
-                .or_else(|| hit["videos"]["medium"]["url"].as_str())?;
-            Some(PendingDownload {
-                url: video_url.to_string(),
-                dest: dir.join(format!("{video_id}.mp4")),
-            })
-        })
-        .collect();
-
-    info!(
-        "Pixabay listing for {flavor} ({keyword}, {order}): {} hits, {} usable",
-        hits.len(),
-        results.len()
-    );
-
+    let (mut results, _total_hits) =
+        fetch_listing_page(&api_key, keyword, config.category, order, 1, &dir)?;
     results.shuffle(&mut rng);
     Ok(results)
+}
+
+/// Pixabay caps `totalHits` at ~500 per query regardless of the true match
+/// count, and each keyword in a flavor's list is queried independently, so
+/// an uncapped run can attempt into the thousands of candidates. This caps
+/// the total number of `flavor` video files on disk, existing + newly
+/// downloaded -- not a count of new downloads this call makes, so a flavor
+/// that's already at or past the cap (e.g. from before this cap existed)
+/// just downloads nothing further.
+pub const MAX_BULK_DOWNLOAD: usize = 240;
+
+/// Downloads videos Pixabay has for `flavor`'s keywords until the flavor's
+/// on-disk video count reaches `MAX_BULK_DOWNLOAD` -- unlike
+/// `download_pixabay_videos`, this ignores `MAX_CACHED_VIDEOS`/eviction
+/// entirely, it just stops once the bulk cap is hit. Explicit,
+/// deliberately-triggered bulk action (real cost even capped: multiple GB,
+/// several minutes) -- never call this from a hot path like casting/
+/// rendering.
+pub fn download_all_pixabay_videos(flavor: &str, on_progress: impl Fn(&str) + Send + 'static) {
+    let api_key = match pixabay_api_key() {
+        Ok(k) => k,
+        Err(e) => {
+            warn!("Pixabay bulk download for {flavor}: aborting, {e}");
+            on_progress(&format!("aborted: {e}"));
+            return;
+        }
+    };
+
+    let config = flavor_config(flavor);
+    let dir = flavor_cache_dir(flavor);
+    let mut total_on_disk = cached_video_paths(flavor).len();
+    let mut downloaded = 0usize;
+    let mut skipped_existing = 0usize;
+
+    if total_on_disk >= MAX_BULK_DOWNLOAD {
+        let msg = format!(
+            "[{flavor}] already have {total_on_disk} cached videos (cap {MAX_BULK_DOWNLOAD}), nothing to download"
+        );
+        info!("{msg}");
+        on_progress(&msg);
+        return;
+    }
+
+    info!(
+        "[{flavor}] starting bulk download: {total_on_disk}/{MAX_BULK_DOWNLOAD} on disk, {} keywords to search",
+        config.keywords.len()
+    );
+
+    'keywords: for keyword in config.keywords {
+        // One order is enough per keyword: "popular"/"latest" just reorder
+        // the same underlying ~500-result-capped corpus Pixabay exposes
+        // per query, they don't expand it.
+        let order = "popular";
+        let mut page = 1u32;
+        loop {
+            debug!("[{flavor}] fetching {keyword:?} page {page} ({order})");
+            let (candidates, total_hits) =
+                match fetch_listing_page(&api_key, keyword, config.category, order, page, &dir) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("Pixabay bulk download for {flavor} ({keyword}, page {page}): {e}");
+                        on_progress(&format!("{keyword} page {page} failed: {e}"));
+                        break;
+                    }
+                };
+            if candidates.is_empty() {
+                break;
+            }
+
+            for candidate in &candidates {
+                if candidate.dest.exists() {
+                    skipped_existing += 1;
+                    debug!("[{flavor}] already have {}", candidate.dest.display());
+                    continue;
+                }
+                match download_file(&candidate.url, &candidate.dest) {
+                    Ok(()) => {
+                        downloaded += 1;
+                        total_on_disk += 1;
+                        let msg = format!(
+                            "[{flavor}] downloaded {} ({downloaded} new, {skipped_existing} already cached)",
+                            candidate.dest.display()
+                        );
+                        info!("{msg}");
+                        on_progress(&msg);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Pixabay bulk download for {flavor}: failed to save {}: {e}",
+                            candidate.dest.display()
+                        );
+                    }
+                }
+
+                if total_on_disk >= MAX_BULK_DOWNLOAD {
+                    let msg = format!(
+                        "[{flavor}] reached the {MAX_BULK_DOWNLOAD}-video on-disk cap, stopping"
+                    );
+                    info!("{msg}");
+                    on_progress(&msg);
+                    break 'keywords;
+                }
+            }
+
+            let seen_so_far = page as u64 * PIXABAY_PER_PAGE as u64;
+            if (candidates.len() as u32) < PIXABAY_PER_PAGE || seen_so_far >= total_hits {
+                break;
+            }
+            page += 1;
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+
+    let summary = format!(
+        "[{flavor}] bulk download complete: {downloaded} new videos, {skipped_existing} already cached"
+    );
+    info!("{summary}");
+    on_progress(&summary);
+}
+
+const REEL_TARGET_LENGTHS_SECS: [f64; 4] = [240.0, 300.0, 360.0, 540.0];
+const REELS_PER_LENGTH: usize = 50;
+const REEL_WIDTH: u32 = 1920;
+const REEL_HEIGHT: u32 = 1080;
+// Real cached nature clips run roughly 10-30s each (observed); a
+// conservative floor keeps us from under-selecting clips for a target
+// length -- any overshoot just gets trimmed by `-t` on the ffmpeg output.
+const ASSUMED_CLIP_SECS: f64 = 8.0;
+
+/// Every `build_background_reels` run writes exactly this many files (one
+/// per `REELS_PER_LENGTH` at each `REEL_TARGET_LENGTHS_SECS`), always to
+/// the same fixed filenames -- so a flavor's reel count only ever reads as
+/// `0` (never built) or this exact max (already built), nothing partial
+/// once a run finishes.
+pub const MAX_BACKGROUND_REELS: usize = REEL_TARGET_LENGTHS_SECS.len() * REELS_PER_LENGTH;
+
+/// Cheap read-only count of how many reel files `flavor` already has on
+/// disk -- lets the Settings UI show "N / max reels" and switch the build
+/// button to "Regenerate reels" once a flavor is fully built.
+pub fn count_background_reels(flavor: &str) -> usize {
+    let reels_dir = crate::cache::reels_dir(flavor);
+    std::fs::read_dir(&reels_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "mp4"))
+        .count()
+}
+
+/// Builds a small pool of longer background "reels" for `flavor` -- each
+/// several different cached clips of that flavor concatenated together --
+/// so karaoke video rendering can pick one that already covers a song's
+/// length instead of hard-looping one short raw clip (visible jump-cuts)
+/// and re-scaling/cropping a (sometimes 4K) source on every single render.
+/// One-time, explicitly-triggered cost (like `download_all_pixabay_videos`)
+/// -- never call this from a render's hot path.
+pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 'static) {
+    let clips = cached_video_paths(flavor);
+    if clips.is_empty() {
+        warn!("[{flavor} reels] no cached {flavor} clips -- run the pixabay {flavor} download first");
+        on_progress(&format!("aborted: no cached {flavor} clips"));
+        return;
+    }
+
+    let reels_dir = crate::cache::reels_dir(flavor);
+    let mut rng = rand::rng();
+
+    info!(
+        "[{flavor} reels] starting build with {} cached clips -> {}",
+        clips.len(),
+        reels_dir.display()
+    );
+
+    // Observed in practice: ffmpeg occasionally crashes (SIGSEGV) building a
+    // batch even at a capped input count -- transient (retrying the same
+    // target/index with a freshly reshuffled clip selection succeeds), not
+    // a deterministic bad-input problem (every cached clip independently
+    // verified valid). One retry with a new selection before giving up.
+    const MAX_ATTEMPTS: u32 = 2;
+
+    for &target in &REEL_TARGET_LENGTHS_SECS {
+        let needed_clips = ((target / ASSUMED_CLIP_SECS).ceil() as usize)
+            .max(1)
+            .min(clips.len());
+        for n in 0..REELS_PER_LENGTH {
+            let output = reels_dir.join(format!("reel_{}_{n}.mp4", target as u32));
+            let mut last_err = String::new();
+            let mut ok = false;
+
+            for attempt in 1..=MAX_ATTEMPTS {
+                let mut shuffled = clips.clone();
+                shuffled.shuffle(&mut rng);
+                let selection: Vec<PathBuf> = shuffled.into_iter().take(needed_clips).collect();
+
+                match build_one_reel(&selection, target, &output) {
+                    Ok(()) => {
+                        ok = true;
+                        break;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "[{flavor} reels] attempt {attempt}/{MAX_ATTEMPTS} failed for {}: {e}",
+                            output.display()
+                        );
+                        last_err = e;
+                    }
+                }
+            }
+
+            if ok {
+                let msg = format!("built {}", output.display());
+                info!("[{flavor} reels] {msg}");
+                on_progress(&msg);
+            } else {
+                warn!("[{flavor} reels] giving up on {}: {last_err}", output.display());
+                on_progress(&format!("failed {}: {last_err}", output.display()));
+            }
+        }
+    }
+
+    on_progress(&format!("{flavor} reel build complete"));
+}
+
+// A single ffmpeg invocation opening this many simultaneous inputs proved
+// unreliable in practice: building 9 reels (up to ~45 inputs each for the
+// 6-minute targets) produced 6 silent 0-byte failures out of 9, almost
+// certainly a resource limit (likely file descriptors) hit when opening
+// that many inputs/decode contexts at once, not bad source data (every
+// one of the 538 cached clips independently verified as valid via
+// ffprobe). Capping batch size and joining batches in a second pass keeps
+// every single ffmpeg call well under that ceiling.
+const MAX_CONCAT_INPUTS: usize = 15;
+
+fn build_one_reel(clips: &[PathBuf], target_secs: f64, output: &Path) -> Result<(), String> {
+    if clips.is_empty() {
+        return Err("no clips selected".to_string());
+    }
+
+    let stem = output
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("reel")
+        .to_string();
+    let work_dir = output
+        .parent()
+        .ok_or_else(|| "invalid output path".to_string())?
+        .join(format!("_building_{stem}"));
+    std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
+
+    let result: Result<(), String> = (|| {
+        let mut batch_outputs = Vec::new();
+        for (i, batch) in clips.chunks(MAX_CONCAT_INPUTS).enumerate() {
+            let batch_out = work_dir.join(format!("batch_{i}.mp4"));
+            concat_and_normalize(batch, None, &batch_out)?;
+            batch_outputs.push(batch_out);
+        }
+
+        // Second pass always runs, even for a single batch, so the target
+        // length trim (`-t`) is applied uniformly in one place.
+        let tmp_final = work_dir.join("final.mp4");
+        concat_and_normalize(&batch_outputs, Some(target_secs), &tmp_final)?;
+        // Only becomes visible at the real cache path -- where
+        // `select_background_video` looks -- once fully written and
+        // known-good; a failed/partial build never lands there.
+        std::fs::rename(&tmp_final, output).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_dir_all(&work_dir);
+    result
+}
+
+/// Normalizes each input to the same size/SAR/fps and concatenates them
+/// via the concat *filter* (not the `-f concat` demuxer, which requires
+/// identical stream parameters across segments -- source clips vary
+/// wildly in resolution/bitrate/codec params). `trim_secs`, when given,
+/// caps the joined output's length via `-t`.
+fn concat_and_normalize(
+    inputs: &[PathBuf],
+    trim_secs: Option<f64>,
+    output: &Path,
+) -> Result<(), String> {
+    debug!(
+        "[reels] concatenating {} clip(s) -> {} (trim_secs={trim_secs:?})",
+        inputs.len(),
+        output.display()
+    );
+
+    let mut cmd = silent_command(ffmpeg_path());
+    cmd.arg("-y");
+    for input in inputs {
+        cmd.arg("-i").arg(input);
+    }
+
+    let mut filter = String::new();
+    for i in 0..inputs.len() {
+        filter.push_str(&format!(
+            "[{i}:v]scale={REEL_WIDTH}:{REEL_HEIGHT}:force_original_aspect_ratio=increase,\
+             crop={REEL_WIDTH}:{REEL_HEIGHT},setsar=1,fps=24[c{i}];"
+        ));
+    }
+    for i in 0..inputs.len() {
+        filter.push_str(&format!("[c{i}]"));
+    }
+    filter.push_str(&format!("concat=n={}:v=1:a=0[out]", inputs.len()));
+
+    cmd.args(["-filter_complex", &filter]).args(["-map", "[out]"]);
+    if let Some(t) = trim_secs {
+        cmd.args(["-t", &t.to_string()]);
+    }
+
+    let result = cmd
+        .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
+        .args(["-pix_fmt", "yuv420p"])
+        .arg(output)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !result.status.success() {
+        return Err(format!(
+            "ffmpeg exited {}: {}",
+            result.status,
+            String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    Ok(())
 }
 
 fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {

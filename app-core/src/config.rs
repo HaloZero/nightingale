@@ -165,6 +165,34 @@ impl LibrarySource {
     }
 }
 
+/// Chromecast device to cast matched songs to (see `crate::chromecast`).
+/// Persisted in `config.json`; the app has no discovery UI for this yet, so
+/// the host/port are hand-entered by the operator.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChromecastConfig {
+    pub host: String,
+    #[serde(default = "default_chromecast_port")]
+    pub port: u16,
+    /// Overrides LAN-IP auto-detection for the base URL the Chromecast uses
+    /// to fetch media from this server (e.g. "http://192.168.1.50:8080").
+    /// Needed when auto-detection picks the wrong network interface on a
+    /// multi-homed host.
+    #[serde(default)]
+    pub server_base_url: Option<String>,
+    /// When true, cast a pre-rendered video with burned-in background +
+    /// title/artist + word-timed lyrics (`crate::karaoke_video`) instead of
+    /// the song's raw audio. Requires the song to already have a
+    /// transcript. Off by default -- preserves the original audio-only
+    /// casting behavior for anyone who doesn't opt in.
+    #[serde(default)]
+    pub karaoke_video: bool,
+}
+
+fn default_chromecast_port() -> u16 {
+    8009
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct AppConfig {
@@ -244,6 +272,10 @@ pub struct AppConfig {
     /// alongside `parallel_analysis_enabled`; off by default so a fresh
     /// install still analyzes locally with no peer configured.
     pub parallel_analysis_only: Option<bool>,
+    /// Chromecast device the `/api/cast` endpoint casts matched songs to.
+    /// `None` means casting is disabled.
+    #[serde(default)]
+    pub chromecast: Option<ChromecastConfig>,
 }
 
 fn default_data_path_option() -> Option<PathBuf> {
@@ -286,6 +318,7 @@ impl Default for AppConfig {
             parallel_analysis_enabled: None,
             parallel_analysis_url: None,
             parallel_analysis_only: None,
+            chromecast: None,
         }
     }
 }

@@ -109,6 +109,12 @@ impl CacheDir {
         dir.join(format!("{hash}.mp4"))
     }
 
+    pub fn karaoke_video_path(&self, hash: &str) -> PathBuf {
+        let dir = self.path.join("karaoke_videos");
+        std::fs::create_dir_all(&dir).ok();
+        dir.join(format!("{hash}.mp4"))
+    }
+
     pub fn transcript_exists(&self, hash: &str) -> bool {
         let transcript = self.transcript_path(hash);
         if !transcript.is_file() {
@@ -310,6 +316,16 @@ pub fn videos_dir() -> PathBuf {
     configured_cache_paths()
         .videos
         .unwrap_or_else(|| nightingale_dir().join("videos"))
+}
+
+/// Pre-built background "reels" for karaoke video (`playback::
+/// build_background_reels`) -- each one several raw clips of `flavor`
+/// concatenated together, sibling to the raw single-clip cache at
+/// `videos_dir()/<flavor>`.
+pub fn reels_dir(flavor: &str) -> PathBuf {
+    let dir = videos_dir().join(format!("{flavor}_reels"));
+    std::fs::create_dir_all(&dir).ok();
+    dir
 }
 
 pub fn models_dir() -> PathBuf {

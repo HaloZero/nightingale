@@ -1,4 +1,5 @@
 mod bootstrap;
+mod cast;
 mod commands;
 mod events;
 mod jukebox;
@@ -12,6 +13,7 @@ use std::net::SocketAddr;
 use axum::routing::{any, get, post};
 use axum::Router;
 use clap::Parser;
+use tower_http::compression::CompressionLayer;
 use tracing_subscriber::EnvFilter;
 
 use crate::state::AppState;
@@ -79,13 +81,26 @@ async fn main() {
 
     let state = AppState::new();
 
+    // Compression is scoped to just the frontend bundle (this fallback),
+    // not the whole router -- `/api/asset` and `/media/:hash/:kind` stream
+    // audio/video via `ServeFile`'s byte-range support (seeking), and
+    // compressing those responses would break `Content-Range`/partial
+    // content. The JS/CSS/HTML bundle has no such concern and was
+    // otherwise always sent fully uncompressed (confirmed: no
+    // `Content-Encoding` on any asset response) -- ~1.8MB of JS alone
+    // per first load.
+    let static_assets = Router::new()
+        .fallback(static_files::handle)
+        .layer(CompressionLayer::new());
+
     let app = Router::new()
         .route("/api/bootstrap", get(bootstrap::handle))
         .route("/api/cmd/:name", post(commands::handle_cmd))
         .route("/api/asset", get(media::handle_asset))
+        .route("/api/cast", get(cast::handle_cast))
         .route("/media/:hash/:kind", get(media::handle_hashed))
         .route("/ws", any(ws::handle_upgrade))
-        .fallback(static_files::handle)
+        .fallback_service(static_assets)
         .with_state(state.clone());
 
     let listener = match tokio::net::TcpListener::bind(args.bind).await {

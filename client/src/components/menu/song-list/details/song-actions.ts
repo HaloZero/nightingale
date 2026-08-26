@@ -8,7 +8,9 @@ import {
   MicIcon,
   PencilLineIcon,
   RefreshCwIcon,
+  Repeat2Icon,
   Trash2Icon,
+  VideoIcon,
 } from "lucide-react";
 import type { SongStatusInfo } from "../shared/song-status";
 import type { ActionItemProps } from "./action-item";
@@ -35,6 +37,10 @@ interface BuildActionGroupsParams {
   onEditLyrics: () => void;
   onChangeLanguage: () => void;
   run: (message: string, action: () => void | Promise<void>) => () => Promise<void>;
+  /** Server-only feature (casting/rendering both live server-side); hidden in the Tauri desktop build. */
+  showKaraokeVideoActions: boolean;
+  onRenderKaraokeVideo: () => void;
+  onForceRerenderKaraokeVideo: () => void;
 }
 
 export function buildActionGroups({
@@ -46,6 +52,9 @@ export function buildActionGroups({
   onEditLyrics,
   onChangeLanguage,
   run,
+  showKaraokeVideoActions,
+  onRenderKaraokeVideo,
+  onForceRerenderKaraokeVideo,
 }: BuildActionGroupsParams): ActionItemProps[][] {
   const groups: ActionItemProps[][] = [];
 
@@ -156,6 +165,28 @@ export function buildActionGroups({
           title: "Change language",
           description: "Set the language and choose how to reprocess.",
           onClick: onChangeLanguage,
+        },
+      ]);
+    }
+
+    // Karaoke video generation only needs a transcript (i.e. `status.isReady`,
+    // already required to reach this branch), independent of transcript_source
+    // -- applies equally to LRC-provided and AI-analyzed songs. Server-only, so
+    // hidden entirely in the Tauri desktop build (see `showKaraokeVideoActions`).
+    if (showKaraokeVideoActions) {
+      groups.push([
+        {
+          icon: VideoIcon,
+          title: "Render karaoke video",
+          description:
+            "Render a background+lyrics video for casting. Skipped if already up to date.",
+          onClick: onRenderKaraokeVideo,
+        },
+        {
+          icon: Repeat2Icon,
+          title: "Force re-render karaoke video",
+          description: "Regenerate unconditionally, with a freshly picked background.",
+          onClick: onForceRerenderKaraokeVideo,
         },
       ]);
     }

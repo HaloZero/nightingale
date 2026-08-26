@@ -21,6 +21,11 @@ url = "2"
 chacha20poly1305 = "0.10"
 base64 = "0.22"
 md-5 = "0.10"
+rust_cast = "0.21"
+rustls = "0.23"
+strsim = "0.11"
+mime_guess = "2"
+ab_glyph = "0.2"
 
 [build-dependencies]
 dotenvy = "0.15"

@@ -1,8 +1,10 @@
 mod analyzer;
 mod cache;
+mod chromecast;
 mod config;
 mod error;
 mod library_db;
+mod karaoke_video;
 mod library_menu;
 mod library_model;
 mod lrc;
@@ -12,6 +14,7 @@ mod parallel_analysis;
 mod playback;
 mod profile;
 mod scanner;
+mod search;
 mod secret;
 mod song;
 mod source;
@@ -28,9 +31,12 @@ pub use analyzer::{
 };
 pub use cache::{
     CacheDir, CachePaths, CacheStats, cache_roots, change_app_data_path, clear_models,
-    clear_videos, default_nightingale_dir, nightingale_dir, normalized_target_path, same_path,
+    clear_videos, default_nightingale_dir, nightingale_dir,
+    normalized_target_path, reels_dir, same_path,
 };
-pub use config::{AppConfig, LibrarySource};
+pub use chromecast::cast_song_to_configured_device;
+pub use config::{AppConfig, ChromecastConfig, LibrarySource};
+pub use karaoke_video::{KaraokeVideoReady, ensure_karaoke_video, ensure_karaoke_video_ready_payload};
 pub use library_db::{init_library, library_db_path};
 pub use library_menu::{LibraryMenuItem, LibraryMenuItems, load_library_menu_items};
 pub use library_model::{LibraryMenuFilters, LoadSongsParams, SongsMeta, SongsStore};
@@ -44,14 +50,18 @@ pub use parallel_analysis::{
     manual_ping as parallel_analysis_ping, song_at_path as parallel_analysis_song_at_path,
 };
 pub use playback::{
-    AudioPaths, PixabayVideoDownloaded, ShiftDone, ShiftResult, StemsReady,
-    download_pixabay_videos, ensure_mp3_stems, ensure_mp3_stems_ready_payload,
-    ensure_playable_source_video, get_audio_paths, get_cached_pixabay_videos, load_transcript,
-    prefetch_one_per_flavor, shift_key, shift_key_done_payload, shift_tempo,
-    shift_tempo_done_payload,
+    AudioPaths, MAX_BACKGROUND_REELS, MAX_BULK_DOWNLOAD, PixabayVideoDownloaded, ShiftDone,
+    ShiftResult, StemsReady, build_background_reels, count_background_reels,
+    download_all_pixabay_videos, download_pixabay_videos, ensure_mp3_stems,
+    ensure_mp3_stems_ready_payload, ensure_playable_source_video, get_audio_paths,
+    get_cached_pixabay_videos, load_transcript, prefetch_one_per_flavor, shift_key,
+    shift_key_done_payload, shift_tempo, shift_tempo_done_payload,
 };
 pub use profile::ProfileStore;
 pub use scanner::start_scan;
+pub use search::{
+    find_alternative_analyzed_songs, find_best_matching_local_song, find_song_by_hash,
+};
 pub use song::{Song, SongOrigin};
 pub use source::{
     JellyfinAuth, JellyfinSource, MediaSource, NavidromeAuth, NavidromeSource, PlexAuth,

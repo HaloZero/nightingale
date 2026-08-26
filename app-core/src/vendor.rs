@@ -66,6 +66,15 @@ pub fn ffmpeg_path() -> PathBuf {
     vendor_dir().join(name)
 }
 
+/// Font bundled for karaoke-video text rendering (`crate::karaoke_video`).
+/// Not part of `is_ready()`/the setup wizard -- casting with burned-in
+/// lyrics is an opt-in, niche feature (`ChromecastConfig.karaoke_video`),
+/// not core setup, so it's downloaded lazily on first use instead
+/// (`ensure_font_downloaded`).
+pub fn font_path() -> PathBuf {
+    vendor_dir().join("DejaVuSans.ttf")
+}
+
 pub fn python_path() -> PathBuf {
     if cfg!(windows) {
         vendor_dir().join("venv").join("Scripts").join("python.exe")
@@ -413,6 +422,42 @@ pub fn step_download_ffmpeg() -> Result<(), String> {
     result?;
 
     Ok(())
+}
+
+// ─── Karaoke video font (lazy, not a wizard step) ───────────────────
+
+// DejaVu ships pre-built TTFs only as a GitHub Release asset (the repo's
+// git tree holds font *sources*, not binaries), so this is a zip like
+// ffmpeg's/uv's downloads, not a raw single-file fetch.
+const FONT_DOWNLOAD_URL: &str = "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-sans-ttf-2.37.zip";
+
+/// Downloads the bundled font on first use. DejaVu Sans specifically:
+/// Bitstream-Vera-derived license explicitly permits embedding/
+/// redistribution, and it's the de facto default across the ffmpeg/
+/// subtitle tooling ecosystem. Latin-script only -- no CJK/RTL coverage.
+pub fn ensure_font_downloaded() -> Result<PathBuf, String> {
+    let dest = font_path();
+    if dest.is_file() {
+        return Ok(dest);
+    }
+
+    let tmp_dir = vendor_dir().join("_tmp_font");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let archive = tmp_dir.join("dejavu.zip");
+
+    let result: Result<(), String> = (|| {
+        download_to_file(FONT_DOWNLOAD_URL, &archive)?;
+        extract_archive(&archive, &tmp_dir)?;
+        let found = find_file_in(&tmp_dir, "DejaVuSans.ttf")
+            .ok_or_else(|| "Could not find DejaVuSans.ttf in downloaded archive".to_string())?;
+        std::fs::copy(&found, &dest).map_err(|e| format!("Failed to copy font: {e}"))?;
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    result.map_err(|e| format!("Failed to download karaoke-video font: {e}"))?;
+
+    Ok(dest)
 }
 
 // ─── Step 2: Download uv ────────────────────────────────────────────

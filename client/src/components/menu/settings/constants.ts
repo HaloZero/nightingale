@@ -12,6 +12,12 @@ export const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: "analysis", label: "Analysis" },
 ];
 
+export const BACKGROUND_VIDEO_FLAVORS: { value: string; label: string }[] = [
+  { value: "nature", label: "Nature" },
+  { value: "underwater", label: "Underwater" },
+  { value: "space", label: "Space" },
+];
+
 export const SEPARATORS: SettingsOption[] = [
   {
     value: "karaoke",
@@ -141,6 +147,7 @@ export const NAV = {
     micLatency: 4,
     lyricsVerticalPosition: 5,
     lyricsHorizontalPosition: 6,
+    backgroundVideos: 7,
   },
 } as const;
 
@@ -194,9 +201,18 @@ export function getSettingsStops(
   tab: SettingsTab,
   isParakeet: boolean,
   showParallelAnalysis: boolean,
+  showBackgroundVideos: boolean,
 ) {
   if (tab === "general") {
-    return [2, 2, 1, 1, 2, 1, 1, 2];
+    // Same append-at-the-end trick as parallel analysis below: the
+    // background videos field (server-only, gated by `!isTauri`) sits after
+    // every other general field, so hiding it just drops the last stop
+    // before the footer instead of shifting any existing NAV indices. Its
+    // one segment holds a download + build-reels button pair per flavor in
+    // `BACKGROUND_VIDEO_FLAVORS`.
+    const base = [2, 2, 1, 1, 2, 1, 1];
+
+    return showBackgroundVideos ? [...base, BACKGROUND_VIDEO_FLAVORS.length * 2, 2] : [...base, 2];
   }
 
   // The two "2"s before the trailing footer "2" are useExternalLyrics's and

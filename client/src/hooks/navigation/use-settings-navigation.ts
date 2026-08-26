@@ -44,6 +44,7 @@ interface UseSettingsNavigationOptions {
   tab: SettingsTab;
   isParakeet: boolean;
   showParallelAnalysis: boolean;
+  showBackgroundVideos: boolean;
   micMonitorGain: number;
   micLatencySec: number;
   vocalThresholdPct: number;
@@ -59,6 +60,7 @@ export function useSettingsNavigation({
   tab,
   isParakeet,
   showParallelAnalysis,
+  showBackgroundVideos,
   micMonitorGain,
   micLatencySec,
   vocalThresholdPct,
@@ -69,8 +71,8 @@ export function useSettingsNavigation({
   onVocalThresholdChange,
 }: UseSettingsNavigationOptions) {
   const stops = useMemo(
-    () => getSettingsStops(tab, isParakeet, showParallelAnalysis),
-    [tab, isParakeet, showParallelAnalysis],
+    () => getSettingsStops(tab, isParakeet, showParallelAnalysis, showBackgroundVideos),
+    [tab, isParakeet, showParallelAnalysis, showBackgroundVideos],
   );
   const itemCount = useMemo(() => stops.reduce((sum, size) => sum + size, 0), [stops]);
   const footerSegment = stops.length - 1;
