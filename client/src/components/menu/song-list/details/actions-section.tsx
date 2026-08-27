@@ -87,18 +87,6 @@ export const ActionsSection = ({
     return () => unlisten?.();
   }, [song.file_hash, song.title]);
 
-  // The karaoke-video group specifically needs supportsAnalysisActions (see
-  // song-details-sidebar.tsx's own debug log for why that might be false)
-  // *and* !isTauri (karaoke video only exists to feed chromecast casting,
-  // which has no Tauri-side equivalent -- see bridge/karaoke-video.ts) --
-  // logging both together here pins down which one, if either, is hiding it.
-  console.debug("[actions-section] karaoke video group gating", {
-    file_hash: song.file_hash,
-    supportsAnalysisActions,
-    isTauri,
-    showKaraokeVideoActions: !isTauri,
-  });
-
   const groups = buildActionGroups({
     song,
     status,

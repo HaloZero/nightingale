@@ -41,25 +41,6 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
   const supportsShifts = song.is_analyzed && song.transcript_source !== "Usdx" && !keyPending;
   const supportsAnalysisActions = Boolean(status.isReady) && song.transcript_source !== "Usdx";
 
-  // supportsAnalysisActions gates the *entire* analysis-actions group in
-  // ActionsSection, including karaoke video rendering -- and status.isReady
-  // depends on queueStatus, not just song.is_analyzed (see
-  // getSongStatusInfo: a "Queued"/Analyzing/Failed queue row makes isReady
-  // false even for an already-analyzed song, e.g. a stale/lingering queue
-  // entry, or a song re-queued for realign/reanalysis). If the actions menu
-  // for an analyzed song looks emptier than expected, check this line
-  // first instead of guessing -- it names exactly which of the three
-  // conditions is the blocker.
-  console.debug("[song-details-sidebar] action gating", {
-    file_hash: song.file_hash,
-    title: song.title,
-    is_analyzed: song.is_analyzed,
-    transcript_source: song.transcript_source,
-    queueStatus,
-    status,
-    supportsAnalysisActions,
-  });
-
   // Off-queue key detection doesn't invalidate any query, so poll the song list
   // while the key is pending to pick it up and unlock the shift controls.
   useEffect(() => {
