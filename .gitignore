@@ -1,6 +1,9 @@
 target/
 .env
 
+# Claude Code local session state (settings.local.json, worktrees, etc.)
+.claude/
+
 # Site
 site/node_modules/
 site/dist/
