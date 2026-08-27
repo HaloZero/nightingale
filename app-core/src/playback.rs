@@ -1222,7 +1222,10 @@ pub fn count_background_reels(flavor: &str) -> usize {
 /// length instead of hard-looping one short raw clip (visible jump-cuts)
 /// and re-scaling/cropping a (sometimes 4K) source on every single render.
 /// One-time, explicitly-triggered cost (like `download_all_pixabay_videos`)
-/// -- never call this from a render's hot path.
+/// -- never call this from a render's hot path. Resumable: any `reel_{target}_{n}.mp4`
+/// that already exists on disk is left untouched and skipped, so re-running
+/// after a partial/interrupted build only builds what's missing rather than
+/// redoing the whole pool. To force a full rebuild, clear `reels_dir` first.
 pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 'static) {
     let clips = cached_video_paths(flavor);
     if clips.is_empty() {
@@ -1249,6 +1252,7 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
 
     let mut built = 0usize;
     let mut failed = 0usize;
+    let mut skipped = 0usize;
 
     for &target in &REEL_TARGET_LENGTHS_SECS {
         let needed_clips = ((target / ASSUMED_CLIP_SECS).ceil() as usize)
@@ -1256,7 +1260,11 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
             .min(clips.len());
         for n in 0..REELS_PER_LENGTH {
             let output = reels_dir.join(format!("reel_{}_{n}.mp4", target as u32));
-            let done_so_far = built + failed;
+            if output.exists() {
+                skipped += 1;
+                continue;
+            }
+            let done_so_far = built + failed + skipped;
             info!(
                 "[{flavor} reels] ({}/{MAX_BACKGROUND_REELS}) building {} from {needed_clips} clip(s)",
                 done_so_far + 1,
@@ -1290,7 +1298,7 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
                 let msg = format!(
                     "built {} ({}/{MAX_BACKGROUND_REELS})",
                     output.display(),
-                    built + failed
+                    built + failed + skipped
                 );
                 info!("[{flavor} reels] {msg}");
                 on_progress(&msg);
@@ -1299,7 +1307,7 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
                 let msg = format!(
                     "failed {} ({}/{MAX_BACKGROUND_REELS}): {last_err}",
                     output.display(),
-                    built + failed
+                    built + failed + skipped
                 );
                 warn!("[{flavor} reels] giving up: {msg}");
                 on_progress(&msg);
@@ -1307,7 +1315,8 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
         }
     }
 
-    let summary = format!("{flavor} reel build complete: {built} built, {failed} failed");
+    let summary =
+        format!("{flavor} reel build complete: {built} built, {skipped} already present, {failed} failed");
     info!("[{flavor} reels] {summary}");
     on_progress(&summary);
 }
