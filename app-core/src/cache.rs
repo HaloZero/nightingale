@@ -328,6 +328,17 @@ pub fn reels_dir(flavor: &str) -> PathBuf {
     dir
 }
 
+/// One normalized (scaled/cropped/fps-matched, already-encoded) copy of each
+/// raw `flavor` clip, keyed by filename -- `playback::build_one_reel` reuses
+/// these across every reel that picks a given clip instead of re-decoding
+/// and re-encoding it from the raw source each time. Sibling to
+/// `reels_dir(flavor)`.
+pub fn normalized_clips_dir(flavor: &str) -> PathBuf {
+    let dir = videos_dir().join(format!("{flavor}_normalized"));
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
 pub fn models_dir() -> PathBuf {
     configured_cache_paths()
         .models

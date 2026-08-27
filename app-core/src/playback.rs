@@ -1280,7 +1280,7 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
                 shuffled.shuffle(&mut rng);
                 let selection: Vec<PathBuf> = shuffled.into_iter().take(needed_clips).collect();
 
-                match build_one_reel(&selection, target, &output) {
+                match build_one_reel(flavor, &selection, target, &output) {
                     Ok(()) => {
                         ok = true;
                         break;
@@ -1326,20 +1326,26 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
     on_progress(&summary);
 }
 
-// A single ffmpeg invocation opening this many simultaneous inputs proved
-// unreliable in practice: building 9 reels (up to ~45 inputs each for the
-// 6-minute targets) produced 6 silent 0-byte failures out of 9, almost
-// certainly a resource limit (likely file descriptors) hit when opening
-// that many inputs/decode contexts at once, not bad source data (every
-// one of the 538 cached clips independently verified as valid via
-// ffprobe). Capping batch size and joining batches in a second pass keeps
-// every single ffmpeg call well under that ceiling.
-const MAX_CONCAT_INPUTS: usize = 15;
-
-fn build_one_reel(clips: &[PathBuf], target_secs: f64, output: &Path) -> Result<(), String> {
+fn build_one_reel(
+    flavor: &str,
+    clips: &[PathBuf],
+    target_secs: f64,
+    output: &Path,
+) -> Result<(), String> {
     if clips.is_empty() {
         return Err("no clips selected".to_string());
     }
+
+    // Each unique clip is normalized (scaled/cropped/fps-matched, encoded)
+    // at most once ever, cached under `normalized_clips_dir(flavor)`, and
+    // reused by every other reel (any target length) that also picks it --
+    // across a `REELS_PER_LENGTH`-sized pool drawn from the same clip set,
+    // the same clip gets picked many times, and previously each pick paid
+    // the full decode+scale+encode cost from the raw source again.
+    let normalized: Vec<PathBuf> = clips
+        .iter()
+        .map(|clip| ensure_normalized_clip(flavor, clip))
+        .collect::<Result<_, _>>()?;
 
     let stem = output
         .file_stem()
@@ -1353,27 +1359,8 @@ fn build_one_reel(clips: &[PathBuf], target_secs: f64, output: &Path) -> Result<
     std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
 
     let result: Result<(), String> = (|| {
-        let num_batches = clips.len().div_ceil(MAX_CONCAT_INPUTS);
-        let mut batch_outputs = Vec::new();
-        for (i, batch) in clips.chunks(MAX_CONCAT_INPUTS).enumerate() {
-            debug!(
-                "[reels] {stem}: batch {}/{num_batches} ({} clip(s))",
-                i + 1,
-                batch.len()
-            );
-            let batch_out = work_dir.join(format!("batch_{i}.mp4"));
-            concat_and_normalize(batch, None, &batch_out).map_err(|e| {
-                format!("batch {}/{num_batches} failed: {e}", i + 1)
-            })?;
-            batch_outputs.push(batch_out);
-        }
-
-        // Second pass always runs, even for a single batch, so the target
-        // length trim (`-t`) is applied uniformly in one place.
-        debug!("[reels] {stem}: joining {num_batches} batch(es) into final output");
         let tmp_final = work_dir.join("final.mp4");
-        concat_and_normalize(&batch_outputs, Some(target_secs), &tmp_final)
-            .map_err(|e| format!("final join failed: {e}"))?;
+        join_normalized_clips(&normalized, target_secs, &work_dir, &tmp_final)?;
         // Only becomes visible at the real cache path -- where
         // `select_background_video` looks -- once fully written and
         // known-good; a failed/partial build never lands there.
@@ -1385,48 +1372,100 @@ fn build_one_reel(clips: &[PathBuf], target_secs: f64, output: &Path) -> Result<
     result
 }
 
-/// Normalizes each input to the same size/SAR/fps and concatenates them
-/// via the concat *filter* (not the `-f concat` demuxer, which requires
-/// identical stream parameters across segments -- source clips vary
-/// wildly in resolution/bitrate/codec params). `trim_secs`, when given,
-/// caps the joined output's length via `-t`.
-fn concat_and_normalize(
+/// Returns the normalized (scaled/cropped/fps-matched, hardware-encoded)
+/// cached copy of `clip`, building it first if this is the first time any
+/// reel has picked it. Cache key is just the filename -- `cached_video_paths`
+/// sources are unique per-flavor pixabay video IDs, no collision risk.
+fn ensure_normalized_clip(flavor: &str, clip: &Path) -> Result<PathBuf, String> {
+    let file_name = clip
+        .file_name()
+        .ok_or_else(|| format!("clip path has no filename: {}", clip.display()))?;
+    let cached = crate::cache::normalized_clips_dir(flavor).join(file_name);
+    if cached.exists() {
+        return Ok(cached);
+    }
+
+    debug!("[reels] normalizing {} -> {}", clip.display(), cached.display());
+    let tmp = cached.with_extension("part");
+    normalize_one_clip(clip, &tmp).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("normalizing {}: {e}", clip.display())
+    })?;
+    std::fs::rename(&tmp, &cached).map_err(|e| e.to_string())?;
+    Ok(cached)
+}
+
+/// Scales/crops/fps-matches a single raw clip and encodes it -- the one
+/// place actual decode+scale+encode work happens now; everything reel
+/// builds do afterward is a stream-copy join of already-normalized clips.
+fn normalize_one_clip(input: &Path, output: &Path) -> Result<(), String> {
+    let filter = format!(
+        "scale={REEL_WIDTH}:{REEL_HEIGHT}:force_original_aspect_ratio=increase,\
+         crop={REEL_WIDTH}:{REEL_HEIGHT},setsar=1,fps=24"
+    );
+
+    let result = silent_command(ffmpeg_path())
+        .arg("-y")
+        .arg("-i")
+        .arg(input)
+        .args(["-vf", &filter])
+        .args(["-c:v", "h264_videotoolbox", "-b:v", "8M"])
+        .args(["-pix_fmt", "yuv420p"])
+        .arg(output)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !result.status.success() {
+        return Err(format!(
+            "ffmpeg exited {}: {}",
+            result.status,
+            String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// Joins already-normalized clips (identical width/height/fps/codec -- every
+/// one came out of `ensure_normalized_clip`) via the `-f concat` demuxer
+/// with `-c copy`: no decode/encode at all, since a filter-based join would
+/// just redo work `normalize_one_clip` already did. Unlike the old
+/// filter_complex batching this replaced, the concat demuxer processes
+/// inputs one at a time rather than opening them all simultaneously, so
+/// there's no batch-size cap needed here even at 68 clips (the 540s
+/// target's count). `-t trim_secs` truncates at the nearest copied packet,
+/// not an exact cut -- fine for a background loop, not for anything needing
+/// frame-exact trimming.
+fn join_normalized_clips(
     inputs: &[PathBuf],
-    trim_secs: Option<f64>,
+    trim_secs: f64,
+    work_dir: &Path,
     output: &Path,
 ) -> Result<(), String> {
     debug!(
-        "[reels] concatenating {} clip(s) -> {} (trim_secs={trim_secs:?})",
+        "[reels] joining {} normalized clip(s) -> {} (trim_secs={trim_secs})",
         inputs.len(),
         output.display()
     );
 
-    let mut cmd = silent_command(ffmpeg_path());
-    cmd.arg("-y");
-    for input in inputs {
-        cmd.arg("-i").arg(input);
-    }
+    // ffmpeg's concat demuxer list format: each line is `file '<path>'`,
+    // with any literal `'` in the path escaped as `'\''` (close quote,
+    // escaped quote, reopen quote) per its documented escaping.
+    let list_contents: String = inputs
+        .iter()
+        .map(|p| format!("file '{}'\n", p.display().to_string().replace('\'', "'\\''")))
+        .collect();
+    let list_path = work_dir.join("concat_list.txt");
+    std::fs::write(&list_path, list_contents).map_err(|e| e.to_string())?;
 
-    let mut filter = String::new();
-    for i in 0..inputs.len() {
-        filter.push_str(&format!(
-            "[{i}:v]scale={REEL_WIDTH}:{REEL_HEIGHT}:force_original_aspect_ratio=increase,\
-             crop={REEL_WIDTH}:{REEL_HEIGHT},setsar=1,fps=24[c{i}];"
-        ));
-    }
-    for i in 0..inputs.len() {
-        filter.push_str(&format!("[c{i}]"));
-    }
-    filter.push_str(&format!("concat=n={}:v=1:a=0[out]", inputs.len()));
-
-    cmd.args(["-filter_complex", &filter]).args(["-map", "[out]"]);
-    if let Some(t) = trim_secs {
-        cmd.args(["-t", &t.to_string()]);
-    }
-
-    let result = cmd
-        .args(["-c:v", "h264_videotoolbox", "-b:v", "8M"])
-        .args(["-pix_fmt", "yuv420p"])
+    let result = silent_command(ffmpeg_path())
+        .arg("-y")
+        .args(["-f", "concat", "-safe", "0", "-i"])
+        .arg(&list_path)
+        .args(["-c", "copy"])
+        .args(["-t", &trim_secs.to_string()])
         .arg(output)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
