@@ -1,4 +1,5 @@
 mod analyzer;
+mod audiodb;
 mod cache;
 mod chromecast;
 mod config;
@@ -29,6 +30,7 @@ pub use analyzer::{
     refresh_metadata, refresh_metadata_all, remove_from_queue_all, remove_from_queue_one,
     set_song_language, shutdown_server,
 };
+pub use audiodb::{MusicVideoResult, find_music_video_for_hash};
 pub use cache::{
     CacheDir, CachePaths, CacheStats, cache_roots, change_app_data_path, clear_models,
     clear_videos, default_nightingale_dir, nightingale_dir,

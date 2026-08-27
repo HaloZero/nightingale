@@ -1,8 +1,9 @@
 use app_core::{
-    ensure_mp3_stems_ready_payload, load_lyrics_file, save_lyrics_and_realign,
-    search_lrclib_for_hash, shift_key_done_payload, shift_tempo_done_payload, AnalysisQueue,
-    AppConfig, CacheStats, FailureKind, LibraryMenuFilters, LibraryMenuItems, LibrarySource,
-    LoadSongsParams, PixabayVideoDownloaded, ProfileStore, SongsStore,
+    ensure_mp3_stems_ready_payload, find_music_video_for_hash, load_lyrics_file,
+    save_lyrics_and_realign, search_lrclib_for_hash, shift_key_done_payload,
+    shift_tempo_done_payload, AnalysisQueue, AppConfig, CacheStats, FailureKind,
+    LibraryMenuFilters, LibraryMenuItems, LibrarySource, LoadSongsParams, PixabayVideoDownloaded,
+    ProfileStore, SongsStore,
 };
 use axum::{
     extract::{Path as AxumPath, State},
@@ -441,6 +442,10 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         "search_lrclib_lyrics" => {
             let args: FileHashArgs = deserialize(payload)?;
             Ok(serde_json::to_value(search_lrclib_for_hash(&args.file_hash)).map_err(serde_err)?)
+        }
+        "find_music_video" => {
+            let args: FileHashArgs = deserialize(payload)?;
+            Ok(serde_json::to_value(find_music_video_for_hash(&args.file_hash)).map_err(serde_err)?)
         }
         "save_lyrics" => {
             #[derive(Deserialize)]
