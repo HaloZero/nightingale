@@ -1411,6 +1411,11 @@ fn normalize_one_clip(input: &Path, output: &Path) -> Result<(), String> {
         .args(["-vf", &filter])
         .args(["-c:v", "h264_videotoolbox", "-b:v", "8M"])
         .args(["-pix_fmt", "yuv420p"])
+        // Explicit container format: `output` is a `.part` tmp path (see
+        // `ensure_normalized_clip`) until the write's confirmed complete,
+        // and ffmpeg can't infer a muxer from that extension -- without
+        // this it fails outright with "Unable to choose an output format".
+        .args(["-f", "mp4"])
         .arg(output)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
