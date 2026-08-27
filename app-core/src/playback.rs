@@ -1253,6 +1253,7 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
     let mut built = 0usize;
     let mut failed = 0usize;
     let mut skipped = 0usize;
+    let run_start = std::time::Instant::now();
 
     for &target in &REEL_TARGET_LENGTHS_SECS {
         let needed_clips = ((target / ASSUMED_CLIP_SECS).ceil() as usize)
@@ -1270,6 +1271,7 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
                 done_so_far + 1,
                 output.display()
             );
+            let reel_start = std::time::Instant::now();
             let mut last_err = String::new();
             let mut ok = false;
 
@@ -1293,10 +1295,11 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
                 }
             }
 
+            let reel_secs = reel_start.elapsed().as_secs_f64();
             if ok {
                 built += 1;
                 let msg = format!(
-                    "built {} ({}/{MAX_BACKGROUND_REELS})",
+                    "built {} ({}/{MAX_BACKGROUND_REELS}) in {reel_secs:.1}s",
                     output.display(),
                     built + failed + skipped
                 );
@@ -1305,7 +1308,7 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
             } else {
                 failed += 1;
                 let msg = format!(
-                    "failed {} ({}/{MAX_BACKGROUND_REELS}): {last_err}",
+                    "failed {} ({}/{MAX_BACKGROUND_REELS}) after {reel_secs:.1}s: {last_err}",
                     output.display(),
                     built + failed + skipped
                 );
@@ -1315,8 +1318,10 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
         }
     }
 
-    let summary =
-        format!("{flavor} reel build complete: {built} built, {skipped} already present, {failed} failed");
+    let total_secs = run_start.elapsed().as_secs_f64();
+    let summary = format!(
+        "{flavor} reel build complete in {total_secs:.1}s: {built} built, {skipped} already present, {failed} failed"
+    );
     info!("[{flavor} reels] {summary}");
     on_progress(&summary);
 }
@@ -1420,7 +1425,7 @@ fn concat_and_normalize(
     }
 
     let result = cmd
-        .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
+        .args(["-c:v", "h264_videotoolbox", "-b:v", "8M"])
         .args(["-pix_fmt", "yuv420p"])
         .arg(output)
         .stdin(Stdio::null())
