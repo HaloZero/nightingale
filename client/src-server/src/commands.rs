@@ -1,6 +1,6 @@
 use app_core::{
-    ensure_mp3_stems_ready_payload, find_music_video_for_hash, load_lyrics_file,
-    save_lyrics_and_realign, search_lrclib_for_hash, shift_key_done_payload,
+    detect_sync_offset_for_hash, ensure_mp3_stems_ready_payload, find_music_video_for_hash,
+    load_lyrics_file, save_lyrics_and_realign, search_lrclib_for_hash, shift_key_done_payload,
     shift_tempo_done_payload, AnalysisQueue, AppConfig, CacheStats, FailureKind,
     LibraryMenuFilters, LibraryMenuItems, LibrarySource, LoadSongsParams, PixabayVideoDownloaded,
     ProfileStore, SongsStore,
@@ -448,6 +448,19 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             Ok(serde_json::to_value(find_music_video_for_hash(&args.file_hash)).map_err(serde_err)?)
         }
         "download_youtube_video" => download_youtube_video_cmd(events, payload),
+        "detect_video_sync_offset" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                file_hash: String,
+                video_path: String,
+            }
+            let args: Args = deserialize(payload)?;
+            let result =
+                detect_sync_offset_for_hash(&args.file_hash, std::path::Path::new(&args.video_path))
+                    .map_err(ApiError::bad_request)?;
+            Ok(serde_json::to_value(result).map_err(serde_err)?)
+        }
         "save_lyrics" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]

@@ -106,7 +106,7 @@ fn resolve_transcript_path(cache: &CacheDir, file_hash: &str) -> PathBuf {
 
 /// Resolve the on-disk original media for a song, materializing remote sources
 /// on demand. Used for LRC-provided songs played without stem separation.
-fn resolve_original_media(song: &Song, cache: &CacheDir) -> String {
+pub(crate) fn resolve_original_media(song: &Song, cache: &CacheDir) -> String {
     if matches!(song.origin, SongOrigin::LocalFile) {
         return song.path.to_string_lossy().into_owned();
     }
