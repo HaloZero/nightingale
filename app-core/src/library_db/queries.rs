@@ -186,6 +186,16 @@ fn append_structural_filters(
             }
             "no_external_lyrics" => where_parts
                 .push("(s.has_lrc_file = 0 AND s.has_embedded_lyrics = 0)".to_string()),
+            // `has_karaoke_video`/`has_youtube_karaoke_video` live only in the
+            // JSON payload (mirrored from the `karaoke_video_status` side
+            // table, not real `songs` columns -- see
+            // `karaoke_video::record_karaoke_video_status`), same
+            // `json_extract` pattern as `language` below.
+            "has_karaoke_video" => where_parts
+                .push("json_extract(s.payload, '$.has_karaoke_video') = 1".to_string()),
+            "has_youtube_karaoke_video" => where_parts.push(
+                "json_extract(s.payload, '$.has_youtube_karaoke_video') = 1".to_string(),
+            ),
             _ => {}
         }
     }
@@ -600,6 +610,40 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             },
         ];
 
+        // Separate from the mega-query above since it reads a different
+        // table (`karaoke_video_status`, not `songs`) -- folding it in
+        // would mean renumbering all 20 existing `r.get(N)` indices for no
+        // real benefit. Karaoke videos can only exist for analyzed songs
+        // (rendering requires a transcript) and never go through
+        // `analysis_queue`, so `analysed_count == count` and
+        // `queued_count`/`analysing_count` are always 0 below.
+        let (karaoke_video_total, youtube_karaoke_video_total): (i64, i64) = c.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM karaoke_video_status WHERE has_karaoke_video = 1),
+                (SELECT COUNT(*) FROM karaoke_video_status WHERE has_youtube_karaoke_video = 1)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+
+        let karaoke_video = vec![
+            LibraryMenuItem {
+                value: "has_karaoke_video".into(),
+                label: "Has karaoke video".into(),
+                analysed_count: karaoke_video_total as u64,
+                queued_count: 0,
+                analysing_count: 0,
+                count: karaoke_video_total as u64,
+            },
+            LibraryMenuItem {
+                value: "has_youtube_karaoke_video".into(),
+                label: "Has YouTube karaoke video".into(),
+                analysed_count: youtube_karaoke_video_total as u64,
+                queued_count: 0,
+                analysing_count: 0,
+                count: youtube_karaoke_video_total as u64,
+            },
+        ];
+
         let lyrics = vec![
             LibraryMenuItem {
                 value: "has_external_lyrics".into(),
@@ -815,6 +859,7 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             hot,
             no_metadata,
             lyrics,
+            karaoke_video,
             artists,
             albums,
             genres,

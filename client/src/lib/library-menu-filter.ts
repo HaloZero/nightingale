@@ -5,6 +5,7 @@ export type LibraryMenuSection =
   | "hot"
   | "no_metadata"
   | "lyrics"
+  | "karaoke_video"
   | "artists"
   | "albums"
   | "genres"
@@ -41,6 +42,11 @@ const LYRICS_FILTERS: Record<string, LibraryMenuFilters> = {
   no_external_lyrics: { ...EMPTY_LIBRARY_FILTER, query: "no_external_lyrics" },
 };
 
+const KARAOKE_VIDEO_FILTERS: Record<string, LibraryMenuFilters> = {
+  has_karaoke_video: { ...EMPTY_LIBRARY_FILTER, query: "has_karaoke_video" },
+  has_youtube_karaoke_video: { ...EMPTY_LIBRARY_FILTER, query: "has_youtube_karaoke_video" },
+};
+
 export function libraryFilterFromMenuSelection(
   section: LibraryMenuSection,
   item: LibraryMenuItem,
@@ -52,6 +58,8 @@ export function libraryFilterFromMenuSelection(
       return NO_METADATA_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
     case "lyrics":
       return LYRICS_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
+    case "karaoke_video":
+      return KARAOKE_VIDEO_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
     case "artists":
       return { ...EMPTY_LIBRARY_FILTER, artist: item.value };
     case "albums":

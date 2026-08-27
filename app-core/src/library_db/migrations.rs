@@ -65,6 +65,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_parallel_analysis_timings_table(conn)?;
     ensure_youtube_video_lookups_table(conn)?;
     ensure_karaoke_video_status_table(conn)?;
+    ensure_karaoke_video_runs_table(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -365,6 +366,38 @@ fn ensure_karaoke_video_status_table(conn: &Connection) -> rusqlite::Result<()> 
             has_karaoke_video INTEGER NOT NULL DEFAULT 0,
             has_youtube_karaoke_video INTEGER NOT NULL DEFAULT 0
         );
+    ",
+    )
+}
+
+/// History log for the two karaoke-video pipelines (reel background,
+/// YouTube background): one row per `karaoke_video::ensure_karaoke_video` /
+/// `ensure_youtube_karaoke_video` invocation, recording which stage it
+/// reached and how long each took -- same spirit as `analysis_timings`,
+/// but (unlike that table) a row is written for *every* outcome, including
+/// a freshness no-op or a failure, not just a completed render. Distinct
+/// from `karaoke_video_status`: that table is "does this song have one
+/// right now" (upserted, one row per song); this one is "everything that's
+/// ever happened" (append-only, many rows per song over time).
+fn ensure_karaoke_video_runs_table(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS karaoke_video_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_hash TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            lookup_ms INTEGER,
+            download_ms INTEGER,
+            render_ms INTEGER,
+            total_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_karaoke_video_runs_file_hash
+            ON karaoke_video_runs(file_hash);
+        CREATE INDEX IF NOT EXISTS idx_karaoke_video_runs_started_at
+            ON karaoke_video_runs(started_at);
     ",
     )
 }

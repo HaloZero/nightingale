@@ -5,6 +5,7 @@ const INITIAL_SECTIONS_OPEN: Record<LibraryMenuSection, boolean> = {
   hot: true,
   no_metadata: false,
   lyrics: false,
+  karaoke_video: false,
   artists: false,
   albums: false,
   genres: false,

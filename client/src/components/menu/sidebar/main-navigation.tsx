@@ -20,6 +20,7 @@ import {
   MicVocalIcon,
   TagIcon,
   UserIcon,
+  VideoIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useLibraryMenuItems } from "@/queries/use-library-menu-items";
@@ -56,6 +57,7 @@ const NAV_SECTIONS: NavSectionConfig[] = [
   { section: "hot", label: "Quick Filters", icon: Flame },
   { section: "no_metadata", label: "No Metadata", icon: FileQuestionMark },
   { section: "lyrics", label: "Lyrics", icon: MicVocalIcon },
+  { section: "karaoke_video", label: "Karaoke Video", icon: VideoIcon },
   { section: "artists", label: "Artists", icon: UserIcon },
   { section: "albums", label: "Albums", icon: DiscIcon },
   { section: "genres", label: "Genres", icon: TagIcon },

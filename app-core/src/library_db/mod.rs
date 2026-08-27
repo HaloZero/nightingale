@@ -8,6 +8,8 @@
 //!  - [`songs`] — core song row CRUD, scan-aware inserts, rekey/update helpers
 //!  - [`karaoke_video_status`] — per-song cache of whether a karaoke video /
 //!    YouTube-background karaoke video has been rendered
+//!  - [`karaoke_video_runs`] — append-only history log of every karaoke-video
+//!    render/fetch attempt and what state it ended in
 //!  - [`queries`] — search / pagination / library-menu aggregation queries
 //!  - [`rebase`] — one-shot path rewrite when the data root moves
 //!  - [`remote`] — generic helpers for non-local song origins (Jellyfin, Navidrome, …),
@@ -26,6 +28,7 @@ use crate::cache::nightingale_dir;
 mod analysis_queue;
 mod analysis_timings;
 mod connection;
+mod karaoke_video_runs;
 mod karaoke_video_status;
 mod migrations;
 mod parallel_mismatches;
@@ -42,6 +45,7 @@ pub use analysis_queue::{
     analysis_queue_load_rows, analysis_queue_save_rows, analysis_queue_upsert_row,
 };
 pub use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
+pub use karaoke_video_runs::{KaraokeVideoRunRow, insert_karaoke_video_run};
 pub use karaoke_video_status::{
     get_karaoke_video_status, set_has_karaoke_video, set_has_youtube_karaoke_video,
 };

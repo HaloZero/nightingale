@@ -154,6 +154,7 @@ pub struct YoutubeKaraokeVideoReady {
 /// timing) still forces a fresh lookup-through-render, same as the reel
 /// path.
 pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady {
+    let pipeline_started = std::time::Instant::now();
     let cache = CacheDir::new();
     if is_fresh(
         &cache.youtube_karaoke_video_path(file_hash),
@@ -162,6 +163,16 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
         info!(
             "[youtube_karaoke_video] {file_hash}: already have a fresh YouTube-background render, skipping"
         );
+        record_karaoke_video_run(&library_db::KaraokeVideoRunRow {
+            file_hash,
+            kind: "youtube",
+            status: "skipped_fresh",
+            error: None,
+            lookup_ms: None,
+            download_ms: None,
+            render_ms: None,
+            total_ms: pipeline_started.elapsed().as_millis() as u64,
+        });
         return YoutubeKaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: true,
@@ -169,19 +180,30 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
         };
     }
 
-    let pipeline_started = std::time::Instant::now();
     info!("[youtube_karaoke_video] {file_hash}: starting (lookup -> download -> render)");
+    let lookup_started = std::time::Instant::now();
 
     let Some(video) = crate::audiodb::find_music_video_for_hash(file_hash) else {
         info!(
             "[youtube_karaoke_video] {file_hash}: no music video found, stopping (no render attempted)"
         );
+        record_karaoke_video_run(&library_db::KaraokeVideoRunRow {
+            file_hash,
+            kind: "youtube",
+            status: "no_video_found",
+            error: None,
+            lookup_ms: Some(lookup_started.elapsed().as_millis() as u64),
+            download_ms: None,
+            render_ms: None,
+            total_ms: pipeline_started.elapsed().as_millis() as u64,
+        });
         return YoutubeKaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: false,
             error: Some("no official music video found for this song".to_string()),
         };
     };
+    let lookup_ms = lookup_started.elapsed().as_millis() as u64;
     info!(
         "[youtube_karaoke_video] {file_hash}: found music video {} -- downloading",
         video.youtube_url
@@ -191,29 +213,54 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
     if let Err(e) =
         crate::youtube_video::ensure_youtube_video_downloaded(file_hash, &video.youtube_url)
     {
+        let download_ms = download_started.elapsed().as_millis() as u64;
         warn!(
             "[youtube_karaoke_video] {file_hash}: download failed after {:.1}s: {e}",
-            download_started.elapsed().as_secs_f64()
+            download_ms as f64 / 1000.0
         );
+        record_karaoke_video_run(&library_db::KaraokeVideoRunRow {
+            file_hash,
+            kind: "youtube",
+            status: "error",
+            error: Some(&e),
+            lookup_ms: Some(lookup_ms),
+            download_ms: Some(download_ms),
+            render_ms: None,
+            total_ms: pipeline_started.elapsed().as_millis() as u64,
+        });
         return YoutubeKaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: true,
             error: Some(format!("failed to download music video: {e}")),
         };
     }
+    let download_ms = download_started.elapsed().as_millis() as u64;
     info!(
         "[youtube_karaoke_video] {file_hash}: download step done in {:.1}s -- rendering",
-        download_started.elapsed().as_secs_f64()
+        download_ms as f64 / 1000.0
     );
 
     let render_started = std::time::Instant::now();
-    match ensure_youtube_background_karaoke_video(file_hash, true) {
+    let render_result = ensure_youtube_background_karaoke_video(file_hash, true);
+    let render_ms = render_started.elapsed().as_millis() as u64;
+    let total_ms = pipeline_started.elapsed().as_millis() as u64;
+    match render_result {
         Ok(_) => {
             info!(
                 "[youtube_karaoke_video] {file_hash}: render done in {:.1}s, pipeline total {:.1}s",
-                render_started.elapsed().as_secs_f64(),
-                pipeline_started.elapsed().as_secs_f64()
+                render_ms as f64 / 1000.0,
+                total_ms as f64 / 1000.0
             );
+            record_karaoke_video_run(&library_db::KaraokeVideoRunRow {
+                file_hash,
+                kind: "youtube",
+                status: "rendered",
+                error: None,
+                lookup_ms: Some(lookup_ms),
+                download_ms: Some(download_ms),
+                render_ms: Some(render_ms),
+                total_ms,
+            });
             YoutubeKaraokeVideoReady {
                 file_hash: file_hash.to_string(),
                 music_video_found: true,
@@ -223,8 +270,19 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
         Err(e) => {
             warn!(
                 "[youtube_karaoke_video] {file_hash}: render failed after {:.1}s: {e}",
-                render_started.elapsed().as_secs_f64()
+                render_ms as f64 / 1000.0
             );
+            let error_msg = e.to_string();
+            record_karaoke_video_run(&library_db::KaraokeVideoRunRow {
+                file_hash,
+                kind: "youtube",
+                status: "error",
+                error: Some(&error_msg),
+                lookup_ms: Some(lookup_ms),
+                download_ms: Some(download_ms),
+                render_ms: Some(render_ms),
+                total_ms,
+            });
             YoutubeKaraokeVideoReady {
                 file_hash: file_hash.to_string(),
                 music_video_found: true,
@@ -350,6 +408,7 @@ pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// -- that's a separate, independently-cached artifact, see
 /// `ensure_youtube_background_karaoke_video`/`best_karaoke_video_path`.
 pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::PathBuf, NightingaleError> {
+    let started = std::time::Instant::now();
     let video_path = CacheDir::new().karaoke_video_path(file_hash);
     let result = render_karaoke_video_to(file_hash, force, &video_path, |duration_secs| {
         let background = select_background_video(duration_secs).map(|path| BackgroundSource {
@@ -365,10 +424,42 @@ pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::P
         }
         background
     });
-    if result.is_ok() {
-        record_karaoke_video_status(file_hash, KaraokeVideoKind::Reel);
+    let total_ms = started.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(outcome) => {
+            record_karaoke_video_status(file_hash, KaraokeVideoKind::Reel);
+            record_karaoke_video_run(&library_db::KaraokeVideoRunRow {
+                file_hash,
+                kind: "reel",
+                status: if outcome.skipped_fresh {
+                    "skipped_fresh"
+                } else {
+                    "rendered"
+                },
+                error: None,
+                lookup_ms: None,
+                download_ms: None,
+                render_ms: outcome.render_ms,
+                total_ms,
+            });
+        }
+        Err(e) => {
+            let error_msg = e.to_string();
+            record_karaoke_video_run(&library_db::KaraokeVideoRunRow {
+                file_hash,
+                kind: "reel",
+                status: "error",
+                error: Some(&error_msg),
+                lookup_ms: None,
+                download_ms: None,
+                render_ms: None,
+                total_ms,
+            });
+        }
     }
-    result
+
+    result.map(|outcome| outcome.path)
 }
 
 /// Renders (or returns the cached) YouTube-video-background karaoke video
@@ -418,7 +509,7 @@ pub fn ensure_youtube_background_karaoke_video(
     if result.is_ok() {
         record_karaoke_video_status(file_hash, KaraokeVideoKind::Youtube);
     }
-    result
+    result.map(|outcome| outcome.path)
 }
 
 /// Which of the two independently-cached karaoke video flavors just
@@ -476,6 +567,19 @@ fn record_karaoke_video_status(file_hash: &str, kind: KaraokeVideoKind) {
         matches!(kind, KaraokeVideoKind::Youtube) || has_youtube_karaoke_video;
     if let Err(e) = library_db::update_song_fields(file_hash, &song) {
         warn!("[karaoke_video] {file_hash}: failed to mirror karaoke video status onto song: {e}");
+    }
+}
+
+/// Thin wrapper around `library_db::insert_karaoke_video_run` so call sites
+/// don't each have to handle the (unlikely, but possible) insert failure --
+/// a failure to log a run is worth a warning, never worth failing the
+/// actual render/fetch over.
+fn record_karaoke_video_run(row: &library_db::KaraokeVideoRunRow) {
+    if let Err(e) = library_db::insert_karaoke_video_run(row) {
+        warn!(
+            "[karaoke_video] {}: failed to record run: {e}",
+            row.file_hash
+        );
     }
 }
 
@@ -602,6 +706,18 @@ pub fn best_karaoke_video_path(file_hash: &str) -> Result<std::path::PathBuf, Ni
     ensure_karaoke_video(file_hash, false)
 }
 
+/// Outcome of `render_karaoke_video_to`, distinguishing "nothing to do,
+/// already fresh" from "actually rendered" so callers can log the right
+/// `karaoke_video_runs.status` (see `record_karaoke_video_run`) instead of
+/// only ever being able to say "succeeded."
+struct RenderOutcome {
+    path: std::path::PathBuf,
+    skipped_fresh: bool,
+    /// The `render_and_encode` + atomic-publish duration alone, excluding
+    /// song/transcript/stems loading -- `None` when `skipped_fresh`.
+    render_ms: Option<u64>,
+}
+
 /// Shared render core for both `ensure_karaoke_video` and
 /// `ensure_youtube_background_karaoke_video`: freshness check, load
 /// song/transcript/stems, run `select_background` to pick this flavor's
@@ -613,12 +729,16 @@ fn render_karaoke_video_to(
     force: bool,
     video_path: &std::path::Path,
     select_background: impl FnOnce(f64) -> Option<BackgroundSource>,
-) -> Result<std::path::PathBuf, NightingaleError> {
+) -> Result<RenderOutcome, NightingaleError> {
     let cache = CacheDir::new();
     let transcript_path = cache.transcript_path(file_hash);
 
     if !force && is_fresh(video_path, &transcript_path) {
-        return Ok(video_path.to_path_buf());
+        return Ok(RenderOutcome {
+            path: video_path.to_path_buf(),
+            skipped_fresh: true,
+            render_ms: None,
+        });
     }
 
     let song = library_db::load_song_by_hash(file_hash)
@@ -671,6 +791,7 @@ fn render_karaoke_video_to(
         .parent()
         .ok_or_else(|| NightingaleError::Other("invalid karaoke video cache path".to_string()))?
         .join(format!("{file_hash}.{}.tmp.mp4", std::process::id()));
+    let render_started = std::time::Instant::now();
     render_and_encode(
         &font,
         &title_line,
@@ -686,8 +807,13 @@ fn render_karaoke_video_to(
         &tmp_path,
     )?;
     std::fs::rename(&tmp_path, video_path)?;
+    let render_ms = render_started.elapsed().as_millis() as u64;
 
-    Ok(video_path.to_path_buf())
+    Ok(RenderOutcome {
+        path: video_path.to_path_buf(),
+        skipped_fresh: false,
+        render_ms: Some(render_ms),
+    })
 }
 
 fn is_fresh(video_path: &std::path::Path, transcript_path: &std::path::Path) -> bool {
