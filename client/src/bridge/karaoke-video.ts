@@ -1,3 +1,4 @@
+import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 import { invoke, listen, type UnlistenFn } from "./runtime";
 
 // Server-only: rendering shells out to a vendored ffmpeg against the
@@ -49,4 +50,34 @@ export const onYoutubeKaraokeVideoReady = async (
   return await listen<YoutubeKaraokeVideoReady>("youtube-karaoke-video-ready", ({ payload }) =>
     cb(payload),
   );
+};
+
+// ─── Bulk (filtered-library) counterparts ──────────────────────────────────
+// Same eligibility as the per-song actions (already analyzed, not USDX --
+// see iter_file_hashes_filtered_karaoke_renderable), resolved server-side
+// from `filters`. Each runs sequentially on a background thread server-side
+// and resolves immediately with how many songs were queued -- individual
+// completions/failures aren't tracked back to the frontend per song, only
+// the per-song "*-ready" events fire for whichever song's sidebar happens
+// to be open when its turn comes up.
+
+/** No-ops per-song for anything already fresh, same as the single-song action. */
+export const renderKaraokeVideoAll = async (filters: LibraryMenuFilters): Promise<number> => {
+  return await invoke<number>("render_karaoke_video_all", { filters });
+};
+
+export const forceRerenderKaraokeVideoAll = async (
+  filters: LibraryMenuFilters,
+): Promise<number> => {
+  return await invoke<number>("force_rerender_karaoke_video_all", { filters });
+};
+
+/**
+ * Runs the full lookup -> download -> render chain per eligible song.
+ * TheAudioDB lookups and downloads are both throttled server-side, so a
+ * large filtered set with a cold cache is slow by design (staying under
+ * TheAudioDB's free tier / being polite to YouTube), not stuck.
+ */
+export const fetchYoutubeKaraokeVideoAll = async (filters: LibraryMenuFilters): Promise<number> => {
+  return await invoke<number>("fetch_youtube_karaoke_video_all", { filters });
 };

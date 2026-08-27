@@ -527,6 +527,34 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         "render_karaoke_video" => render_karaoke_video_cmd(events, payload),
         "force_rerender_karaoke_video" => force_rerender_karaoke_video_cmd(events, payload),
         "fetch_youtube_karaoke_video" => fetch_youtube_karaoke_video_cmd(events, payload),
+        "render_karaoke_video_all" => {
+            #[derive(Deserialize)]
+            struct Args {
+                filters: LibraryMenuFilters,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::render_karaoke_video_all(&args.filters)))
+        }
+        "force_rerender_karaoke_video_all" => {
+            #[derive(Deserialize)]
+            struct Args {
+                filters: LibraryMenuFilters,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::force_rerender_karaoke_video_all(
+                &args.filters,
+            )))
+        }
+        "fetch_youtube_karaoke_video_all" => {
+            #[derive(Deserialize)]
+            struct Args {
+                filters: LibraryMenuFilters,
+            }
+            let args: Args = deserialize(payload)?;
+            Ok(Value::from(app_core::fetch_youtube_karaoke_video_all(
+                &args.filters,
+            )))
+        }
 
         // ── Vendor ───────────────────────────────────────────────────────
         "is_ready" => Ok(Value::Bool(app_core::is_ready())),

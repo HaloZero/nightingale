@@ -29,6 +29,7 @@ use tracing::{info, warn};
 use crate::cache::CacheDir;
 use crate::error::NightingaleError;
 use crate::library_db;
+use crate::library_model::LibraryMenuFilters;
 use crate::vendor::{ensure_font_downloaded, ffmpeg_path, silent_command};
 
 const WIDTH: u32 = 1920;
@@ -208,6 +209,61 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
             }
         }
     }
+}
+
+/// Shared bulk-dispatch shape for the three karaoke video actions below:
+/// resolve `filters` to eligible hashes (`iter_file_hashes_filtered_
+/// karaoke_renderable`), hand the count back immediately, and run `action`
+/// over each hash sequentially on a background thread. Backgrounded (like
+/// `analyzer::refresh_metadata_all`, unlike `reanalyze_all_full`) because
+/// each call here does real ffmpeg work directly and blocking -- there's no
+/// existing worker queue for karaoke video the way there is for analysis.
+/// Sequential, not one-thread-per-song: N parallel ffmpeg encodes (or, for
+/// the YouTube variant, N concurrent yt-dlp downloads racing past
+/// `youtube_video`'s own throttle) would defeat the point of the
+/// throttling/single-flight care already taken per-song.
+fn bulk_karaoke_video(filters: &LibraryMenuFilters, action: fn(&str)) -> usize {
+    let hashes =
+        library_db::iter_file_hashes_filtered_karaoke_renderable(filters).unwrap_or_default();
+    let count = hashes.len();
+    info!("[karaoke_video] bulk action starting for {count} eligible song(s)");
+    std::thread::spawn(move || {
+        for hash in &hashes {
+            action(hash);
+        }
+        info!("[karaoke_video] bulk action finished ({count} song(s))");
+    });
+    count
+}
+
+/// Bulk "Render karaoke video" -- no-ops per-song for anything already
+/// fresh relative to its transcript, same as the per-song action.
+pub fn render_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
+    bulk_karaoke_video(filters, |hash| {
+        let _ = ensure_karaoke_video(hash, false);
+    })
+}
+
+/// Bulk "Force re-render karaoke video" -- regenerates every eligible song
+/// unconditionally, same as the per-song action.
+pub fn force_rerender_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
+    bulk_karaoke_video(filters, |hash| {
+        let _ = ensure_karaoke_video(hash, true);
+    })
+}
+
+/// Bulk "Fetch YouTube karaoke video" -- runs `ensure_youtube_karaoke_video`
+/// (lookup -> download -> render) per eligible song. TheAudioDB lookups are
+/// already throttled at the source (`audiodb::MIN_LOOKUP_INTERVAL`) and
+/// downloads at the source (`youtube_video::MIN_DOWNLOAD_INTERVAL`), and
+/// this only ever calls one song at a time on one thread, so a large
+/// filtered set with a cold lookup/download cache is slow here by design,
+/// not accidentally -- that's the tradeoff for staying under TheAudioDB's
+/// free tier and being polite to YouTube.
+pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
+    bulk_karaoke_video(filters, |hash| {
+        let _ = ensure_youtube_karaoke_video(hash);
+    })
 }
 
 /// Renders (or returns the cached) karaoke video for `file_hash`. Blocking

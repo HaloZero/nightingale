@@ -44,10 +44,10 @@ pub use parallel_mismatches::{clear_parallel_analysis_mismatch, record_parallel_
 pub use parallel_timings::{ParallelAnalysisTimingRow, insert_parallel_analysis_timing};
 pub use playlists::{PlaylistDefinition, PlaylistSongKeyKind, replace_all_playlists};
 pub use queries::{
-    iter_file_hashes_filtered_full_reanalyzable, iter_file_hashes_filtered_not_analyzed,
-    iter_file_hashes_filtered_queued, iter_file_hashes_filtered_realignable,
-    iter_file_hashes_filtered_refreshable, load_all_local_songs, load_meta_sql, load_songs_page,
-    query_library_menu_items,
+    iter_file_hashes_filtered_full_reanalyzable, iter_file_hashes_filtered_karaoke_renderable,
+    iter_file_hashes_filtered_not_analyzed, iter_file_hashes_filtered_queued,
+    iter_file_hashes_filtered_realignable, iter_file_hashes_filtered_refreshable,
+    load_all_local_songs, load_meta_sql, load_songs_page, query_library_menu_items,
 };
 pub use rebase::{rebase_song_album_art_cache_paths, rebase_song_album_art_paths};
 pub use songs::{
@@ -55,9 +55,7 @@ pub use songs::{
     load_song_by_path, load_song_path_strings, load_songs_by_hashes, read_library_meta,
     rekey_song, replace_all_songs_sorted, update_library_meta, update_song_fields,
 };
-pub use youtube_video_lookups::{
-    YoutubeVideoLookupRow, get_youtube_video_lookup, record_youtube_video_lookup,
-};
+pub use youtube_video_lookups::{get_youtube_video_lookup, record_youtube_video_lookup};
 
 /// Incremented at the start of each `start_scan` so in-flight scan threads stop writing
 /// after the library is cleared or replaced (folder change / new scan).

@@ -4,8 +4,12 @@
 //! premium-only (see https://www.theaudiodb.com/free_music_api's "Premium
 //! also allows you to use the more modern V2 API"), so there's no per-user
 //! API key to configure here. Free tier is capped at 30 requests/min per
-//! TheAudioDB's docs -- fine for an on-demand, one-song-at-a-time lookup,
-//! not for bulk-scanning a whole library at once.
+//! TheAudioDB's docs -- `find_music_video`'s own throttle (see
+//! `MIN_LOOKUP_INTERVAL`) keeps every caller under that, including a bulk
+//! action over a whole filtered library, just slowly for a cold cache.
+
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -15,6 +19,33 @@ use crate::library_db;
 use crate::song::Song;
 
 const AUDIODB_API_KEY: &str = "123";
+
+/// TheAudioDB's free tier is 30 requests/minute (2s/request average); 2.5s
+/// leaves margin. A single on-demand lookup never notices this, but a bulk
+/// action (e.g. "Fetch YouTube karaoke video" over a whole filtered library)
+/// would otherwise fire a lookup per song back-to-back and blow through the
+/// limit on the first couple hundred songs of a cold cache. Lives here
+/// (not just in the bulk path) so every caller is protected uniformly, cache
+/// hits included -- `find_music_video_for_hash`'s cache check happens
+/// before this, so a cached result never waits.
+const MIN_LOOKUP_INTERVAL: Duration = Duration::from_millis(2_500);
+static LAST_LOOKUP_START: Mutex<Option<Instant>> = Mutex::new(None);
+
+fn throttle() {
+    let mut last = LAST_LOOKUP_START.lock().unwrap();
+    if let Some(prev) = *last {
+        let elapsed = prev.elapsed();
+        if elapsed < MIN_LOOKUP_INTERVAL {
+            let wait = MIN_LOOKUP_INTERVAL - elapsed;
+            info!(
+                "[audiodb] throttling: waiting {:.1}s before next lookup (free tier is 30/min)",
+                wait.as_secs_f64()
+            );
+            std::thread::sleep(wait);
+        }
+    }
+    *last = Some(Instant::now());
+}
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
@@ -50,6 +81,8 @@ pub fn find_music_video(song: &Song) -> Option<MusicVideoResult> {
     if song.title.is_empty() || song.artist.is_empty() || song.artist == "Unknown Artist" {
         return None;
     }
+
+    throttle();
 
     info!(
         "[audiodb] searching: \"{}\" by \"{}\"",

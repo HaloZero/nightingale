@@ -431,6 +431,22 @@ pub fn iter_file_hashes_filtered_full_reanalyzable(
     )
 }
 
+/// Songs eligible for bulk karaoke video actions (render/force-rerender/
+/// fetch YouTube video): already analyzed, not USDX -- same condition as
+/// `iter_file_hashes_filtered_full_reanalyzable` today (karaoke video
+/// generation only needs a transcript, which USDX songs don't produce
+/// through this pipeline), kept as its own query rather than reused so the
+/// two eligibility sets can diverge independently later without one
+/// action's tweak silently changing the other's.
+pub fn iter_file_hashes_filtered_karaoke_renderable(
+    filters: &LibraryMenuFilters,
+) -> rusqlite::Result<Vec<String>> {
+    iter_file_hashes_filtered(
+        filters,
+        &["s.is_analyzed = 1", "s.transcript_source != 'usdx'"],
+    )
+}
+
 /// Songs eligible for "Refresh metadata" (re-read title/artist/album/
 /// duration/album art/lyrics-source-flags straight from the file, see
 /// `Song::refresh_metadata`): local files only -- remote-source songs have

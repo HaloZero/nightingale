@@ -18,6 +18,11 @@ import {
   removeFromQueue,
   removeFromQueueAll,
 } from "@/bridge/analysis";
+import {
+  fetchYoutubeKaraokeVideoAll,
+  forceRerenderKaraokeVideoAll,
+  renderKaraokeVideoAll,
+} from "@/bridge/karaoke-video";
 import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
 import type { Song } from "@/types/Song";
 import type { SongsStore } from "@/types/SongsStore";
@@ -189,6 +194,21 @@ export const useAnalysis = () => {
       realignAll: wrapBulk(
         "realigning",
         (language?: string) => realignAll(currentFilters(), language),
+        invalidateSongs,
+      ),
+      renderKaraokeVideoAll: wrapBulk(
+        "karaoke video rendering",
+        () => renderKaraokeVideoAll(currentFilters()),
+        invalidateSongs,
+      ),
+      forceRerenderKaraokeVideoAll: wrapBulk(
+        "karaoke video re-rendering",
+        () => forceRerenderKaraokeVideoAll(currentFilters()),
+        invalidateSongs,
+      ),
+      fetchYoutubeKaraokeVideoAll: wrapBulk(
+        "YouTube karaoke video fetching",
+        () => fetchYoutubeKaraokeVideoAll(currentFilters()),
         invalidateSongs,
       ),
     };
