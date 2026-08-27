@@ -653,6 +653,35 @@ pub fn enqueue_one(file_hash: &str) {
     crate::parallel_analysis::ensure_dispatcher_running();
 }
 
+/// Batch counterpart to `enqueue_one` for a caller that already has a whole
+/// list of hashes to queue up front (e.g. restoring in-flight rows at
+/// startup) -- same per-hash checks as `enqueue_one`, but takes the
+/// `ANALYZER` lock once and calls `ensure_worker_running`/
+/// `ensure_dispatcher_running` once for the whole batch instead of once per
+/// hash. Calling `enqueue_one` in a loop for N hashes did N redundant
+/// `AppConfig::load()`s (a disk read + double JSON parse, see
+/// `AppConfig::load`) and mutex round-trips just to start the same one
+/// dispatcher/worker.
+pub(crate) fn enqueue_many(file_hashes: &[String]) {
+    let to_queue: Vec<&String> = file_hashes.iter().filter(|h| !is_usdx_song(h)).collect();
+    if to_queue.is_empty() {
+        return;
+    }
+    let mut state = ANALYZER.lock().unwrap();
+    for file_hash in to_queue {
+        if state.active_hash.as_deref() == Some(file_hash.as_str()) {
+            continue;
+        }
+        if !state.queue.iter().any(|h| h == file_hash) {
+            state.queue.push_back(file_hash.clone());
+            update_queue_status(file_hash, QueuedStatus::Queued);
+        }
+    }
+    ensure_worker_running(&mut state);
+    drop(state);
+    crate::parallel_analysis::ensure_dispatcher_running();
+}
+
 pub fn enqueue_all(filters: &LibraryMenuFilters) {
     let queue = AnalysisQueue::load();
     let mut state = ANALYZER.lock().unwrap();

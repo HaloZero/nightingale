@@ -108,9 +108,7 @@ pub fn startup() -> Result<(), String> {
 
     AnalysisQueue::clear();
 
-    for file_hash in &restore_hashes {
-        analyzer::enqueue_one(file_hash);
-    }
+    analyzer::enqueue_many(&restore_hashes);
 
     let cache = CacheDir::new();
 
