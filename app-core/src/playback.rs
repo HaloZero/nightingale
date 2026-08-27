@@ -1024,9 +1024,14 @@ fn fetch_listing_page(
         .iter()
         .filter_map(|hit| {
             let video_id = hit["id"].as_u64().unwrap_or(0);
-            let video_url = hit["videos"]["large"]["url"]
+            // Pixabay's "large" rendition is usually true 4K (3840x2160);
+            // "medium" is usually 1920x1080 (older clips: 1280x720) --
+            // plenty for our REEL_WIDTH/HEIGHT=1920x1080 target, so prefer
+            // it to avoid downloading and decoding 4K source we'd just
+            // immediately downscale anyway.
+            let video_url = hit["videos"]["medium"]["url"]
                 .as_str()
-                .or_else(|| hit["videos"]["medium"]["url"].as_str())?;
+                .or_else(|| hit["videos"]["large"]["url"].as_str())?;
             Some(PendingDownload {
                 url: video_url.to_string(),
                 dest: dir.join(format!("{video_id}.mp4")),
