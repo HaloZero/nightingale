@@ -1362,20 +1362,17 @@ fn build_one_reel(clips: &[PathBuf], target_secs: f64, output: &Path) -> Result<
                 batch.len()
             );
             let batch_out = work_dir.join(format!("batch_{i}.mp4"));
-            concat_and_normalize(batch, &batch_out).map_err(|e| {
+            concat_and_normalize(batch, None, &batch_out).map_err(|e| {
                 format!("batch {}/{num_batches} failed: {e}", i + 1)
             })?;
             batch_outputs.push(batch_out);
         }
 
         // Second pass always runs, even for a single batch, so the target
-        // length trim (`-t`) is applied uniformly in one place. Batch outputs
-        // are already normalized to identical width/height/fps/codec (every
-        // one went through `concat_and_normalize` above), so this join is a
-        // stream copy -- see `join_batches`.
+        // length trim (`-t`) is applied uniformly in one place.
         debug!("[reels] {stem}: joining {num_batches} batch(es) into final output");
         let tmp_final = work_dir.join("final.mp4");
-        join_batches(&batch_outputs, target_secs, &work_dir, &tmp_final)
+        concat_and_normalize(&batch_outputs, Some(target_secs), &tmp_final)
             .map_err(|e| format!("final join failed: {e}"))?;
         // Only becomes visible at the real cache path -- where
         // `select_background_video` looks -- once fully written and
@@ -1391,10 +1388,15 @@ fn build_one_reel(clips: &[PathBuf], target_secs: f64, output: &Path) -> Result<
 /// Normalizes each input to the same size/SAR/fps and concatenates them
 /// via the concat *filter* (not the `-f concat` demuxer, which requires
 /// identical stream parameters across segments -- source clips vary
-/// wildly in resolution/bitrate/codec params).
-fn concat_and_normalize(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
+/// wildly in resolution/bitrate/codec params). `trim_secs`, when given,
+/// caps the joined output's length via `-t`.
+fn concat_and_normalize(
+    inputs: &[PathBuf],
+    trim_secs: Option<f64>,
+    output: &Path,
+) -> Result<(), String> {
     debug!(
-        "[reels] concatenating {} clip(s) -> {}",
+        "[reels] concatenating {} clip(s) -> {} (trim_secs={trim_secs:?})",
         inputs.len(),
         output.display()
     );
@@ -1418,67 +1420,13 @@ fn concat_and_normalize(inputs: &[PathBuf], output: &Path) -> Result<(), String>
     filter.push_str(&format!("concat=n={}:v=1:a=0[out]", inputs.len()));
 
     cmd.args(["-filter_complex", &filter]).args(["-map", "[out]"]);
+    if let Some(t) = trim_secs {
+        cmd.args(["-t", &t.to_string()]);
+    }
 
     let result = cmd
         .args(["-c:v", "h264_videotoolbox", "-b:v", "8M"])
         .args(["-pix_fmt", "yuv420p"])
-        .arg(output)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !result.status.success() {
-        return Err(format!(
-            "ffmpeg exited {}: {}",
-            result.status,
-            String::from_utf8_lossy(&result.stderr)
-        ));
-    }
-    Ok(())
-}
-
-/// Joins already-normalized batch outputs (identical width/height/fps/codec
-/// -- every one just went through `concat_and_normalize` above) into the
-/// final reel via the `-f concat` demuxer with `-c copy`, instead of
-/// `concat_and_normalize`'s filter-based join. That filter join would
-/// decode, re-run scale/crop/fps, and re-encode video that's already at the
-/// target format -- pure redundant work when the inputs already match.
-/// Every reel goes through this join stage (source clips run 30-68 per reel
-/// against `MAX_CONCAT_INPUTS`'s 15-clip batch cap), so this was previously
-/// a second full decode+encode pass on every single build, not just an edge
-/// case. `-t trim_secs` truncates at the nearest copied packet, not an exact
-/// cut -- fine for a background loop, not for anything needing frame-exact
-/// trimming.
-fn join_batches(
-    inputs: &[PathBuf],
-    trim_secs: f64,
-    work_dir: &Path,
-    output: &Path,
-) -> Result<(), String> {
-    debug!(
-        "[reels] joining {} batch(es) -> {} (trim_secs={trim_secs})",
-        inputs.len(),
-        output.display()
-    );
-
-    // ffmpeg's concat demuxer list format: each line is `file '<path>'`,
-    // with any literal `'` in the path escaped as `'\''` (close quote,
-    // escaped quote, reopen quote) per its documented escaping.
-    let list_contents: String = inputs
-        .iter()
-        .map(|p| format!("file '{}'\n", p.display().to_string().replace('\'', "'\\''")))
-        .collect();
-    let list_path = work_dir.join("concat_list.txt");
-    std::fs::write(&list_path, list_contents).map_err(|e| e.to_string())?;
-
-    let result = silent_command(ffmpeg_path())
-        .arg("-y")
-        .args(["-f", "concat", "-safe", "0", "-i"])
-        .arg(&list_path)
-        .args(["-c", "copy"])
-        .args(["-t", &trim_secs.to_string()])
         .arg(output)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
