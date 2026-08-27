@@ -137,6 +137,19 @@ pub struct Song {
     /// attempted) and remote-source songs.
     #[serde(default)]
     pub has_embedded_lyrics: bool,
+    /// True when a reel-background karaoke video has been rendered and
+    /// cached for this song. Unlike `has_lrc_file`/`has_embedded_lyrics`,
+    /// not computed at scan time -- sourced from the `karaoke_video_status`
+    /// side table and mirrored onto this field whenever
+    /// `karaoke_video::ensure_karaoke_video` succeeds, so the song list can
+    /// show it per row without an extra query. See
+    /// `library_db::get_karaoke_video_status`.
+    #[serde(default)]
+    pub has_karaoke_video: bool,
+    /// Same as `has_karaoke_video`, for the YouTube-background render --
+    /// see `karaoke_video::ensure_youtube_background_karaoke_video`.
+    #[serde(default)]
+    pub has_youtube_karaoke_video: bool,
 }
 
 impl Song {
@@ -283,6 +296,8 @@ impl Song {
             no_stems: false,
             has_lrc_file,
             has_embedded_lyrics,
+            has_karaoke_video: false,
+            has_youtube_karaoke_video: false,
         }
     }
 

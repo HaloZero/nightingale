@@ -351,7 +351,7 @@ pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// `ensure_youtube_background_karaoke_video`/`best_karaoke_video_path`.
 pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::PathBuf, NightingaleError> {
     let video_path = CacheDir::new().karaoke_video_path(file_hash);
-    render_karaoke_video_to(file_hash, force, &video_path, |duration_secs| {
+    let result = render_karaoke_video_to(file_hash, force, &video_path, |duration_secs| {
         let background = select_background_video(duration_secs).map(|path| BackgroundSource {
             path,
             start_offset_secs: 0.0,
@@ -364,7 +364,11 @@ pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::P
             );
         }
         background
-    })
+    });
+    if result.is_ok() {
+        record_karaoke_video_status(file_hash, KaraokeVideoKind::Reel);
+    }
+    result
 }
 
 /// Renders (or returns the cached) YouTube-video-background karaoke video
@@ -408,9 +412,172 @@ pub fn ensure_youtube_background_karaoke_video(
     };
 
     let video_path = cache.youtube_karaoke_video_path(file_hash);
-    render_karaoke_video_to(file_hash, force, &video_path, move |_duration_secs| {
+    let result = render_karaoke_video_to(file_hash, force, &video_path, move |_duration_secs| {
         Some(background)
-    })
+    });
+    if result.is_ok() {
+        record_karaoke_video_status(file_hash, KaraokeVideoKind::Youtube);
+    }
+    result
+}
+
+/// Which of the two independently-cached karaoke video flavors just
+/// succeeded -- see `library_db::karaoke_video_status`'s doc comment for
+/// why they're tracked in their own side table rather than as `songs`
+/// columns.
+#[derive(Clone, Copy)]
+enum KaraokeVideoKind {
+    Reel,
+    Youtube,
+}
+
+/// Upserts the `karaoke_video_status` side table for whichever flavor just
+/// rendered successfully, then mirrors the table's current combined state
+/// onto `Song.has_karaoke_video`/`has_youtube_karaoke_video` so the song
+/// list can show it per row without an extra query. Only ever called after
+/// a successful render -- a failed render never invalidates a
+/// pre-existing successful one (see `render_karaoke_video_to`'s
+/// tmp-file-then-rename), so there's no corresponding "mark false" path.
+///
+/// Skips the write entirely if this flavor is already recorded: both
+/// `ensure_karaoke_video`/`ensure_youtube_background_karaoke_video` call
+/// this on every `Ok` return, including the freshness-check fast path that
+/// does no actual rendering (e.g. every cast via `best_karaoke_video_path`)
+/// -- without this check that path would do a full side-table write plus
+/// song-payload read/write on every call, defeating the point of it being
+/// a fast path. Still self-heals for libraries that had karaoke videos on
+/// disk from before this table existed: the first `Ok` after upgrade finds
+/// `already_recorded: false` and backfills it once.
+fn record_karaoke_video_status(file_hash: &str, kind: KaraokeVideoKind) {
+    let (has_karaoke_video, has_youtube_karaoke_video) =
+        library_db::get_karaoke_video_status(file_hash).unwrap_or_default();
+    let already_recorded = match kind {
+        KaraokeVideoKind::Reel => has_karaoke_video,
+        KaraokeVideoKind::Youtube => has_youtube_karaoke_video,
+    };
+    if already_recorded {
+        return;
+    }
+
+    let write_result = match kind {
+        KaraokeVideoKind::Reel => library_db::set_has_karaoke_video(file_hash, true),
+        KaraokeVideoKind::Youtube => library_db::set_has_youtube_karaoke_video(file_hash, true),
+    };
+    if let Err(e) = write_result {
+        warn!("[karaoke_video] {file_hash}: failed to record karaoke video status: {e}");
+        return;
+    }
+
+    let Ok(Some(mut song)) = library_db::load_song_by_hash(file_hash) else {
+        return;
+    };
+    song.has_karaoke_video = matches!(kind, KaraokeVideoKind::Reel) || has_karaoke_video;
+    song.has_youtube_karaoke_video =
+        matches!(kind, KaraokeVideoKind::Youtube) || has_youtube_karaoke_video;
+    if let Err(e) = library_db::update_song_fields(file_hash, &song) {
+        warn!("[karaoke_video] {file_hash}: failed to mirror karaoke video status onto song: {e}");
+    }
+}
+
+/// Report from `backfill_karaoke_video_status_from_cache`.
+#[derive(Debug, Default)]
+pub struct KaraokeVideoBackfillReport {
+    pub reel_files_found: usize,
+    pub youtube_files_found: usize,
+    pub reel_backfilled: usize,
+    pub youtube_backfilled: usize,
+    /// Cached video file whose hash has no matching row in `songs` (song
+    /// deleted/rescanned away since the video was rendered) -- left alone,
+    /// just counted.
+    pub orphaned: usize,
+}
+
+/// One-off maintenance action for libraries that had karaoke videos
+/// rendered before the `karaoke_video_status` table existed: lists
+/// `karaoke_videos/` directly (cheaper than iterating every song and
+/// stat-ing two paths each -- see `CacheDir::karaoke_video_path`/
+/// `youtube_karaoke_video_path` for the `{hash}.mp4` / `{hash}_youtube.mp4`
+/// naming this relies on) and backfills the status table for every file
+/// found, same as `record_karaoke_video_status` does lazily on the next
+/// successful render/cast. Idempotent -- already-recorded songs are
+/// skipped -- so it's safe to run more than once (e.g. after every
+/// deploy) rather than tracking whether it's "already been run".
+pub fn backfill_karaoke_video_status_from_cache() -> KaraokeVideoBackfillReport {
+    let started = std::time::Instant::now();
+    let dir = CacheDir::new().path.join("karaoke_videos");
+    info!("[karaoke_video] backfill: scanning {}", dir.display());
+
+    let mut report = KaraokeVideoBackfillReport::default();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            warn!(
+                "[karaoke_video] backfill: failed to read {}: {e}",
+                dir.display()
+            );
+            return report;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(stem) = name.strip_suffix(".mp4") else {
+            continue;
+        };
+        let (file_hash, kind, label) = if let Some(hash) = stem.strip_suffix("_youtube") {
+            (hash, KaraokeVideoKind::Youtube, "YouTube")
+        } else {
+            (stem, KaraokeVideoKind::Reel, "reel")
+        };
+
+        match kind {
+            KaraokeVideoKind::Reel => report.reel_files_found += 1,
+            KaraokeVideoKind::Youtube => report.youtube_files_found += 1,
+        }
+
+        let (has_karaoke_video, has_youtube_karaoke_video) =
+            library_db::get_karaoke_video_status(file_hash).unwrap_or_default();
+        let already_recorded = match kind {
+            KaraokeVideoKind::Reel => has_karaoke_video,
+            KaraokeVideoKind::Youtube => has_youtube_karaoke_video,
+        };
+        if already_recorded {
+            continue;
+        }
+
+        match library_db::load_song_by_hash(file_hash) {
+            Ok(Some(_)) => {
+                record_karaoke_video_status(file_hash, kind);
+                match kind {
+                    KaraokeVideoKind::Reel => report.reel_backfilled += 1,
+                    KaraokeVideoKind::Youtube => report.youtube_backfilled += 1,
+                }
+            }
+            Ok(None) => {
+                report.orphaned += 1;
+                info!(
+                    "[karaoke_video] backfill: {file_hash} has a cached {label} video but no \
+                     matching song, skipping"
+                );
+            }
+            Err(e) => warn!("[karaoke_video] backfill: failed to load song {file_hash}: {e}"),
+        }
+    }
+
+    info!(
+        "[karaoke_video] backfill: done in {:.1}s -- reel {}/{} backfilled, YouTube {}/{} \
+         backfilled, {} orphaned cache file(s)",
+        started.elapsed().as_secs_f64(),
+        report.reel_backfilled,
+        report.reel_files_found,
+        report.youtube_backfilled,
+        report.youtube_files_found,
+        report.orphaned,
+    );
+    report
 }
 
 /// Picks whichever karaoke video is best for `file_hash` to actually show

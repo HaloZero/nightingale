@@ -6,6 +6,8 @@
 //!    Jellyfin path rewrite
 //!  - [`analysis_queue`] — CRUD for the analyzer's persistent queue
 //!  - [`songs`] — core song row CRUD, scan-aware inserts, rekey/update helpers
+//!  - [`karaoke_video_status`] — per-song cache of whether a karaoke video /
+//!    YouTube-background karaoke video has been rendered
 //!  - [`queries`] — search / pagination / library-menu aggregation queries
 //!  - [`rebase`] — one-shot path rewrite when the data root moves
 //!  - [`remote`] — generic helpers for non-local song origins (Jellyfin, Navidrome, …),
@@ -24,6 +26,7 @@ use crate::cache::nightingale_dir;
 mod analysis_queue;
 mod analysis_timings;
 mod connection;
+mod karaoke_video_status;
 mod migrations;
 mod parallel_mismatches;
 mod parallel_timings;
@@ -39,6 +42,9 @@ pub use analysis_queue::{
     analysis_queue_load_rows, analysis_queue_save_rows, analysis_queue_upsert_row,
 };
 pub use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
+pub use karaoke_video_status::{
+    get_karaoke_video_status, set_has_karaoke_video, set_has_youtube_karaoke_video,
+};
 pub use migrations::rewrite_legacy_jellyfin_paths;
 pub use parallel_mismatches::{clear_parallel_analysis_mismatch, record_parallel_analysis_mismatch};
 pub use parallel_timings::{ParallelAnalysisTimingRow, insert_parallel_analysis_timing};

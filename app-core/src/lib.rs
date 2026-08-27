@@ -41,7 +41,8 @@ pub use cache::{
 pub use chromecast::cast_song_to_configured_device;
 pub use config::{AppConfig, ChromecastConfig, LibrarySource};
 pub use karaoke_video::{
-    KaraokeVideoReady, YoutubeKaraokeVideoReady, best_karaoke_video_path, ensure_karaoke_video,
+    KaraokeVideoBackfillReport, KaraokeVideoReady, YoutubeKaraokeVideoReady,
+    backfill_karaoke_video_status_from_cache, best_karaoke_video_path, ensure_karaoke_video,
     ensure_karaoke_video_ready_payload, ensure_youtube_background_karaoke_video,
     ensure_youtube_karaoke_video, fetch_youtube_karaoke_video_all, force_rerender_karaoke_video_all,
     render_karaoke_video_all,

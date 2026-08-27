@@ -553,6 +553,8 @@ pub fn build_usdx_song(path: &Path, cache: &CacheDir) -> Result<Song, Nightingal
         // tag -- these track only the latter two sources.
         has_lrc_file: false,
         has_embedded_lyrics: false,
+        has_karaoke_video: false,
+        has_youtube_karaoke_video: false,
     };
 
     Ok(song)

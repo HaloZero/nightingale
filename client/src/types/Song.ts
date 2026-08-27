@@ -41,4 +41,19 @@ export type Song = {
    * for video files (no tag read attempted) and remote-source songs.
    */
   has_embedded_lyrics: boolean;
+  /**
+   * True when a reel-background karaoke video has been rendered and
+   * cached for this song. Unlike `has_lrc_file`/`has_embedded_lyrics`,
+   * not computed at scan time -- sourced from the `karaoke_video_status`
+   * side table and mirrored onto this field whenever
+   * `karaoke_video::ensure_karaoke_video` succeeds, so the song list can
+   * show it per row without an extra query. See
+   * `library_db::get_karaoke_video_status`.
+   */
+  has_karaoke_video: boolean;
+  /**
+   * Same as `has_karaoke_video`, for the YouTube-background render --
+   * see `karaoke_video::ensure_youtube_background_karaoke_video`.
+   */
+  has_youtube_karaoke_video: boolean;
 };

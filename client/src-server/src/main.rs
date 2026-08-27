@@ -35,6 +35,14 @@ struct Args {
     /// be picked in the browser (ideal for Docker / headless installs).
     #[arg(long, env = "NIGHTINGALE_LIBRARY_PATH")]
     library: Option<String>,
+
+    /// One-off maintenance action: scan the karaoke-videos cache directory
+    /// and backfill the `karaoke_video_status` table for any song whose
+    /// karaoke video was rendered before that table existed, then exit
+    /// without starting the HTTP server. Safe to run more than once --
+    /// already-recorded songs are skipped.
+    #[arg(long)]
+    backfill_karaoke_video_status: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -68,6 +76,12 @@ async fn main() {
     if let Err(e) = app_core::startup() {
         tracing::error!("startup failed: {e}");
         std::process::exit(1);
+    }
+
+    if args.backfill_karaoke_video_status {
+        let report = app_core::backfill_karaoke_video_status_from_cache();
+        tracing::info!("{report:?}");
+        return;
     }
 
     if let Some(library) = args

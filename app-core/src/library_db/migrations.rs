@@ -64,6 +64,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_analysis_queue_columns(conn)?;
     ensure_parallel_analysis_timings_table(conn)?;
     ensure_youtube_video_lookups_table(conn)?;
+    ensure_karaoke_video_status_table(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -339,6 +340,30 @@ fn ensure_youtube_video_lookups_table(conn: &Connection) -> rusqlite::Result<()>
             track_name TEXT,
             artist_name TEXT,
             looked_up_at TEXT NOT NULL
+        );
+    ",
+    )
+}
+
+/// Tracks whether a karaoke video (reel background) and/or a
+/// YouTube-background karaoke video has been rendered for a song, one row
+/// per song, upserted whenever `karaoke_video::ensure_karaoke_video` /
+/// `ensure_youtube_background_karaoke_video` succeeds -- see
+/// `karaoke_video_status::set_has_karaoke_video`/
+/// `set_has_youtube_karaoke_video`. Separate from `songs` for the same
+/// reason as `youtube_video_lookups` above: this is a cache of a rendered
+/// artifact's presence on disk, not an intrinsic song property. No row
+/// (or a `0` column) means "not rendered" -- there's no need to
+/// distinguish "never attempted" from "attempted and failed" here the way
+/// `youtube_video_lookups` does, since a failed render never deletes a
+/// pre-existing successful one (see `render_karaoke_video_to`).
+fn ensure_karaoke_video_status_table(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS karaoke_video_status (
+            file_hash TEXT PRIMARY KEY,
+            has_karaoke_video INTEGER NOT NULL DEFAULT 0,
+            has_youtube_karaoke_video INTEGER NOT NULL DEFAULT 0
         );
     ",
     )
