@@ -26,7 +26,7 @@ export RUST_LOG="${RUST_LOG:-info,tower_http=info,server=info}"
 # No NIGHTINGALE_DATA_PATH set on purpose -- it reads the default
 # ~/.nightingale/config.json, which already points at the real data
 # directory via its own internal "data_path" field.
-nohup target/release/server > ~/.nightingale/nightingale.log 2>&1 &
+nohup target/release/server >> ~/.nightingale/nightingale.log 2>&1 &
 disown
 
 echo "Server restarted (PID $!), logging to ~/.nightingale/nightingale.log"
