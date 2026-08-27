@@ -221,25 +221,63 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
 /// the YouTube variant, N concurrent yt-dlp downloads racing past
 /// `youtube_video`'s own throttle) would defeat the point of the
 /// throttling/single-flight care already taken per-song.
-fn bulk_karaoke_video(filters: &LibraryMenuFilters, action: fn(&str)) -> usize {
+///
+/// Logs a `(i/count)` position line before each song and a done/failed line
+/// with that song's elapsed time after, plus a total-elapsed line when the
+/// whole batch finishes -- `action` reports outcome via `Result` instead of
+/// being fire-and-forget so a per-song failure actually surfaces here rather
+/// than vanishing into a discarded `Result`.
+fn bulk_karaoke_video(
+    filters: &LibraryMenuFilters,
+    action: fn(&str) -> Result<(), String>,
+) -> usize {
     let hashes =
         library_db::iter_file_hashes_filtered_karaoke_renderable(filters).unwrap_or_default();
     let count = hashes.len();
     info!("[karaoke_video] bulk action starting for {count} eligible song(s)");
     std::thread::spawn(move || {
-        for hash in &hashes {
-            action(hash);
+        let batch_started = std::time::Instant::now();
+        for (i, hash) in hashes.iter().enumerate() {
+            let position = i + 1;
+            let label = song_label(hash);
+            let song_started = std::time::Instant::now();
+            info!("[karaoke_video] ({position}/{count}) starting {label}");
+            match action(hash) {
+                Ok(()) => info!(
+                    "[karaoke_video] ({position}/{count}) {label} done in {:.1}s",
+                    song_started.elapsed().as_secs_f64()
+                ),
+                Err(e) => warn!(
+                    "[karaoke_video] ({position}/{count}) {label} failed after {:.1}s: {e}",
+                    song_started.elapsed().as_secs_f64()
+                ),
+            }
         }
-        info!("[karaoke_video] bulk action finished ({count} song(s))");
+        info!(
+            "[karaoke_video] bulk action finished ({count} song(s)) in {:.1}s",
+            batch_started.elapsed().as_secs_f64()
+        );
     });
     count
+}
+
+/// `"{title} — {artist} ({file_hash})"` for bulk-progress logging, falling
+/// back to the bare hash if the song can't be loaded (deleted mid-batch,
+/// DB error) -- never worth failing or skipping the log line over.
+fn song_label(file_hash: &str) -> String {
+    match library_db::load_song_by_hash(file_hash) {
+        Ok(Some(song)) => format!("{} — {} ({file_hash})", song.title, song.artist),
+        _ => file_hash.to_string(),
+    }
 }
 
 /// Bulk "Render karaoke video" -- no-ops per-song for anything already
 /// fresh relative to its transcript, same as the per-song action.
 pub fn render_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
     bulk_karaoke_video(filters, |hash| {
-        let _ = ensure_karaoke_video(hash, false);
+        ensure_karaoke_video(hash, false)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -247,7 +285,9 @@ pub fn render_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// unconditionally, same as the per-song action.
 pub fn force_rerender_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
     bulk_karaoke_video(filters, |hash| {
-        let _ = ensure_karaoke_video(hash, true);
+        ensure_karaoke_video(hash, true)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -259,9 +299,19 @@ pub fn force_rerender_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// filtered set with a cold lookup/download cache is slow here by design,
 /// not accidentally -- that's the tradeoff for staying under TheAudioDB's
 /// free tier and being polite to YouTube.
+///
+/// `music_video_found: false` is reported as `Ok` to the bulk dispatcher
+/// (not a failure -- `ensure_youtube_karaoke_video` already logs that case
+/// at info level); only an actual download/sync/render error counts as a
+/// bulk-level failure.
 pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
     bulk_karaoke_video(filters, |hash| {
-        let _ = ensure_youtube_karaoke_video(hash);
+        let result = ensure_youtube_karaoke_video(hash);
+        if result.music_video_found {
+            result.error.map_or(Ok(()), Err)
+        } else {
+            Ok(())
+        }
     })
 }
 
