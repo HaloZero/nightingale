@@ -1247,12 +1247,21 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
     // verified valid). One retry with a new selection before giving up.
     const MAX_ATTEMPTS: u32 = 2;
 
+    let mut built = 0usize;
+    let mut failed = 0usize;
+
     for &target in &REEL_TARGET_LENGTHS_SECS {
         let needed_clips = ((target / ASSUMED_CLIP_SECS).ceil() as usize)
             .max(1)
             .min(clips.len());
         for n in 0..REELS_PER_LENGTH {
             let output = reels_dir.join(format!("reel_{}_{n}.mp4", target as u32));
+            let done_so_far = built + failed;
+            info!(
+                "[{flavor} reels] ({}/{MAX_BACKGROUND_REELS}) building {} from {needed_clips} clip(s)",
+                done_so_far + 1,
+                output.display()
+            );
             let mut last_err = String::new();
             let mut ok = false;
 
@@ -1277,17 +1286,30 @@ pub fn build_background_reels(flavor: &str, on_progress: impl Fn(&str) + Send + 
             }
 
             if ok {
-                let msg = format!("built {}", output.display());
+                built += 1;
+                let msg = format!(
+                    "built {} ({}/{MAX_BACKGROUND_REELS})",
+                    output.display(),
+                    built + failed
+                );
                 info!("[{flavor} reels] {msg}");
                 on_progress(&msg);
             } else {
-                warn!("[{flavor} reels] giving up on {}: {last_err}", output.display());
-                on_progress(&format!("failed {}: {last_err}", output.display()));
+                failed += 1;
+                let msg = format!(
+                    "failed {} ({}/{MAX_BACKGROUND_REELS}): {last_err}",
+                    output.display(),
+                    built + failed
+                );
+                warn!("[{flavor} reels] giving up: {msg}");
+                on_progress(&msg);
             }
         }
     }
 
-    on_progress(&format!("{flavor} reel build complete"));
+    let summary = format!("{flavor} reel build complete: {built} built, {failed} failed");
+    info!("[{flavor} reels] {summary}");
+    on_progress(&summary);
 }
 
 // A single ffmpeg invocation opening this many simultaneous inputs proved
@@ -1317,17 +1339,27 @@ fn build_one_reel(clips: &[PathBuf], target_secs: f64, output: &Path) -> Result<
     std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
 
     let result: Result<(), String> = (|| {
+        let num_batches = clips.len().div_ceil(MAX_CONCAT_INPUTS);
         let mut batch_outputs = Vec::new();
         for (i, batch) in clips.chunks(MAX_CONCAT_INPUTS).enumerate() {
+            debug!(
+                "[reels] {stem}: batch {}/{num_batches} ({} clip(s))",
+                i + 1,
+                batch.len()
+            );
             let batch_out = work_dir.join(format!("batch_{i}.mp4"));
-            concat_and_normalize(batch, None, &batch_out)?;
+            concat_and_normalize(batch, None, &batch_out).map_err(|e| {
+                format!("batch {}/{num_batches} failed: {e}", i + 1)
+            })?;
             batch_outputs.push(batch_out);
         }
 
         // Second pass always runs, even for a single batch, so the target
         // length trim (`-t`) is applied uniformly in one place.
+        debug!("[reels] {stem}: joining {num_batches} batch(es) into final output");
         let tmp_final = work_dir.join("final.mp4");
-        concat_and_normalize(&batch_outputs, Some(target_secs), &tmp_final)?;
+        concat_and_normalize(&batch_outputs, Some(target_secs), &tmp_final)
+            .map_err(|e| format!("final join failed: {e}"))?;
         // Only becomes visible at the real cache path -- where
         // `select_background_video` looks -- once fully written and
         // known-good; a failed/partial build never lands there.
