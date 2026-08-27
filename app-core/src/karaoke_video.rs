@@ -118,6 +118,65 @@ pub fn ensure_karaoke_video_ready_payload(file_hash: String, force: bool) -> Kar
     }
 }
 
+/// Result of `ensure_youtube_karaoke_video` -- same "fire a background
+/// thread, emit this on completion" shape as `KaraokeVideoReady`, with one
+/// extra field: whether TheAudioDB actually had a music video for this song
+/// at all, since "rendered successfully" alone can't tell the caller that
+/// (a successful render still happens on `error: None` even when no video
+/// was found -- it just falls back to the reel background, same as
+/// `render_karaoke_video`).
+#[derive(Debug, Clone, Serialize)]
+pub struct YoutubeKaraokeVideoReady {
+    pub file_hash: String,
+    pub music_video_found: bool,
+    pub error: Option<String>,
+}
+
+/// The explicit "fetch a YouTube video for this song and build a karaoke
+/// video from it" action: `audiodb::find_music_video_for_hash` (cached --
+/// see its doc comment) to find one, `youtube_video::
+/// ensure_youtube_video_downloaded` to fetch it, then a forced
+/// `ensure_karaoke_video` re-render. That render's own background selection
+/// (`select_background`) is what actually decides whether the downloaded
+/// video is usable (confidently synced, non-negative offset) -- this
+/// function doesn't duplicate that check, it just makes sure a video is
+/// downloaded and on disk before asking for a re-render, so `select_background`
+/// has something to find. If no video exists on TheAudioDB at all,
+/// `music_video_found` comes back `false` and no render is attempted (no
+/// point re-rendering with an unchanged reel background).
+pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady {
+    let Some(video) = crate::audiodb::find_music_video_for_hash(file_hash) else {
+        return YoutubeKaraokeVideoReady {
+            file_hash: file_hash.to_string(),
+            music_video_found: false,
+            error: Some("no official music video found for this song".to_string()),
+        };
+    };
+
+    if let Err(e) =
+        crate::youtube_video::ensure_youtube_video_downloaded(file_hash, &video.youtube_url)
+    {
+        return YoutubeKaraokeVideoReady {
+            file_hash: file_hash.to_string(),
+            music_video_found: true,
+            error: Some(format!("failed to download music video: {e}")),
+        };
+    }
+
+    match ensure_karaoke_video(file_hash, true) {
+        Ok(_) => YoutubeKaraokeVideoReady {
+            file_hash: file_hash.to_string(),
+            music_video_found: true,
+            error: None,
+        },
+        Err(e) => YoutubeKaraokeVideoReady {
+            file_hash: file_hash.to_string(),
+            music_video_found: true,
+            error: Some(format!("failed to render karaoke video: {e}")),
+        },
+    }
+}
+
 /// Renders (or returns the cached) karaoke video for `file_hash`. Blocking
 /// -- callers on an async runtime must run it via
 /// `tokio::task::spawn_blocking`, same rule as
@@ -162,9 +221,12 @@ pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::P
     })?;
     let audio_paths = crate::playback::get_audio_paths(file_hash);
 
-    let background_video = select_background_video(song.duration_secs);
-    match &background_video {
-        Some(path) => info!("[karaoke_video] using background: {path}"),
+    let background = select_background(file_hash, song.duration_secs);
+    match &background {
+        Some(bg) => info!(
+            "[karaoke_video] using background: {} (start_offset={:.2}s)",
+            bg.path, bg.start_offset_secs
+        ),
         None => warn!(
             "[karaoke_video] no cached background videos or reels for any of {BACKGROUND_FLAVORS:?} \
              -- falling back to solid color background (run the download_all_pixabay_videos action \
@@ -194,7 +256,7 @@ pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::P
         &transcript.segments,
         total_frames,
         song.duration_secs,
-        background_video.as_deref(),
+        background.as_ref(),
         accent_color,
         &audio_paths.instrumental,
         audio_paths.vocals.as_deref(),
@@ -225,6 +287,67 @@ fn is_fresh(video_path: &std::path::Path, transcript_path: &std::path::Path) -> 
 /// populates its pool; flavors with nothing cached just contribute
 /// nothing here.
 const BACKGROUND_FLAVORS: [&str; 3] = ["nature", "underwater", "space"];
+
+/// A background video for `render_and_encode`, plus how far into it to
+/// start (0.0 for the reel/raw-clip pool, where the whole file is fair
+/// game; non-zero only for a downloaded YouTube video trimmed to where the
+/// song's own audio actually starts -- see `select_background`).
+struct BackgroundSource {
+    path: String,
+    start_offset_secs: f64,
+}
+
+/// Picks the karaoke video's background, in priority order:
+///
+/// 1. An already-downloaded YouTube music video for this song
+///    (`youtube_video::ensure_youtube_video_downloaded`), if one exists on
+///    disk *and* its visual timeline can be confidently matched to the
+///    song's own audio (`video_sync::detect_sync_offset_for_hash`).
+///    Deliberately read-only: this never triggers a fresh download (that's
+///    a slow, explicit, separate action -- see the `download_youtube_video`
+///    command) and never uses a video whose sync couldn't be confidently
+///    determined or that would need padding rather than trimming (a
+///    negative offset -- the song has content the video doesn't), rather
+///    than risk shipping a visibly desynced render.
+/// 2. The existing reel/raw-clip pool (`select_background_video`).
+/// 3. `None` (solid color).
+fn select_background(file_hash: &str, duration_secs: f64) -> Option<BackgroundSource> {
+    let youtube_path = CacheDir::new().youtube_video_path(file_hash);
+    if youtube_path.is_file() {
+        match crate::video_sync::detect_sync_offset_for_hash(file_hash, &youtube_path) {
+            Ok(Some(sync)) if sync.video_offset_secs >= 0.0 => {
+                info!(
+                    "[karaoke_video] using downloaded YouTube video as background for {file_hash} \
+                     (offset={:.2}s, confidence={:.3})",
+                    sync.video_offset_secs, sync.confidence
+                );
+                return Some(BackgroundSource {
+                    path: youtube_path.to_string_lossy().into_owned(),
+                    start_offset_secs: sync.video_offset_secs,
+                });
+            }
+            Ok(Some(sync)) => info!(
+                "[karaoke_video] downloaded YouTube video for {file_hash} matched at a negative \
+                 offset ({:.2}s) -- the song has content before the video does, which trimming \
+                 can't fix -- falling back to the reel background",
+                sync.video_offset_secs
+            ),
+            Ok(None) => info!(
+                "[karaoke_video] downloaded YouTube video for {file_hash} couldn't be confidently \
+                 synced to the song's audio -- falling back to the reel background"
+            ),
+            Err(e) => warn!(
+                "[karaoke_video] sync check failed for {file_hash}'s downloaded YouTube video: {e} \
+                 -- falling back to the reel background"
+            ),
+        }
+    }
+
+    select_background_video(duration_secs).map(|path| BackgroundSource {
+        path,
+        start_offset_secs: 0.0,
+    })
+}
 
 /// Prefers a pre-built reel (`playback::build_background_reels`, filenames
 /// `reel_{target_secs}_{n}.mp4`), pooled across every flavor in
@@ -286,7 +409,7 @@ fn render_and_encode(
     segments: &[TranscriptSegment],
     total_frames: u64,
     duration_secs: f64,
-    background_video: Option<&str>,
+    background: Option<&BackgroundSource>,
     accent_color: [u8; 3],
     instrumental_path: &str,
     vocals_path: Option<&str>,
@@ -300,9 +423,18 @@ fn render_and_encode(
     // path instead of a "plain" vs. "overlay" branch.
     let mut cmd = silent_command(ffmpeg_path());
     cmd.arg("-y");
-    match background_video {
-        Some(bg_path) => {
-            cmd.args(["-stream_loop", "-1", "-i", bg_path]);
+    match background {
+        Some(bg) => {
+            // `-ss` before `-i` is a fast, keyframe-level seek -- fine here
+            // (this is a background loop, not something needing
+            // frame-exact trimming). `-stream_loop -1` only matters as a
+            // safety net if the trimmed remainder is shorter than the
+            // song; `overlay=shortest=1` below already stops at whichever
+            // of background/lyrics is shorter, so this never overruns.
+            if bg.start_offset_secs > 0.0 {
+                cmd.args(["-ss", &bg.start_offset_secs.to_string()]);
+            }
+            cmd.args(["-stream_loop", "-1", "-i", &bg.path]);
         }
         None => {
             let color_src = format!("color=c={BG_COLOR_HEX}:s={size}:d={duration_secs}");

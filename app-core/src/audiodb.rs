@@ -104,7 +104,39 @@ pub fn find_music_video(song: &Song) -> Option<MusicVideoResult> {
     result
 }
 
+/// Same as `find_music_video`, but checks `library_db`'s
+/// `youtube_video_lookups` cache first and only calls TheAudioDB on a
+/// genuine cache miss (no row for this hash yet) -- repeat calls for the
+/// same song (e.g. re-casting, re-rendering) read the cached outcome
+/// instead of spending against the free tier's 30-requests/minute limit.
+/// A cached "looked up, nothing found" result is honored too, not just a
+/// cached hit -- otherwise a song with no video would get re-queried every
+/// single time.
 pub fn find_music_video_for_hash(file_hash: &str) -> Option<MusicVideoResult> {
+    match library_db::get_youtube_video_lookup(file_hash) {
+        Ok(Some(cached)) => {
+            info!("[audiodb] using cached lookup for {file_hash}, not calling the API");
+            return cached.youtube_url.map(|youtube_url| MusicVideoResult {
+                youtube_url,
+                track_name: cached.track_name.unwrap_or_default(),
+                artist_name: cached.artist_name.unwrap_or_default(),
+            });
+        }
+        Ok(None) => {}
+        Err(e) => warn!("[audiodb] failed to read cached lookup for {file_hash}: {e}"),
+    }
+
     let song = library_db::load_song_by_hash(file_hash).ok().flatten()?;
-    find_music_video(&song)
+    let result = find_music_video(&song);
+
+    if let Err(e) = library_db::record_youtube_video_lookup(
+        file_hash,
+        result.as_ref().map(|r| r.youtube_url.as_str()),
+        result.as_ref().map(|r| r.track_name.as_str()),
+        result.as_ref().map(|r| r.artist_name.as_str()),
+    ) {
+        warn!("[audiodb] failed to cache lookup result for {file_hash}: {e}");
+    }
+
+    result
 }

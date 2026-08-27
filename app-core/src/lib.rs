@@ -40,7 +40,10 @@ pub use cache::{
 };
 pub use chromecast::cast_song_to_configured_device;
 pub use config::{AppConfig, ChromecastConfig, LibrarySource};
-pub use karaoke_video::{KaraokeVideoReady, ensure_karaoke_video, ensure_karaoke_video_ready_payload};
+pub use karaoke_video::{
+    KaraokeVideoReady, YoutubeKaraokeVideoReady, ensure_karaoke_video,
+    ensure_karaoke_video_ready_payload, ensure_youtube_karaoke_video,
+};
 pub use library_db::{init_library, library_db_path};
 pub use library_menu::{LibraryMenuItem, LibraryMenuItems, load_library_menu_items};
 pub use library_model::{LibraryMenuFilters, LoadSongsParams, SongsMeta, SongsStore};

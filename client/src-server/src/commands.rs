@@ -526,6 +526,7 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         "build_background_reels" => build_background_reels_cmd(events, payload),
         "render_karaoke_video" => render_karaoke_video_cmd(events, payload),
         "force_rerender_karaoke_video" => force_rerender_karaoke_video_cmd(events, payload),
+        "fetch_youtube_karaoke_video" => fetch_youtube_karaoke_video_cmd(events, payload),
 
         // ── Vendor ───────────────────────────────────────────────────────
         "is_ready" => Ok(Value::Bool(app_core::is_ready())),
@@ -832,6 +833,21 @@ fn force_rerender_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: V
     std::thread::spawn(move || {
         let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash, true);
         events.emit("karaoke-video-ready", &payload);
+    });
+    Ok(Value::Null)
+}
+
+/// The song-UI "fetch a YouTube video for this song and build a karaoke
+/// video from it" action -- chains the AudioDB lookup (cached, see
+/// `audiodb::find_music_video_for_hash`'s doc comment), the download, and a
+/// forced karaoke-video re-render into one button. Fire-and-forget thread +
+/// `"youtube-karaoke-video-ready"` event, same shape as the plain
+/// `render_karaoke_video_cmd`/`force_rerender_karaoke_video_cmd` above.
+fn fetch_youtube_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+    let args: FileHashArgs = deserialize(payload)?;
+    std::thread::spawn(move || {
+        let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash);
+        events.emit("youtube-karaoke-video-ready", &payload);
     });
     Ok(Value::Null)
 }

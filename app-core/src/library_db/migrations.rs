@@ -63,6 +63,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_genre_column(conn)?;
     ensure_analysis_queue_columns(conn)?;
     ensure_parallel_analysis_timings_table(conn)?;
+    ensure_youtube_video_lookups_table(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -317,6 +318,28 @@ fn ensure_parallel_analysis_timings_table(conn: &Connection) -> rusqlite::Result
             ON parallel_analysis_timings(file_hash);
         CREATE INDEX IF NOT EXISTS idx_parallel_analysis_timings_started_at
             ON parallel_analysis_timings(started_at);
+    ",
+    )
+}
+
+/// Caches `audiodb::find_music_video_for_hash`'s TheAudioDB lookup result
+/// per song, deliberately separate from `songs` (a lookup outcome isn't a
+/// song property, it's an external-API-call cache) so a repeat lookup for
+/// the same song reads this table instead of hitting TheAudioDB's
+/// 30-requests/minute free tier again. One row per song, upserted on every
+/// lookup; `youtube_url IS NULL` means "looked up, TheAudioDB had nothing"
+/// as distinct from "never looked up" (no row at all) -- see
+/// `youtube_video_lookups::get_youtube_video_lookup`.
+fn ensure_youtube_video_lookups_table(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS youtube_video_lookups (
+            file_hash TEXT PRIMARY KEY,
+            youtube_url TEXT,
+            track_name TEXT,
+            artist_name TEXT,
+            looked_up_at TEXT NOT NULL
+        );
     ",
     )
 }
