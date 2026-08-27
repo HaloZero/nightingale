@@ -122,10 +122,9 @@ pub fn ensure_karaoke_video_ready_payload(file_hash: String, force: bool) -> Kar
 /// Result of `ensure_youtube_karaoke_video` -- same "fire a background
 /// thread, emit this on completion" shape as `KaraokeVideoReady`, with one
 /// extra field: whether TheAudioDB actually had a music video for this song
-/// at all, since "rendered successfully" alone can't tell the caller that
-/// (a successful render still happens on `error: None` even when no video
-/// was found -- it just falls back to the reel background, same as
-/// `render_karaoke_video`).
+/// at all, distinct from a download/sync/render failure after one was
+/// found -- `music_video_found: false` always means `error: Some(...)` too
+/// (nothing to render), but the reverse isn't true.
 #[derive(Debug, Clone, Serialize)]
 pub struct YoutubeKaraokeVideoReady {
     pub file_hash: String,
@@ -133,18 +132,18 @@ pub struct YoutubeKaraokeVideoReady {
     pub error: Option<String>,
 }
 
-/// The explicit "fetch a YouTube video for this song and build a karaoke
-/// video from it" action: `audiodb::find_music_video_for_hash` (cached --
-/// see its doc comment) to find one, `youtube_video::
-/// ensure_youtube_video_downloaded` to fetch it, then a forced
-/// `ensure_karaoke_video` re-render. That render's own background selection
-/// (`select_background`) is what actually decides whether the downloaded
-/// video is usable (confidently synced, non-negative offset) -- this
-/// function doesn't duplicate that check, it just makes sure a video is
-/// downloaded and on disk before asking for a re-render, so `select_background`
-/// has something to find. If no video exists on TheAudioDB at all,
-/// `music_video_found` comes back `false` and no render is attempted (no
-/// point re-rendering with an unchanged reel background).
+/// The explicit "fetch a YouTube video for this song and build a
+/// YouTube-background karaoke video from it" action:
+/// `audiodb::find_music_video_for_hash` (cached -- see its doc comment) to
+/// find one, `youtube_video::ensure_youtube_video_downloaded` to fetch it,
+/// then a forced `ensure_youtube_background_karaoke_video` render into its
+/// own cache slot -- the existing reel-background video (if any) for this
+/// song is untouched, both can exist side by side (see
+/// `best_karaoke_video_path`). If no video exists on TheAudioDB at all,
+/// `music_video_found` comes back `false` and no render is attempted. If
+/// one exists but can't be downloaded or confidently synced to the song's
+/// audio, `music_video_found` is `true` but `error` explains why there's
+/// still no YouTube-background render.
 pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady {
     let pipeline_started = std::time::Instant::now();
     info!("[youtube_karaoke_video] {file_hash}: starting (lookup -> download -> render)");
@@ -184,7 +183,7 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
     );
 
     let render_started = std::time::Instant::now();
-    match ensure_karaoke_video(file_hash, true) {
+    match ensure_youtube_background_karaoke_video(file_hash, true) {
         Ok(_) => {
             info!(
                 "[youtube_karaoke_video] {file_hash}: render done in {:.1}s, pipeline total {:.1}s",
@@ -266,20 +265,119 @@ pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
     })
 }
 
-/// Renders (or returns the cached) karaoke video for `file_hash`. Blocking
-/// -- callers on an async runtime must run it via
+/// Renders (or returns the cached) reel-background karaoke video for
+/// `file_hash`. Blocking -- callers on an async runtime must run it via
 /// `tokio::task::spawn_blocking`, same rule as
 /// `chromecast::cast_song_to_configured_device`. `force` skips the
 /// freshness check and re-renders unconditionally -- useful since the
 /// background is randomly picked from the cached Pixabay clips each time,
-/// so re-running gives a different background.
+/// so re-running gives a different background. Always uses the reel/
+/// raw-clip pool, even if a downloaded YouTube video exists for this song
+/// -- that's a separate, independently-cached artifact, see
+/// `ensure_youtube_background_karaoke_video`/`best_karaoke_video_path`.
 pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::PathBuf, NightingaleError> {
+    let video_path = CacheDir::new().karaoke_video_path(file_hash);
+    render_karaoke_video_to(file_hash, force, &video_path, |duration_secs| {
+        let background = select_background_video(duration_secs).map(|path| BackgroundSource {
+            path,
+            start_offset_secs: 0.0,
+        });
+        if background.is_none() {
+            warn!(
+                "[karaoke_video] no cached background videos or reels for any of \
+                 {BACKGROUND_FLAVORS:?} -- falling back to solid color background (run the \
+                 download_all_pixabay_videos action to populate a background cache)"
+            );
+        }
+        background
+    })
+}
+
+/// Renders (or returns the cached) YouTube-video-background karaoke video
+/// for `file_hash`, into its own cache slot (`youtube_karaoke_video_path`)
+/// separate from the reel-background one -- both can exist at once. Errors
+/// out rather than falling back to the reel pool if no video is downloaded
+/// yet, or it can't be confidently matched to the song's own audio
+/// (`video_sync::detect_sync_offset_for_hash`): this function is
+/// specifically "render the YouTube-flavored artifact," not "render
+/// something, preferably from YouTube" -- callers that want the latter
+/// should use `best_karaoke_video_path` instead.
+pub fn ensure_youtube_background_karaoke_video(
+    file_hash: &str,
+    force: bool,
+) -> Result<std::path::PathBuf, NightingaleError> {
     let cache = CacheDir::new();
-    let video_path = cache.karaoke_video_path(file_hash);
+    let youtube_source = cache.youtube_video_path(file_hash);
+    if !youtube_source.is_file() {
+        return Err(NightingaleError::Other(format!(
+            "no downloaded YouTube video for {file_hash} -- download one first"
+        )));
+    }
+
+    let sync = crate::video_sync::detect_sync_offset_for_hash(file_hash, &youtube_source)
+        .map_err(NightingaleError::Other)?
+        .filter(|s| s.video_offset_secs >= 0.0)
+        .ok_or_else(|| {
+            NightingaleError::Other(format!(
+                "downloaded YouTube video for {file_hash} couldn't be confidently synced to the \
+                 song's audio (or would need padding, not trimming, to line up)"
+            ))
+        })?;
+    info!(
+        "[karaoke_video] using downloaded YouTube video as background for {file_hash} \
+         (offset={:.2}s, confidence={:.3})",
+        sync.video_offset_secs, sync.confidence
+    );
+    let background = BackgroundSource {
+        path: youtube_source.to_string_lossy().into_owned(),
+        start_offset_secs: sync.video_offset_secs,
+    };
+
+    let video_path = cache.youtube_karaoke_video_path(file_hash);
+    render_karaoke_video_to(file_hash, force, &video_path, move |_duration_secs| {
+        Some(background)
+    })
+}
+
+/// Picks whichever karaoke video is best for `file_hash` to actually show
+/// (casting, primarily): a YouTube-background render if one already exists
+/// and is fresh relative to the transcript, otherwise the reel-background
+/// one (rendering it now if missing/stale, same as `ensure_karaoke_video`
+/// alone would). Deliberately never triggers a YouTube lookup/download/
+/// render itself -- that's the separate, explicit, slow
+/// `ensure_youtube_karaoke_video` action; this only *picks* from what's
+/// already on disk for the YouTube side, so casting stays fast and never
+/// surprises the user with a network fetch.
+pub fn best_karaoke_video_path(file_hash: &str) -> Result<std::path::PathBuf, NightingaleError> {
+    let cache = CacheDir::new();
+    let youtube_path = cache.youtube_karaoke_video_path(file_hash);
     let transcript_path = cache.transcript_path(file_hash);
 
-    if !force && is_fresh(&video_path, &transcript_path) {
-        return Ok(video_path);
+    if youtube_path.is_file() && is_fresh(&youtube_path, &transcript_path) {
+        info!("[karaoke_video] {file_hash}: using existing YouTube-background render");
+        return Ok(youtube_path);
+    }
+
+    ensure_karaoke_video(file_hash, false)
+}
+
+/// Shared render core for both `ensure_karaoke_video` and
+/// `ensure_youtube_background_karaoke_video`: freshness check, load
+/// song/transcript/stems, run `select_background` to pick this flavor's
+/// background, render, and atomically publish to `video_path`. The two
+/// callers differ only in `video_path` and how they resolve a background
+/// for a given `duration_secs`.
+fn render_karaoke_video_to(
+    file_hash: &str,
+    force: bool,
+    video_path: &std::path::Path,
+    select_background: impl FnOnce(f64) -> Option<BackgroundSource>,
+) -> Result<std::path::PathBuf, NightingaleError> {
+    let cache = CacheDir::new();
+    let transcript_path = cache.transcript_path(file_hash);
+
+    if !force && is_fresh(video_path, &transcript_path) {
+        return Ok(video_path.to_path_buf());
     }
 
     let song = library_db::load_song_by_hash(file_hash)
@@ -310,24 +408,19 @@ pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::P
     })?;
     let audio_paths = crate::playback::get_audio_paths(file_hash);
 
-    let background = select_background(file_hash, song.duration_secs);
-    match &background {
-        Some(bg) => info!(
+    let background = select_background(song.duration_secs);
+    if let Some(bg) = &background {
+        info!(
             "[karaoke_video] using background: {} (start_offset={:.2}s)",
             bg.path, bg.start_offset_secs
-        ),
-        None => warn!(
-            "[karaoke_video] no cached background videos or reels for any of {BACKGROUND_FLAVORS:?} \
-             -- falling back to solid color background (run the download_all_pixabay_videos action \
-             to populate a background cache)"
-        ),
+        );
     }
 
     let accent_color = pick_accent_color();
 
     info!(
-        "[karaoke_video] rendering {file_hash} ({} frames @ {FRAME_RATE}fps, {}x{}, accent={accent_color:?})",
-        total_frames, WIDTH, HEIGHT
+        "[karaoke_video] rendering {file_hash} -> {} ({} frames @ {FRAME_RATE}fps, {}x{}, accent={accent_color:?})",
+        video_path.display(), total_frames, WIDTH, HEIGHT
     );
 
     // ffmpeg infers the output container from the extension, so the temp
@@ -351,9 +444,9 @@ pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::P
         audio_paths.vocals.as_deref(),
         &tmp_path,
     )?;
-    std::fs::rename(&tmp_path, &video_path)?;
+    std::fs::rename(&tmp_path, video_path)?;
 
-    Ok(video_path)
+    Ok(video_path.to_path_buf())
 }
 
 fn is_fresh(video_path: &std::path::Path, transcript_path: &std::path::Path) -> bool {
@@ -380,62 +473,11 @@ const BACKGROUND_FLAVORS: [&str; 3] = ["nature", "underwater", "space"];
 /// A background video for `render_and_encode`, plus how far into it to
 /// start (0.0 for the reel/raw-clip pool, where the whole file is fair
 /// game; non-zero only for a downloaded YouTube video trimmed to where the
-/// song's own audio actually starts -- see `select_background`).
+/// song's own audio actually starts -- see
+/// `ensure_youtube_background_karaoke_video`).
 struct BackgroundSource {
     path: String,
     start_offset_secs: f64,
-}
-
-/// Picks the karaoke video's background, in priority order:
-///
-/// 1. An already-downloaded YouTube music video for this song
-///    (`youtube_video::ensure_youtube_video_downloaded`), if one exists on
-///    disk *and* its visual timeline can be confidently matched to the
-///    song's own audio (`video_sync::detect_sync_offset_for_hash`).
-///    Deliberately read-only: this never triggers a fresh download (that's
-///    a slow, explicit, separate action -- see the `download_youtube_video`
-///    command) and never uses a video whose sync couldn't be confidently
-///    determined or that would need padding rather than trimming (a
-///    negative offset -- the song has content the video doesn't), rather
-///    than risk shipping a visibly desynced render.
-/// 2. The existing reel/raw-clip pool (`select_background_video`).
-/// 3. `None` (solid color).
-fn select_background(file_hash: &str, duration_secs: f64) -> Option<BackgroundSource> {
-    let youtube_path = CacheDir::new().youtube_video_path(file_hash);
-    if youtube_path.is_file() {
-        match crate::video_sync::detect_sync_offset_for_hash(file_hash, &youtube_path) {
-            Ok(Some(sync)) if sync.video_offset_secs >= 0.0 => {
-                info!(
-                    "[karaoke_video] using downloaded YouTube video as background for {file_hash} \
-                     (offset={:.2}s, confidence={:.3})",
-                    sync.video_offset_secs, sync.confidence
-                );
-                return Some(BackgroundSource {
-                    path: youtube_path.to_string_lossy().into_owned(),
-                    start_offset_secs: sync.video_offset_secs,
-                });
-            }
-            Ok(Some(sync)) => info!(
-                "[karaoke_video] downloaded YouTube video for {file_hash} matched at a negative \
-                 offset ({:.2}s) -- the song has content before the video does, which trimming \
-                 can't fix -- falling back to the reel background",
-                sync.video_offset_secs
-            ),
-            Ok(None) => info!(
-                "[karaoke_video] downloaded YouTube video for {file_hash} couldn't be confidently \
-                 synced to the song's audio -- falling back to the reel background"
-            ),
-            Err(e) => warn!(
-                "[karaoke_video] sync check failed for {file_hash}'s downloaded YouTube video: {e} \
-                 -- falling back to the reel background"
-            ),
-        }
-    }
-
-    select_background_video(duration_secs).map(|path| BackgroundSource {
-        path,
-        start_offset_secs: 0.0,
-    })
 }
 
 /// Prefers a pre-built reel (`playback::build_background_reels`, filenames

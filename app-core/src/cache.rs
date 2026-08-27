@@ -109,10 +109,25 @@ impl CacheDir {
         dir.join(format!("{hash}.mp4"))
     }
 
+    /// The reel/raw-clip-background karaoke video -- see `karaoke_video::
+    /// ensure_karaoke_video`. Kept separate from `youtube_karaoke_video_path`
+    /// so both flavors can exist at once and `karaoke_video::
+    /// best_karaoke_video_path` can pick between them, rather than one
+    /// slot's render overwriting whichever background the other used.
     pub fn karaoke_video_path(&self, hash: &str) -> PathBuf {
         let dir = self.path.join("karaoke_videos");
         std::fs::create_dir_all(&dir).ok();
         dir.join(format!("{hash}.mp4"))
+    }
+
+    /// The YouTube-video-background karaoke video -- see `karaoke_video::
+    /// ensure_youtube_background_karaoke_video`. Sibling to
+    /// `karaoke_video_path`, same directory, distinguished by suffix so a
+    /// directory listing shows both flavors for a song side by side.
+    pub fn youtube_karaoke_video_path(&self, hash: &str) -> PathBuf {
+        let dir = self.path.join("karaoke_videos");
+        std::fs::create_dir_all(&dir).ok();
+        dir.join(format!("{hash}_youtube.mp4"))
     }
 
     /// Downloaded official YouTube music video for a song (`youtube_video::

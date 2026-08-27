@@ -93,7 +93,7 @@ pub fn cast_song_to_configured_device(
 
     let (media_path, content_type) = if config.karaoke_video {
         info!("[chromecast] karaoke_video enabled; rendering/reusing cached karaoke video");
-        let video_path = crate::karaoke_video::ensure_karaoke_video(&song.file_hash, false)?;
+        let video_path = crate::karaoke_video::best_karaoke_video_path(&song.file_hash)?;
         (video_path, "video/mp4".to_string())
     } else {
         (
