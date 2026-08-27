@@ -144,7 +144,31 @@ pub struct YoutubeKaraokeVideoReady {
 /// one exists but can't be downloaded or confidently synced to the song's
 /// audio, `music_video_found` is `true` but `error` explains why there's
 /// still no YouTube-background render.
+///
+/// No-ops the entire lookup/download/render chain if a YouTube-background
+/// render already exists and is fresh relative to the transcript -- same
+/// `is_fresh` freshness check `ensure_karaoke_video`/`best_karaoke_video_path`
+/// use, so re-running this action (e.g. as part of a bulk fetch over a large
+/// filtered set) doesn't re-hit TheAudioDB or re-render songs it already has
+/// a good answer for. A stale transcript (re-analysis changed the lyrics/
+/// timing) still forces a fresh lookup-through-render, same as the reel
+/// path.
 pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady {
+    let cache = CacheDir::new();
+    if is_fresh(
+        &cache.youtube_karaoke_video_path(file_hash),
+        &cache.transcript_path(file_hash),
+    ) {
+        info!(
+            "[youtube_karaoke_video] {file_hash}: already have a fresh YouTube-background render, skipping"
+        );
+        return YoutubeKaraokeVideoReady {
+            file_hash: file_hash.to_string(),
+            music_video_found: true,
+            error: None,
+        };
+    }
+
     let pipeline_started = std::time::Instant::now();
     info!("[youtube_karaoke_video] {file_hash}: starting (lookup -> download -> render)");
 

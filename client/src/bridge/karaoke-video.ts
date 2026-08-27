@@ -36,9 +36,13 @@ export interface YoutubeKaraokeVideoReady {
 
 /**
  * Chains the TheAudioDB lookup (cached server-side, so repeat calls don't
- * re-hit the API), the video download, and a forced karaoke-video
- * re-render into one action. `music_video_found: false` on the resulting
- * event means no video exists to use -- the reel background stays as-is.
+ * re-hit the API), the video download (skipped if already downloaded), and
+ * the karaoke-video render into one action. No-ops the whole chain if a
+ * YouTube-background render already exists and is fresh relative to the
+ * transcript -- same freshness check as the reel-background action, so
+ * re-running this on an already-fetched song does nothing. `music_video_found:
+ * false` on the resulting event means no video exists to use -- the reel
+ * background stays as-is.
  */
 export const fetchYoutubeKaraokeVideo = async (fileHash: string): Promise<void> => {
   return await invoke<void>("fetch_youtube_karaoke_video", { fileHash });
@@ -73,10 +77,12 @@ export const forceRerenderKaraokeVideoAll = async (
 };
 
 /**
- * Runs the full lookup -> download -> render chain per eligible song.
- * TheAudioDB lookups and downloads are both throttled server-side, so a
- * large filtered set with a cold cache is slow by design (staying under
- * TheAudioDB's free tier / being polite to YouTube), not stuck.
+ * Runs the lookup -> download -> render chain per eligible song, skipping
+ * songs that already have a fresh YouTube-background render. TheAudioDB
+ * lookups and downloads are both throttled server-side, so a large filtered
+ * set with a cold cache (or many songs still needing a fetch) is slow by
+ * design (staying under TheAudioDB's free tier / being polite to YouTube),
+ * not stuck.
  */
 export const fetchYoutubeKaraokeVideoAll = async (filters: LibraryMenuFilters): Promise<number> => {
   return await invoke<number>("fetch_youtube_karaoke_video_all", { filters });
