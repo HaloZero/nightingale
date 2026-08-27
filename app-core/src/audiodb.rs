@@ -74,12 +74,21 @@ struct AudioDbTrack {
 }
 
 /// Looks up `song` on TheAudioDB by artist+title and returns its official
-/// YouTube music video URL, if TheAudioDB has one on file. `None` covers
-/// both "no track match" and "track found but no music video" -- callers
-/// don't need to tell those apart.
-pub fn find_music_video(song: &Song) -> Option<MusicVideoResult> {
+/// YouTube music video URL, if TheAudioDB has one on file.
+///
+/// `Ok(None)` covers both "no track match" and "track found but no music
+/// video" -- callers don't need to tell those apart. `Err` is a *distinct*
+/// outcome from `Ok(None)`: it means the query itself didn't complete
+/// (network failure, a non-2xx HTTP status -- which is exactly what a 429
+/// rate-limit response is, since `ureq::call()` turns any non-2xx into an
+/// `Err` by default -- or an unparseable body), i.e. TheAudioDB was never
+/// actually asked. `find_music_video_for_hash` relies on this distinction
+/// to decide what's safe to cache: an `Err` must never be cached as "no
+/// video exists," or a transient failure (rate limit included) would
+/// permanently and incorrectly stick a song with that verdict.
+pub fn find_music_video(song: &Song) -> Result<Option<MusicVideoResult>, String> {
     if song.title.is_empty() || song.artist.is_empty() || song.artist == "Unknown Artist" {
-        return None;
+        return Ok(None);
     }
 
     throttle();
@@ -95,24 +104,18 @@ pub fn find_music_video(song: &Song) -> Option<MusicVideoResult> {
         urlencoding::encode(&song.title),
     );
 
-    let resp = match ureq::get(&url)
+    let resp = ureq::get(&url)
         .header("User-Agent", "Nightingale/1.0")
         .call()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("[audiodb] search request failed: {e}");
-            return None;
-        }
-    };
+        .map_err(|e| {
+            warn!("[audiodb] search request failed (not caching, will retry next time): {e}");
+            e.to_string()
+        })?;
 
-    let parsed: SearchTrackResponse = match resp.into_body().read_json() {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("[audiodb] failed to parse search response: {e}");
-            return None;
-        }
-    };
+    let parsed: SearchTrackResponse = resp.into_body().read_json().map_err(|e| {
+        warn!("[audiodb] failed to parse search response (not caching, will retry next time): {e}");
+        e.to_string()
+    })?;
 
     let result = parsed.track.into_iter().flatten().find_map(|t| {
         let youtube_url = t.str_music_vid.filter(|v| !v.trim().is_empty())?;
@@ -134,7 +137,7 @@ pub fn find_music_video(song: &Song) -> Option<MusicVideoResult> {
         ),
     }
 
-    result
+    Ok(result)
 }
 
 /// Same as `find_music_video`, but checks `library_db`'s
@@ -160,16 +163,24 @@ pub fn find_music_video_for_hash(file_hash: &str) -> Option<MusicVideoResult> {
     }
 
     let song = library_db::load_song_by_hash(file_hash).ok().flatten()?;
-    let result = find_music_video(&song);
 
-    if let Err(e) = library_db::record_youtube_video_lookup(
-        file_hash,
-        result.as_ref().map(|r| r.youtube_url.as_str()),
-        result.as_ref().map(|r| r.track_name.as_str()),
-        result.as_ref().map(|r| r.artist_name.as_str()),
-    ) {
-        warn!("[audiodb] failed to cache lookup result for {file_hash}: {e}");
+    // Only an `Ok` (the query actually completed, whether or not it found a
+    // video) gets cached. An `Err` -- rate-limited, network blip, bad body --
+    // is left uncached on purpose, so the next call for this song (next
+    // per-song click, next bulk run) queries TheAudioDB again instead of
+    // being stuck reading a failure as "confirmed no video."
+    match find_music_video(&song) {
+        Ok(result) => {
+            if let Err(e) = library_db::record_youtube_video_lookup(
+                file_hash,
+                result.as_ref().map(|r| r.youtube_url.as_str()),
+                result.as_ref().map(|r| r.track_name.as_str()),
+                result.as_ref().map(|r| r.artist_name.as_str()),
+            ) {
+                warn!("[audiodb] failed to cache lookup result for {file_hash}: {e}");
+            }
+            result
+        }
+        Err(_) => None,
     }
-
-    result
 }
