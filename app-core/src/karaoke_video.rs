@@ -145,35 +145,68 @@ pub struct YoutubeKaraokeVideoReady {
 /// `music_video_found` comes back `false` and no render is attempted (no
 /// point re-rendering with an unchanged reel background).
 pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady {
+    let pipeline_started = std::time::Instant::now();
+    info!("[youtube_karaoke_video] {file_hash}: starting (lookup -> download -> render)");
+
     let Some(video) = crate::audiodb::find_music_video_for_hash(file_hash) else {
+        info!(
+            "[youtube_karaoke_video] {file_hash}: no music video found, stopping (no render attempted)"
+        );
         return YoutubeKaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: false,
             error: Some("no official music video found for this song".to_string()),
         };
     };
+    info!(
+        "[youtube_karaoke_video] {file_hash}: found music video {} -- downloading",
+        video.youtube_url
+    );
 
+    let download_started = std::time::Instant::now();
     if let Err(e) =
         crate::youtube_video::ensure_youtube_video_downloaded(file_hash, &video.youtube_url)
     {
+        warn!(
+            "[youtube_karaoke_video] {file_hash}: download failed after {:.1}s: {e}",
+            download_started.elapsed().as_secs_f64()
+        );
         return YoutubeKaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: true,
             error: Some(format!("failed to download music video: {e}")),
         };
     }
+    info!(
+        "[youtube_karaoke_video] {file_hash}: download step done in {:.1}s -- rendering",
+        download_started.elapsed().as_secs_f64()
+    );
 
+    let render_started = std::time::Instant::now();
     match ensure_karaoke_video(file_hash, true) {
-        Ok(_) => YoutubeKaraokeVideoReady {
-            file_hash: file_hash.to_string(),
-            music_video_found: true,
-            error: None,
-        },
-        Err(e) => YoutubeKaraokeVideoReady {
-            file_hash: file_hash.to_string(),
-            music_video_found: true,
-            error: Some(format!("failed to render karaoke video: {e}")),
-        },
+        Ok(_) => {
+            info!(
+                "[youtube_karaoke_video] {file_hash}: render done in {:.1}s, pipeline total {:.1}s",
+                render_started.elapsed().as_secs_f64(),
+                pipeline_started.elapsed().as_secs_f64()
+            );
+            YoutubeKaraokeVideoReady {
+                file_hash: file_hash.to_string(),
+                music_video_found: true,
+                error: None,
+            }
+        }
+        Err(e) => {
+            warn!(
+                "[youtube_karaoke_video] {file_hash}: render failed after {:.1}s: {e}",
+                render_started.elapsed().as_secs_f64()
+            );
+            YoutubeKaraokeVideoReady {
+                file_hash: file_hash.to_string(),
+                music_video_found: true,
+                error: Some(format!("failed to render karaoke video: {e}")),
+            }
+        }
     }
 }
 

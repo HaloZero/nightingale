@@ -16,7 +16,7 @@ use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::cache::CacheDir;
 use crate::vendor::{ensure_ytdlp_downloaded, ffmpeg_path, silent_command};
@@ -44,23 +44,42 @@ pub fn ensure_youtube_video_downloaded(
     let cache = CacheDir::new();
     let dest = cache.youtube_video_path(file_hash);
     if dest.is_file() {
+        info!(
+            "[youtube_video] {file_hash}: already downloaded at {}, skipping",
+            dest.display()
+        );
         return Ok(dest);
     }
 
-    let ytdlp = ensure_ytdlp_downloaded()?;
-    throttle();
+    info!("[youtube_video] {file_hash}: ensuring yt-dlp is available");
+    let ytdlp = ensure_ytdlp_downloaded().map_err(|e| {
+        warn!("[youtube_video] {file_hash}: failed to get yt-dlp: {e}");
+        e
+    })?;
 
+    throttle(file_hash);
+
+    info!("[youtube_video] {file_hash}: downloading {youtube_url} -> {}", dest.display());
+    let started = Instant::now();
     let tmp = dest.with_extension("part.mp4");
     let result = download(&ytdlp, youtube_url, &tmp);
+    let elapsed = started.elapsed().as_secs_f64();
+
     match &result {
         Ok(()) => {
-            std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+            if let Err(e) = std::fs::rename(&tmp, &dest) {
+                warn!(
+                    "[youtube_video] {file_hash}: downloaded but failed to move into place: {e}"
+                );
+                return Err(e.to_string());
+            }
             info!(
-                "[youtube_video] downloaded {youtube_url} -> {}",
+                "[youtube_video] {file_hash}: downloaded in {elapsed:.1}s -> {}",
                 dest.display()
             );
         }
-        Err(_) => {
+        Err(e) => {
+            warn!("[youtube_video] {file_hash}: download failed after {elapsed:.1}s: {e}");
             let _ = std::fs::remove_file(&tmp);
         }
     }
@@ -71,14 +90,14 @@ pub fn ensure_youtube_video_downloaded(
 /// download *started*, then records this one's start time. Serializes
 /// downloads process-wide as a side effect of holding the lock for the
 /// whole wait.
-fn throttle() {
+fn throttle(file_hash: &str) {
     let mut last = LAST_DOWNLOAD_START.lock().unwrap();
     if let Some(prev) = *last {
         let elapsed = prev.elapsed();
         if elapsed < MIN_DOWNLOAD_INTERVAL {
             let wait = MIN_DOWNLOAD_INTERVAL - elapsed;
             info!(
-                "[youtube_video] throttling: waiting {:.1}s before next download",
+                "[youtube_video] {file_hash}: throttling, waiting {:.1}s before starting download",
                 wait.as_secs_f64()
             );
             std::thread::sleep(wait);

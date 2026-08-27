@@ -5,7 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
-use tracing::info;
+use tracing::{info, warn};
 use ts_rs::TS;
 
 use crate::{
@@ -498,6 +498,7 @@ pub fn ensure_ytdlp_downloaded() -> Result<PathBuf, String> {
     }
 
     let url = ytdlp_download_url()?;
+    info!("[vendor] yt-dlp not present, downloading from {url}");
     let tmp = vendor_dir().join(format!(
         "_tmp_{}",
         dest.file_name().unwrap().to_string_lossy()
@@ -510,8 +511,11 @@ pub fn ensure_ytdlp_downloaded() -> Result<PathBuf, String> {
         Ok(())
     })();
 
-    if result.is_err() {
+    if let Err(e) = &result {
+        warn!("[vendor] failed to download yt-dlp: {e}");
         let _ = std::fs::remove_file(&tmp);
+    } else {
+        info!("[vendor] yt-dlp downloaded to {}", dest.display());
     }
     result.map_err(|e| format!("Failed to download yt-dlp: {e}"))?;
 
