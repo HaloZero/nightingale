@@ -22,6 +22,7 @@ mod source;
 mod usdx;
 mod vendor;
 mod vendor_scripts;
+mod youtube_video;
 
 pub use analyzer::{
     AnalysisQueue, FailureKind, acknowledge_failures, delete_cache, enqueue_all, enqueue_one,
@@ -88,6 +89,7 @@ pub use vendor::{
     step_download_ffmpeg, step_download_uv, step_extract_scripts, step_install_packages,
     step_install_python,
 };
+pub use youtube_video::ensure_youtube_video_downloaded;
 
 pub fn startup() -> Result<(), String> {
     init_library().map_err(|e| e.to_string())?;

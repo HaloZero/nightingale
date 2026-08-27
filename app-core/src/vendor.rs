@@ -75,6 +75,15 @@ pub fn font_path() -> PathBuf {
     vendor_dir().join("DejaVuSans.ttf")
 }
 
+/// `yt-dlp` standalone binary, bundled for `crate::youtube_video`'s
+/// official-music-video download path. Same lazy-on-first-use treatment as
+/// `font_path`/`ensure_font_downloaded` -- niche, opt-in feature, not part
+/// of core setup.
+pub fn ytdlp_path() -> PathBuf {
+    let name = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
+    vendor_dir().join(name)
+}
+
 pub fn python_path() -> PathBuf {
     if cfg!(windows) {
         vendor_dir().join("venv").join("Scripts").join("python.exe")
@@ -456,6 +465,55 @@ pub fn ensure_font_downloaded() -> Result<PathBuf, String> {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
     result.map_err(|e| format!("Failed to download karaoke-video font: {e}"))?;
+
+    Ok(dest)
+}
+
+fn ytdlp_download_url() -> Result<&'static str, String> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => {
+            Ok("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux")
+        }
+        ("linux", "aarch64") => {
+            Ok("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64")
+        }
+        ("macos", "aarch64") | ("macos", "x86_64") => {
+            // Universal2 binary, covers both Apple Silicon and Intel.
+            Ok("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos")
+        }
+        ("windows", "x86_64") => {
+            Ok("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe")
+        }
+        (os, arch) => Err(format!("Unsupported platform for yt-dlp: {os}-{arch}")),
+    }
+}
+
+/// Downloads the standalone `yt-dlp` binary on first use. A raw single-file
+/// release asset (unlike ffmpeg/the font), so no archive extraction step --
+/// just fetch and `chmod +x`.
+pub fn ensure_ytdlp_downloaded() -> Result<PathBuf, String> {
+    let dest = ytdlp_path();
+    if dest.is_file() {
+        return Ok(dest);
+    }
+
+    let url = ytdlp_download_url()?;
+    let tmp = vendor_dir().join(format!(
+        "_tmp_{}",
+        dest.file_name().unwrap().to_string_lossy()
+    ));
+
+    let result: Result<(), String> = (|| {
+        download_to_file(url, &tmp)?;
+        mark_executable(&tmp)?;
+        std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result.map_err(|e| format!("Failed to download yt-dlp: {e}"))?;
 
     Ok(dest)
 }

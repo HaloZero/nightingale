@@ -115,6 +115,16 @@ impl CacheDir {
         dir.join(format!("{hash}.mp4"))
     }
 
+    /// Downloaded official YouTube music video for a song (`youtube_video::
+    /// ensure_youtube_video_downloaded`), kept separate from
+    /// `karaoke_video_path` -- this is the raw source, not the rendered
+    /// karaoke output built from it.
+    pub fn youtube_video_path(&self, hash: &str) -> PathBuf {
+        let dir = self.path.join("youtube_videos");
+        std::fs::create_dir_all(&dir).ok();
+        dir.join(format!("{hash}.mp4"))
+    }
+
     pub fn transcript_exists(&self, hash: &str) -> bool {
         let transcript = self.transcript_path(hash);
         if !transcript.is_file() {

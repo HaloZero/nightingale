@@ -447,6 +447,7 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             let args: FileHashArgs = deserialize(payload)?;
             Ok(serde_json::to_value(find_music_video_for_hash(&args.file_hash)).map_err(serde_err)?)
         }
+        "download_youtube_video" => download_youtube_video_cmd(events, payload),
         "save_lyrics" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -750,6 +751,36 @@ fn build_background_reels_cmd(events: std::sync::Arc<EventBus>, payload: Value) 
         });
         events.emit("background-reels-done", &json!({ "flavor": args.flavor }));
     });
+    Ok(Value::Null)
+}
+
+/// Downloads a song's official YouTube music video (`find_music_video`'s
+/// result) as karaoke-video source footage -- can take anywhere from
+/// seconds to over a minute (network + `MIN_DOWNLOAD_INTERVAL` throttling
+/// in `youtube_video::ensure_youtube_video_downloaded`), so this is
+/// fire-and-forget-thread + a single done event, same shape as the other
+/// slow one-shot commands in this file.
+fn download_youtube_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        file_hash: String,
+        youtube_url: String,
+    }
+    let args: Args = deserialize(payload)?;
+
+    std::thread::spawn(move || {
+        let result = app_core::ensure_youtube_video_downloaded(&args.file_hash, &args.youtube_url);
+        events.emit(
+            "youtube-video-download-done",
+            &json!({
+                "fileHash": args.file_hash,
+                "path": result.as_ref().ok(),
+                "error": result.err(),
+            }),
+        );
+    });
+
     Ok(Value::Null)
 }
 
