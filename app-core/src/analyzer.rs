@@ -481,6 +481,17 @@ static ANALYZER: LazyLock<Mutex<AnalyzerState>> = LazyLock::new(|| {
 static FORCE_TRANSCRIBE: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// Hashes whose next analysis pass should go straight to the LRCLIB network
+/// lookup, bypassing the local `.lrc`/embedded-tag check even if
+/// `use_external_lyrics` is on -- set by the explicit "Refetch lyrics &
+/// align" action (`reanalyze_transcript`), since a user who clicked
+/// "refetch" clearly wants a fresh network lookup, not the same local file
+/// re-read yet again. Passive/automatic analysis (a plain scan-driven
+/// enqueue) is untouched -- it still prefers local lyrics when the setting
+/// is on.
+static FORCE_LRCLIB: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
 /// Hashes whose queued job should only run stem separation (key detect +
 /// separation) and keep the already-written LRC-provided transcript.
 static STEMS_ONLY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -776,6 +787,7 @@ pub fn reanalyze_transcript(file_hash: &str, language: Option<String>) {
             config.save();
         }
     }
+    FORCE_LRCLIB.lock().unwrap().insert(file_hash.to_string());
     reanalyze(file_hash, false);
 }
 
@@ -1073,15 +1085,20 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
 
     let config = AppConfig::load();
     let skip_lrclib = stems_only || FORCE_TRANSCRIBE.lock().unwrap().remove(file_hash);
+    let force_lrclib = FORCE_LRCLIB.lock().unwrap().remove(file_hash);
     // Local lyrics (a `.lrc` sidecar or a tag embedded in the file itself)
     // take priority over the LRCLIB network lookup when the user has opted
     // in via `use_external_lyrics`: whichever is found first is the one
     // that lands in the shared lyrics cache, and the other check just sees
     // it already there (see local_lyrics_path's doc comment). Off, analysis
     // behaves exactly as before this setting existed -- LRCLIB, then ASR.
+    // `force_lrclib` (set only by the explicit "Refetch lyrics & align"
+    // action) skips straight past the local check regardless of the
+    // setting -- otherwise a song with a local `.lrc`/embedded tag can
+    // never be refetched from LRCLIB at all, since local always wins.
     let lyrics_path = if skip_lrclib {
         None
-    } else if config.use_external_lyrics() {
+    } else if config.use_external_lyrics() && !force_lrclib {
         local_lyrics_path(&song, cache).or_else(|| fetch_lrclib_lyrics(&song, cache))
     } else {
         fetch_lrclib_lyrics(&song, cache)
@@ -1617,3 +1634,4 @@ fn send_and_monitor(
         }
     }
 }
+
