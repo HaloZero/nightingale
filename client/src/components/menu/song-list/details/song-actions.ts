@@ -11,6 +11,7 @@ import {
   Repeat2Icon,
   Trash2Icon,
   VideoIcon,
+  YoutubeIcon,
 } from "lucide-react";
 import type { SongStatusInfo } from "../shared/song-status";
 import type { ActionItemProps } from "./action-item";
@@ -41,6 +42,7 @@ interface BuildActionGroupsParams {
   showKaraokeVideoActions: boolean;
   onRenderKaraokeVideo: () => void;
   onForceRerenderKaraokeVideo: () => void;
+  onFetchYoutubeKaraokeVideo: () => void;
 }
 
 export function buildActionGroups({
@@ -55,6 +57,7 @@ export function buildActionGroups({
   showKaraokeVideoActions,
   onRenderKaraokeVideo,
   onForceRerenderKaraokeVideo,
+  onFetchYoutubeKaraokeVideo,
 }: BuildActionGroupsParams): ActionItemProps[][] {
   const groups: ActionItemProps[][] = [];
 
@@ -187,6 +190,13 @@ export function buildActionGroups({
           title: "Force re-render karaoke video",
           description: "Regenerate unconditionally, with a freshly picked background.",
           onClick: onForceRerenderKaraokeVideo,
+        },
+        {
+          icon: YoutubeIcon,
+          title: "Fetch YouTube karaoke video",
+          description:
+            "Look up the official music video and re-render using it as the background, if it can be synced to the song.",
+          onClick: onFetchYoutubeKaraokeVideo,
         },
       ]);
     }

@@ -3,8 +3,10 @@ import { useAnalysis } from "@/hooks/use-analysis";
 import { useDialog } from "@/hooks/use-dialog";
 import type { Song } from "@/types/Song";
 import {
+  fetchYoutubeKaraokeVideo,
   forceRerenderKaraokeVideo,
   onKaraokeVideoReady,
+  onYoutubeKaraokeVideoReady,
   renderKaraokeVideo,
 } from "@/bridge/karaoke-video";
 import { isTauri } from "@/bridge/runtime";
@@ -61,6 +63,30 @@ export const ActionsSection = ({
     return () => unlisten?.();
   }, [song.file_hash, song.title]);
 
+  // Same completion-event pattern as the plain render above, plus surfacing
+  // the "no music video exists for this song" outcome distinctly from a
+  // genuine failure.
+  useEffect(() => {
+    if (isTauri) return;
+
+    let unlisten: (() => void) | undefined;
+
+    onYoutubeKaraokeVideoReady((event) => {
+      if (event.file_hash !== song.file_hash) return;
+      if (!event.music_video_found) {
+        toast.warning(`No official music video found for "${song.title}"`);
+      } else if (event.error) {
+        toast.error(`YouTube karaoke video failed for "${song.title}": ${event.error}`);
+      } else {
+        toast.success(`YouTube karaoke video ready for "${song.title}"`);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => unlisten?.();
+  }, [song.file_hash, song.title]);
+
   const groups = buildActionGroups({
     song,
     status,
@@ -78,6 +104,10 @@ export const ActionsSection = ({
     onForceRerenderKaraokeVideo: () => {
       toast.info(`Re-rendering karaoke video for "${song.title}"...`);
       forceRerenderKaraokeVideo(song.file_hash);
+    },
+    onFetchYoutubeKaraokeVideo: () => {
+      toast.info(`Looking up a YouTube video for "${song.title}"...`);
+      fetchYoutubeKaraokeVideo(song.file_hash);
     },
   });
 

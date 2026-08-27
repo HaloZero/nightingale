@@ -25,3 +25,28 @@ export const onKaraokeVideoReady = async (
 ): Promise<UnlistenFn> => {
   return await listen<KaraokeVideoReady>("karaoke-video-ready", ({ payload }) => cb(payload));
 };
+
+export interface YoutubeKaraokeVideoReady {
+  file_hash: string;
+  /** Whether TheAudioDB actually had a music video for this song at all. */
+  music_video_found: boolean;
+  error: string | null;
+}
+
+/**
+ * Chains the TheAudioDB lookup (cached server-side, so repeat calls don't
+ * re-hit the API), the video download, and a forced karaoke-video
+ * re-render into one action. `music_video_found: false` on the resulting
+ * event means no video exists to use -- the reel background stays as-is.
+ */
+export const fetchYoutubeKaraokeVideo = async (fileHash: string): Promise<void> => {
+  return await invoke<void>("fetch_youtube_karaoke_video", { fileHash });
+};
+
+export const onYoutubeKaraokeVideoReady = async (
+  cb: (event: YoutubeKaraokeVideoReady) => void,
+): Promise<UnlistenFn> => {
+  return await listen<YoutubeKaraokeVideoReady>("youtube-karaoke-video-ready", ({ payload }) =>
+    cb(payload),
+  );
+};
