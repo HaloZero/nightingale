@@ -153,13 +153,25 @@ pub struct YoutubeKaraokeVideoReady {
 /// a good answer for. A stale transcript (re-analysis changed the lyrics/
 /// timing) still forces a fresh lookup-through-render, same as the reel
 /// path.
-pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady {
+///
+/// `force` skips that freshness check entirely and also re-downloads the
+/// source video unconditionally (`ensure_youtube_video_downloaded`'s own
+/// `force`), discarding whatever's cached -- the "no really, redo this one"
+/// button for when the cached video or a previous download was bad, same
+/// role `force_rerender_karaoke_video` plays for the reel pipeline. The
+/// AudioDB lookup itself is untouched either way (still served from its own
+/// cache, see `find_music_video_for_hash`) -- this forces a fresh
+/// download+render of whatever video was already matched, not a fresh
+/// match.
+pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKaraokeVideoReady {
     let pipeline_started = std::time::Instant::now();
     let cache = CacheDir::new();
-    if is_fresh(
-        &cache.youtube_karaoke_video_path(file_hash),
-        &cache.transcript_path(file_hash),
-    ) {
+    if !force
+        && is_fresh(
+            &cache.youtube_karaoke_video_path(file_hash),
+            &cache.transcript_path(file_hash),
+        )
+    {
         info!(
             "[youtube_karaoke_video] {file_hash}: already have a fresh YouTube-background render, skipping"
         );
@@ -211,7 +223,7 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str) -> YoutubeKaraokeVideoReady
 
     let download_started = std::time::Instant::now();
     if let Err(e) =
-        crate::youtube_video::ensure_youtube_video_downloaded(file_hash, &video.youtube_url)
+        crate::youtube_video::ensure_youtube_video_downloaded(file_hash, &video.youtube_url, force)
     {
         let download_ms = download_started.elapsed().as_millis() as u64;
         warn!(
@@ -388,7 +400,7 @@ pub fn force_rerender_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// bulk-level failure.
 pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
     bulk_karaoke_video(filters, |hash| {
-        let result = ensure_youtube_karaoke_video(hash);
+        let result = ensure_youtube_karaoke_video(hash, false);
         if result.music_video_found {
             result.error.map_or(Ok(()), Err)
         } else {

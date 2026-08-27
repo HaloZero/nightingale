@@ -4,6 +4,7 @@ import { useDialog } from "@/hooks/use-dialog";
 import type { Song } from "@/types/Song";
 import {
   fetchYoutubeKaraokeVideo,
+  forceFetchYoutubeKaraokeVideo,
   forceRerenderKaraokeVideo,
   onKaraokeVideoReady,
   onYoutubeKaraokeVideoReady,
@@ -108,6 +109,10 @@ export const ActionsSection = ({
     onFetchYoutubeKaraokeVideo: () => {
       toast.info(`Looking up a YouTube video for "${song.title}"...`);
       fetchYoutubeKaraokeVideo(song.file_hash);
+    },
+    onForceFetchYoutubeKaraokeVideo: () => {
+      toast.info(`Re-fetching YouTube video for "${song.title}"...`);
+      forceFetchYoutubeKaraokeVideo(song.file_hash);
     },
   });
 

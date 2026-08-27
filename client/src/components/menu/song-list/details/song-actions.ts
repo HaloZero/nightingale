@@ -9,6 +9,7 @@ import {
   PencilLineIcon,
   RefreshCwIcon,
   Repeat2Icon,
+  RotateCcwIcon,
   Trash2Icon,
   VideoIcon,
   YoutubeIcon,
@@ -43,6 +44,7 @@ interface BuildActionGroupsParams {
   onRenderKaraokeVideo: () => void;
   onForceRerenderKaraokeVideo: () => void;
   onFetchYoutubeKaraokeVideo: () => void;
+  onForceFetchYoutubeKaraokeVideo: () => void;
 }
 
 export function buildActionGroups({
@@ -58,6 +60,7 @@ export function buildActionGroups({
   onRenderKaraokeVideo,
   onForceRerenderKaraokeVideo,
   onFetchYoutubeKaraokeVideo,
+  onForceFetchYoutubeKaraokeVideo,
 }: BuildActionGroupsParams): ActionItemProps[][] {
   const groups: ActionItemProps[][] = [];
 
@@ -197,6 +200,12 @@ export function buildActionGroups({
           description:
             "Look up the official music video and re-render using it as the background, if it can be synced to the song.",
           onClick: onFetchYoutubeKaraokeVideo,
+        },
+        {
+          icon: RotateCcwIcon,
+          title: "Force re-fetch YouTube karaoke video",
+          description: "Re-download the source video and re-render unconditionally.",
+          onClick: onForceFetchYoutubeKaraokeVideo,
         },
       ]);
     }

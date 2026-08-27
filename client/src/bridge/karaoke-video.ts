@@ -48,6 +48,17 @@ export const fetchYoutubeKaraokeVideo = async (fileHash: string): Promise<void> 
   return await invoke<void>("fetch_youtube_karaoke_video", { fileHash });
 };
 
+/**
+ * Same as `fetchYoutubeKaraokeVideo` but always redoes the download and
+ * render, discarding whatever's cached -- for a bad download or a stale
+ * render, not a wrong match (the AudioDB lookup itself is still served from
+ * its own cache either way). The "no really, redo this one" counterpart,
+ * same role `forceRerenderKaraokeVideo` plays for the reel-background video.
+ */
+export const forceFetchYoutubeKaraokeVideo = async (fileHash: string): Promise<void> => {
+  return await invoke<void>("force_fetch_youtube_karaoke_video", { fileHash });
+};
+
 export const onYoutubeKaraokeVideoReady = async (
   cb: (event: YoutubeKaraokeVideoReady) => void,
 ): Promise<UnlistenFn> => {

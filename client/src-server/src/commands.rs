@@ -527,6 +527,9 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         "render_karaoke_video" => render_karaoke_video_cmd(events, payload),
         "force_rerender_karaoke_video" => force_rerender_karaoke_video_cmd(events, payload),
         "fetch_youtube_karaoke_video" => fetch_youtube_karaoke_video_cmd(events, payload),
+        "force_fetch_youtube_karaoke_video" => {
+            force_fetch_youtube_karaoke_video_cmd(events, payload)
+        }
         "render_karaoke_video_all" => {
             #[derive(Deserialize)]
             struct Args {
@@ -812,7 +815,8 @@ fn download_youtube_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) 
     let args: Args = deserialize(payload)?;
 
     std::thread::spawn(move || {
-        let result = app_core::ensure_youtube_video_downloaded(&args.file_hash, &args.youtube_url);
+        let result =
+            app_core::ensure_youtube_video_downloaded(&args.file_hash, &args.youtube_url, false);
         events.emit(
             "youtube-video-download-done",
             &json!({
@@ -870,11 +874,33 @@ fn force_rerender_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: V
 /// `audiodb::find_music_video_for_hash`'s doc comment), the download, and a
 /// forced karaoke-video re-render into one button. Fire-and-forget thread +
 /// `"youtube-karaoke-video-ready"` event, same shape as the plain
-/// `render_karaoke_video_cmd`/`force_rerender_karaoke_video_cmd` above.
+/// `render_karaoke_video_cmd`/`force_rerender_karaoke_video_cmd` above. A
+/// no-op if a fresh YouTube-background render already exists -- see
+/// `force_fetch_youtube_karaoke_video_cmd` below for the "redo it anyway"
+/// variant.
 fn fetch_youtube_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
     let args: FileHashArgs = deserialize(payload)?;
     std::thread::spawn(move || {
-        let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash);
+        let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash, false);
+        events.emit("youtube-karaoke-video-ready", &payload);
+    });
+    Ok(Value::Null)
+}
+
+/// Same as `fetch_youtube_karaoke_video_cmd` but always `force`s a fresh
+/// download and re-render, discarding whatever's cached -- for a bad
+/// download or a stale render, not a wrong AudioDB match (the lookup itself
+/// is still served from its own cache either way, see
+/// `ensure_youtube_karaoke_video`'s doc comment). A distinct command rather
+/// than a `force` flag on the one above, same reasoning as
+/// `force_rerender_karaoke_video_cmd` vs. `render_karaoke_video_cmd`.
+fn force_fetch_youtube_karaoke_video_cmd(
+    events: std::sync::Arc<EventBus>,
+    payload: Value,
+) -> CmdResult {
+    let args: FileHashArgs = deserialize(payload)?;
+    std::thread::spawn(move || {
+        let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash, true);
         events.emit("youtube-karaoke-video-ready", &payload);
     });
     Ok(Value::Null)

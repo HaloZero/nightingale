@@ -37,18 +37,29 @@ static LAST_DOWNLOAD_START: Mutex<Option<Instant>> = Mutex::new(None);
 /// at least `MIN_HEIGHT`p into `CacheDir::youtube_video_path(file_hash)`.
 /// Returns the cached path immediately without downloading if it's already
 /// there -- a rerun (e.g. a bulk karaoke-video build) doesn't re-fetch.
+/// `force` skips that check and re-downloads unconditionally, overwriting
+/// the cached copy (e.g. a previous download that was corrupt, or simply
+/// wrong) -- `std::fs::rename` below replaces the destination atomically,
+/// so there's no separate delete-then-download step.
 pub fn ensure_youtube_video_downloaded(
     file_hash: &str,
     youtube_url: &str,
+    force: bool,
 ) -> Result<PathBuf, String> {
     let cache = CacheDir::new();
     let dest = cache.youtube_video_path(file_hash);
-    if dest.is_file() {
+    if !force && dest.is_file() {
         info!(
             "[youtube_video] {file_hash}: already downloaded at {}, skipping",
             dest.display()
         );
         return Ok(dest);
+    }
+    if force && dest.is_file() {
+        info!(
+            "[youtube_video] {file_hash}: force re-download, discarding cached copy at {}",
+            dest.display()
+        );
     }
 
     info!("[youtube_video] {file_hash}: ensuring yt-dlp is available");
@@ -144,3 +155,4 @@ fn download(ytdlp: &Path, youtube_url: &str, tmp: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
