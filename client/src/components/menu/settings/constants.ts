@@ -147,7 +147,8 @@ export const NAV = {
     micLatency: 4,
     lyricsVerticalPosition: 5,
     lyricsHorizontalPosition: 6,
-    backgroundVideos: 7,
+    pixabayRotation: 7,
+    backgroundVideos: 8,
   },
 } as const;
 

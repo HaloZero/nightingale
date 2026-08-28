@@ -103,7 +103,8 @@ function ShaderBranch({ themeIndex, isPlaying }: { themeIndex: number; isPlaying
 
 function BackgroundImpl() {
   const { isReady, isPlaying } = usePlaybackTransportState();
-  const { themeIndex, videoFlavor, sourceVideoPath, youtubeBackground } = usePlaybackThemeState();
+  const { themeIndex, videoFlavor, sourceVideoPath, youtubeBackground, pixabayRotationEnabled } =
+    usePlaybackThemeState();
 
   if (!isReady) {
     return (
@@ -123,7 +124,13 @@ function BackgroundImpl() {
       {sourceVideoPath && <SourceVideo isActive={showSourceVideo} />}
       {youtubeBackground && <YoutubeBackgroundVideo isActive={showYoutubeBackground} />}
       {mode === "shader" && <ShaderBranch themeIndex={themeIndex} isPlaying={playing} />}
-      {mode === "pixabay" && <PixabayVideo flavor={videoFlavor} isPlaying={playing} />}
+      {mode === "pixabay" && (
+        <PixabayVideo
+          flavor={videoFlavor}
+          isPlaying={playing}
+          rotationEnabled={pixabayRotationEnabled}
+        />
+      )}
     </div>
   );
 }

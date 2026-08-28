@@ -234,6 +234,12 @@ pub struct AppConfig {
     pub beam_size: Option<u32>,
     pub batch_size: Option<u32>,
     pub last_video_flavor: Option<usize>,
+    /// Whether the Pixabay background cycles to a different clip each time
+    /// the active one finishes playing. `None`/`false` (the default) loops
+    /// a single clip for the whole song instead -- was unconditional
+    /// rotation before this setting existed; changed to default off since
+    /// constantly cutting to a new clip was distracting during playback.
+    pub pixabay_video_rotation: Option<bool>,
     pub lyrics_vertical_position: Option<String>,
     pub lyrics_horizontal_position: Option<String>,
     pub separator: Option<String>,
@@ -313,6 +319,7 @@ impl Default for AppConfig {
             beam_size: None,
             batch_size: None,
             last_video_flavor: None,
+            pixabay_video_rotation: None,
             lyrics_vertical_position: None,
             lyrics_horizontal_position: None,
             separator: None,

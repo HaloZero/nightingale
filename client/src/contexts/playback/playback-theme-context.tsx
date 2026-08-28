@@ -38,6 +38,7 @@ export interface PlaybackThemeState {
   sourceVideoTempoRatio: number;
   hasSourceVideo: boolean;
   youtubeBackground: YoutubeBackground | null;
+  pixabayRotationEnabled: boolean;
 }
 
 export interface PlaybackThemeActions {
@@ -137,8 +138,17 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
       sourceVideoTempoRatio: song.tempo,
       hasSourceVideo: song.is_video,
       youtubeBackground,
+      pixabayRotationEnabled: config?.pixabay_video_rotation ?? false,
     }),
-    [themeIndex, flavorIndex, sourceVideoPath, song.tempo, song.is_video, youtubeBackground],
+    [
+      themeIndex,
+      flavorIndex,
+      sourceVideoPath,
+      song.tempo,
+      song.is_video,
+      youtubeBackground,
+      config?.pixabay_video_rotation,
+    ],
   );
 
   const actionsValue = useMemo<PlaybackThemeActions>(

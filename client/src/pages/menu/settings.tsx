@@ -415,6 +415,30 @@ export const SettingsPage = () => {
                 />
               </Field>
 
+              <Field>
+                <Label>Rotate background videos</Label>
+                <Hint>
+                  Cut to a different Pixabay clip each time the current one ends, instead of looping
+                  a single clip for the whole song
+                </Hint>
+                <ButtonGroup>
+                  <Button
+                    variant={config?.pixabay_video_rotation === true ? "outline" : "default"}
+                    onClick={() => mutate({ pixabay_video_rotation: false })}
+                    className={getFocusClassName(NAV.general.pixabayRotation, 0)}
+                  >
+                    Off
+                  </Button>
+                  <Button
+                    variant={config?.pixabay_video_rotation === true ? "default" : "outline"}
+                    onClick={() => mutate({ pixabay_video_rotation: true })}
+                    className={getFocusClassName(NAV.general.pixabayRotation, 1)}
+                  >
+                    On
+                  </Button>
+                </ButtonGroup>
+              </Field>
+
               {showBackgroundVideos && (
                 <Field>
                   <Label>Karaoke video backgrounds</Label>
