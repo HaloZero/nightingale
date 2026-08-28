@@ -28,6 +28,12 @@ pub struct CastQuery {
     /// song the way re-running the fuzzy text search theoretically could.
     #[serde(default)]
     file_hash: Option<String>,
+    /// 0.0-1.0 guide-vocal mix level, only meaningful for the custom
+    /// receiver path (`ChromecastConfig.receiver_app_id`) -- ignored by the
+    /// DefaultMediaReceiver path, which has no live audio mixing to
+    /// control. Omitted -> receiver falls back to its own config default.
+    #[serde(default)]
+    guide_volume: Option<f64>,
 }
 
 struct CastOutcome {
@@ -103,8 +109,14 @@ pub async fn handle_cast(
         .is_some_and(|v| v.contains("application/json"));
 
     if wants_json {
-        return match run_cast(state.events.clone(), next_request_id(), query.q, query.file_hash)
-            .await
+        return match run_cast(
+            state.events.clone(),
+            next_request_id(),
+            query.q,
+            query.file_hash,
+            query.guide_volume,
+        )
+        .await
         {
             Ok(outcome) => Json(json!({
                 "file_hash": outcome.file_hash,
@@ -123,7 +135,13 @@ pub async fn handle_cast(
         (None, None) => String::new(),
     };
     let page = Html(render_status_page(&request_id, &display_query));
-    tokio::spawn(run_cast(state.events.clone(), request_id, query.q, query.file_hash));
+    tokio::spawn(run_cast(
+        state.events.clone(),
+        request_id,
+        query.q,
+        query.file_hash,
+        query.guide_volume,
+    ));
     page.into_response()
 }
 
@@ -193,6 +211,7 @@ async fn run_cast(
     request_id: String,
     query: Option<String>,
     file_hash: Option<String>,
+    guide_volume: Option<f64>,
 ) -> Result<CastOutcome, CastError> {
     let query = query.unwrap_or_default();
     info!("[cast] query={:?} file_hash={:?}", query, file_hash);
@@ -281,7 +300,7 @@ async fn run_cast(
 
     let cast_song = song.clone();
     let cast_result = tokio::task::spawn_blocking(move || {
-        app_core::cast_song_to_configured_device(&chromecast, &cast_song)
+        app_core::cast_song_to_configured_device(&chromecast, &cast_song, guide_volume)
     })
     .await
     .map_err(|e| {

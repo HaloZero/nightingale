@@ -20,19 +20,24 @@ interface WordStyle {
   opacity: number;
 }
 
-const STYLES = {
+type LyricsColors = Record<
+  "unsung" | "unsungEstimated" | "sung" | "nextLine" | "nextLineEstimated",
+  WordStyle
+>;
+
+const STYLES: LyricsColors = {
   unsung: { rgb: "rgb(255,255,255)", opacity: 0.5 },
   unsungEstimated: { rgb: "rgb(255,200,100)", opacity: 0.4 },
   sung: { rgb: "rgb(255,255,255)", opacity: 1.0 },
   nextLine: { rgb: "rgb(255,255,255)", opacity: 0.35 },
   nextLineEstimated: { rgb: "rgb(255,200,100)", opacity: 0.25 },
-} as const;
+};
 
-const unsungStyle = (word: Word): WordStyle =>
-  word.estimated ? STYLES.unsungEstimated : STYLES.unsung;
+const unsungStyle = (word: Word, colors: LyricsColors): WordStyle =>
+  word.estimated ? colors.unsungEstimated : colors.unsung;
 
-const nextLineStyle = (word: Word): WordStyle =>
-  word.estimated ? STYLES.nextLineEstimated : STYLES.nextLine;
+const nextLineStyle = (word: Word, colors: LyricsColors): WordStyle =>
+  word.estimated ? colors.nextLineEstimated : colors.nextLine;
 
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
@@ -96,16 +101,21 @@ function findCurrentSegment(segments: Segment[], time: number, hint: number): nu
 
 // --- Per-frame DOM updates (called via rAF subscriber, no React re-renders) ---
 
-function computeWordStyle(word: Word, time: number, isActive: boolean): WordStyle {
-  const base = unsungStyle(word);
+function computeWordStyle(
+  word: Word,
+  time: number,
+  isActive: boolean,
+  colors: LyricsColors,
+): WordStyle {
+  const base = unsungStyle(word, colors);
   if (!isActive) return base;
 
   const wStart = word.start - WORD_HIGHLIGHT_LEAD;
   const wEnd = word.end - WORD_HIGHLIGHT_LEAD;
 
-  if (time >= wEnd) return STYLES.sung;
+  if (time >= wEnd) return colors.sung;
   if (time >= wStart) {
-    return interpolateStyle(base, STYLES.sung, (time - wStart) / (wEnd - wStart));
+    return interpolateStyle(base, colors.sung, (time - wStart) / (wEnd - wStart));
   }
   return base;
 }
@@ -115,11 +125,12 @@ function updateWordSpans(
   words: Word[],
   time: number,
   isActive: boolean,
+  colors: LyricsColors,
 ) {
   for (let i = 0; i < words.length; i++) {
     const span = spans[i];
     if (!span) continue;
-    const s = computeWordStyle(words[i], time, isActive);
+    const s = computeWordStyle(words[i], time, isActive, colors);
     span.style.color = s.rgb;
     span.style.opacity = String(s.opacity);
   }
@@ -204,16 +215,31 @@ const lineClass = (
 
 // --- Component ---
 
+/** Style-override hook for alternate render targets (e.g. the Chromecast
+ * receiver) -- every field defaults to today's exact desktop appearance, so
+ * the desktop call site needs no changes. */
+interface LyricsDisplayClassNames {
+  container?: string;
+  currentPill?: string;
+  currentLine?: string;
+  nextPill?: string;
+  nextLine?: string;
+}
+
 interface LyricsDisplayProps {
   segments: Segment[];
   verticalPosition?: LyricsVerticalPosition | null;
   horizontalPosition?: LyricsHorizontalPosition | null;
+  colors?: LyricsColors;
+  classNames?: LyricsDisplayClassNames;
 }
 
 function LyricsDisplayImpl({
   segments,
   verticalPosition = "bottom",
   horizontalPosition = "center",
+  colors = STYLES,
+  classNames,
 }: LyricsDisplayProps) {
   const { isPlaying, paused } = usePlaybackTransportState();
   const { subscribe, getCurrentTime } = usePlaybackTransportActions();
@@ -266,7 +292,7 @@ function LyricsDisplayImpl({
       updateCountdown(countdownRef.current, showCountdown, timeUntil);
       // Bridged finished lines are past every word's end, so treating them as
       // active keeps the already-sung colors instead of dropping to unsung.
-      updateWordSpans(wordRefs.current, seg.words, time, isActive || bridgeShortGap);
+      updateWordSpans(wordRefs.current, seg.words, time, isActive || bridgeShortGap, colors);
     };
 
     if (animate) {
@@ -284,7 +310,7 @@ function LyricsDisplayImpl({
 
     apply(getCurrentTime());
     return subscribe((time) => apply(time));
-  }, [segments, subscribe, getCurrentTime, animate]);
+  }, [segments, subscribe, getCurrentTime, animate, colors]);
 
   if (segments.length === 0) {
     return null;
@@ -307,22 +333,29 @@ function LyricsDisplayImpl({
         "pointer-events-none absolute inset-x-0 z-10 flex flex-col gap-2 overflow-hidden px-3 sm:px-10",
         verticalClass[vertical],
         horizontalItemsClass[horizontal],
+        classNames?.container,
       )}
     >
       <div
         ref={containerRef}
-        className="relative max-w-full rounded-lg bg-black/40 px-3 py-2 sm:px-5 sm:py-2.5"
+        className={
+          classNames?.currentPill ??
+          "relative max-w-full rounded-lg bg-black/40 px-3 py-2 sm:px-5 sm:py-2.5"
+        }
         style={{ display: "none" }}
       >
         <span ref={countdownRef} className={COUNTDOWN_CLASS} style={{ display: "none" }} />
         {seg.words.length > 0 && (
           <p
-            className={lineClass(
-              segHasReading,
-              "text-[clamp(1.35rem,7svh,2.5rem)] leading-tight font-bold",
-              "gap-x-3 gap-y-1",
-              horizontal,
-            )}
+            className={
+              classNames?.currentLine ??
+              lineClass(
+                segHasReading,
+                "text-[clamp(1.35rem,7svh,2.5rem)] leading-tight font-bold",
+                "gap-x-3 gap-y-1",
+                horizontal,
+              )
+            }
           >
             {seg.words.map((word, wi) => (
               <WordToken
@@ -334,7 +367,7 @@ function LyricsDisplayImpl({
                 refSetter={(el) => {
                   wordRefs.current[wi] = el;
                 }}
-                style={STYLES.unsung}
+                style={colors.unsung}
               />
             ))}
           </p>
@@ -344,16 +377,21 @@ function LyricsDisplayImpl({
       {nextSeg && (
         <div
           ref={nextContainerRef}
-          className="max-w-full rounded-md bg-black/25 px-3 py-1.5 sm:px-4"
+          className={
+            classNames?.nextPill ?? "max-w-full rounded-md bg-black/25 px-3 py-1.5 sm:px-4"
+          }
           style={{ display: "none" }}
         >
           <p
-            className={lineClass(
-              nextHasReading,
-              "text-[clamp(0.9rem,4.5svh,1.5rem)] leading-tight",
-              "gap-x-2 gap-y-0.5",
-              horizontal,
-            )}
+            className={
+              classNames?.nextLine ??
+              lineClass(
+                nextHasReading,
+                "text-[clamp(0.9rem,4.5svh,1.5rem)] leading-tight",
+                "gap-x-2 gap-y-0.5",
+                horizontal,
+              )
+            }
           >
             {nextSeg.words.map((word, wi) => (
               <WordToken
@@ -362,7 +400,7 @@ function LyricsDisplayImpl({
                 hasReading={nextHasReading}
                 isLast={wi === nextSeg.words.length - 1}
                 readingClass="text-[clamp(0.55rem,2.25svh,0.7rem)]"
-                style={nextLineStyle(word)}
+                style={nextLineStyle(word, colors)}
               />
             ))}
           </p>

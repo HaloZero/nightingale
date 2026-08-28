@@ -184,9 +184,20 @@ pub struct ChromecastConfig {
     /// title/artist + word-timed lyrics (`crate::karaoke_video`) instead of
     /// the song's raw audio. Requires the song to already have a
     /// transcript. Off by default -- preserves the original audio-only
-    /// casting behavior for anyone who doesn't opt in.
+    /// casting behavior for anyone who doesn't opt in. Ignored when
+    /// `receiver_app_id` is set (the custom receiver always renders the
+    /// background + lyrics live, there's nothing to pre-render).
     #[serde(default)]
     pub karaoke_video: bool,
+    /// Custom Cast Receiver app ID from the Cast Developer Console. When
+    /// set, `cast_song_to_configured_device` launches this receiver instead
+    /// of DefaultMediaReceiver and drives it via a `urn:x-cast:...` message
+    /// (`crate::cast_protocol`) instead of `media.load` -- the receiver
+    /// fetches everything else (transcript, stems, background) itself,
+    /// same-origin against this server. `None` (default) preserves the
+    /// existing DefaultMediaReceiver + media.load behavior unchanged.
+    #[serde(default)]
+    pub receiver_app_id: Option<String>,
 }
 
 fn default_chromecast_port() -> u16 {

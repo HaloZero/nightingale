@@ -1,0 +1,37 @@
+/* Chromecast-receiver-only lyrics styling -- viewed from across a room on a
+   TV, not a monitor at arm's length, so bigger text and stronger contrast
+   than the desktop look (client/src/components/playback/lyrics-display.tsx's
+   defaults) read better. Independent of the desktop styling entirely --
+   editing this file has no effect on the local playback screen. */
+
+.receiver-lyrics-pill {
+  position: relative;
+  max-width: 100%;
+  border-radius: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 1rem 2rem;
+}
+
+.receiver-lyrics-line {
+  text-align: center;
+  justify-content: center;
+  font-size: clamp(2.5rem, 6.5vw, 5rem);
+  line-height: 1.15;
+  font-weight: 700;
+  text-shadow: 0 0.1em 0.3em rgba(0, 0, 0, 0.6);
+}
+
+.receiver-lyrics-next-pill {
+  max-width: 100%;
+  border-radius: 0.75rem;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.5rem 1.5rem;
+}
+
+.receiver-lyrics-next-line {
+  text-align: center;
+  justify-content: center;
+  font-size: clamp(1.25rem, 3vw, 2.25rem);
+  line-height: 1.15;
+  text-shadow: 0 0.08em 0.25em rgba(0, 0, 0, 0.5);
+}

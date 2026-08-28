@@ -35,4 +35,17 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+
+  // Second entry point: the Chromecast custom receiver page, served
+  // same-origin by client/src-server's embedded static files at
+  // /receiver.html (see client/src/pages/receiver). Independent of the
+  // Tauri desktop bundle, which never builds or serves it.
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        receiver: path.resolve(__dirname, "receiver.html"),
+      },
+    },
+  },
 }));
