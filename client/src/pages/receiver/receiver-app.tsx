@@ -6,6 +6,7 @@ import type { AppConfig } from "@/types/AppConfig";
 import type { CastReceiverMessage } from "@/types/CastReceiverMessage";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { MemoryRouter } from "react-router";
 import { ReceiverLayout } from "./receiver-layout";
 
 const queryClient = new QueryClient();
@@ -96,7 +97,15 @@ function ReceiverContent() {
 export function ReceiverApp() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ReceiverContent />
+      {/* PlaybackTransportProvider (reused as-is from PlaybackProviders)
+          calls useNavigate() for its exit/error-recovery paths -- a
+          desktop-only "back to the menu" action with no receiver
+          equivalent. MemoryRouter satisfies that hook without touching
+          the real address bar; since nothing renders a <Routes> off it,
+          any navigate("/") call is simply inert here. */}
+      <MemoryRouter>
+        <ReceiverContent />
+      </MemoryRouter>
     </QueryClientProvider>
   );
 }
