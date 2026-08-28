@@ -40,6 +40,7 @@ pub mod remote;
 mod songs;
 mod video_processing_queue;
 mod youtube_video_lookups;
+mod youtube_video_sync;
 
 pub use analysis_queue::{
     analysis_queue_acknowledge_failures, analysis_queue_clear, analysis_queue_delete,
@@ -71,6 +72,7 @@ pub use songs::{
     rekey_song, replace_all_songs_sorted, update_library_meta, update_song_fields,
 };
 pub use youtube_video_lookups::{get_youtube_video_lookup, record_youtube_video_lookup};
+pub use youtube_video_sync::{get_youtube_video_sync, record_youtube_video_sync};
 
 /// Incremented at the start of each `start_scan` so in-flight scan threads stop writing
 /// after the library is cleared or replaced (folder change / new scan).

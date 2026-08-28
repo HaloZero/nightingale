@@ -96,15 +96,21 @@ fn server_base_url(config: &ChromecastConfig) -> Result<String, NightingaleError
 
 /// Casts `song` (must be `SongOrigin::LocalFile`) to the device described by
 /// `config`. `guide_volume` (0.0-1.0) only applies to the custom-receiver
-/// path (`config.receiver_app_id`) -- the DefaultMediaReceiver path has no
-/// live audio mixing to control, it just plays a URL. `force_custom_receiver`
-/// is for exercising the custom-receiver path from a dedicated test trigger
-/// (`client/src-server/src/cast.rs`'s `/api/customcast`) independent of
-/// whichever path `receiver_app_id`'s presence would normally select --
-/// still requires `receiver_app_id` to actually be configured, it just
-/// turns "not configured" into a hard error here instead of a silent
-/// fallback to DefaultMediaReceiver, since a caller asking to force the new
-/// path wants to know it didn't happen, not get the old one instead.
+/// path -- the DefaultMediaReceiver path has no live audio mixing to
+/// control, it just plays a URL.
+///
+/// `force_custom_receiver` is the *only* thing that selects the custom
+/// receiver -- merely having `config.receiver_app_id` set does **not**
+/// switch this function's default behavior. That was tried first and
+/// reverted: it meant setting `receiver_app_id` (needed to make
+/// `/api/customcast` work at all) silently changed what every existing
+/// `/api/cast` URL/automation did, with no way to opt back out short of
+/// unsetting the field again. Now `receiver_app_id` only *gates* the custom
+/// path (still required, still a hard error if missing when
+/// `force_custom_receiver` is true) -- it doesn't *select* it. `/api/cast`
+/// (`force_custom_receiver: false`) always takes the DefaultMediaReceiver
+/// path; only `/api/customcast` (`force_custom_receiver: true`,
+/// `client/src-server/src/cast.rs`) ever reaches the custom receiver.
 pub fn cast_song_to_configured_device(
     config: &ChromecastConfig,
     song: &Song,
@@ -126,11 +132,10 @@ pub fn cast_song_to_configured_device(
         ));
     }
 
-    if config.receiver_app_id.is_some() && config.karaoke_video {
+    if force_custom_receiver && config.karaoke_video {
         warn!(
-            "[chromecast] karaoke_video is set but ignored -- receiver_app_id is also set, and \
-             the custom receiver always renders background + lyrics live instead of playing a \
-             pre-rendered video"
+            "[chromecast] karaoke_video is set but ignored for this cast -- the custom receiver \
+             always renders background + lyrics live instead of playing a pre-rendered video"
         );
     }
 
@@ -147,7 +152,7 @@ pub fn cast_song_to_configured_device(
 
     stop_running_apps(&device);
 
-    match config.receiver_app_id.as_deref() {
+    match config.receiver_app_id.as_deref().filter(|_| force_custom_receiver) {
         Some(app_id) => cast_via_custom_receiver(&device, app_id, song, guide_volume),
         None => cast_via_default_media_receiver(&device, config, song),
     }

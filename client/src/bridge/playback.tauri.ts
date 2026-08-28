@@ -1,6 +1,7 @@
 import type { MediaEndpoint } from "@/types/MediaEndpoint";
 import type { AudioPaths } from "@/types/Transcript";
 import type { Transcript } from "@/types/Transcript";
+import type { YoutubeBackground } from "@/types/YoutubeBackground";
 import { invoke, listen, type UnlistenFn } from "./runtime";
 
 export const loadTranscript = async (fileHash: string): Promise<Transcript> => {
@@ -17,6 +18,12 @@ export const ensureMp3Stems = (fileHash: string): void => {
 
 export const ensurePlayableSourceVideo = async (fileHash: string): Promise<string | null> => {
   return await invoke<string | null>("ensure_playable_source_video", { fileHash });
+};
+
+export const loadYoutubeBackground = async (
+  fileHash: string,
+): Promise<YoutubeBackground | null> => {
+  return await invoke<YoutubeBackground | null>("load_youtube_background", { fileHash });
 };
 
 export interface StemsReadyEvent {

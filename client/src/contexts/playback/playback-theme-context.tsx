@@ -8,13 +8,15 @@
 
 import {
   SOURCE_VIDEO_INDEX,
+  YOUTUBE_INDEX,
   nextFlavorIndex,
   nextThemeIndex,
 } from "@/components/playback/background";
 import { FLAVORS, type VideoFlavor } from "@/lib/playback/video-flavor";
-import { ensurePlayableSourceVideo } from "@/bridge/playback";
+import { ensurePlayableSourceVideo, loadYoutubeBackground } from "@/bridge/playback";
 import type { AppConfig } from "@/types/AppConfig";
 import type { Song } from "@/types/Song";
+import type { YoutubeBackground } from "@/types/YoutubeBackground";
 import {
   createContext,
   useCallback,
@@ -35,6 +37,7 @@ export interface PlaybackThemeState {
   sourceVideoPath: string | undefined;
   sourceVideoTempoRatio: number;
   hasSourceVideo: boolean;
+  youtubeBackground: YoutubeBackground | null;
 }
 
 export interface PlaybackThemeActions {
@@ -90,15 +93,32 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
     };
   }, [fileHash, song.is_video, song.path]);
 
+  const [youtubeBackground, setYoutubeBackground] = useState<YoutubeBackground | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setYoutubeBackground(null);
+
+    void loadYoutubeBackground(fileHash)
+      .then((background) => {
+        if (!cancelled) setYoutubeBackground(background);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileHash]);
+
   const cycleTheme = useCallback(() => {
     setThemeIndex((prev) => {
-      const next = nextThemeIndex(prev, song.is_video);
-      if (next !== SOURCE_VIDEO_INDEX) {
+      const next = nextThemeIndex(prev, song.is_video, youtubeBackground !== null);
+      if (next !== SOURCE_VIDEO_INDEX && next !== YOUTUBE_INDEX) {
         persistConfig({ last_theme: next });
       }
       return next;
     });
-  }, [song.is_video, persistConfig]);
+  }, [song.is_video, youtubeBackground, persistConfig]);
 
   const cycleFlavor = useCallback(() => {
     setFlavorIndex((prev) => {
@@ -116,8 +136,9 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
       sourceVideoPath,
       sourceVideoTempoRatio: song.tempo,
       hasSourceVideo: song.is_video,
+      youtubeBackground,
     }),
-    [themeIndex, flavorIndex, sourceVideoPath, song.tempo, song.is_video],
+    [themeIndex, flavorIndex, sourceVideoPath, song.tempo, song.is_video, youtubeBackground],
   );
 
   const actionsValue = useMemo<PlaybackThemeActions>(

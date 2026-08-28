@@ -16,7 +16,9 @@ use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
+use ts_rs::TS;
 
 use crate::cache::CacheDir;
 use crate::vendor::{ensure_ytdlp_downloaded, ffmpeg_path, silent_command};
@@ -154,5 +156,44 @@ fn download(ytdlp: &Path, youtube_url: &str, tmp: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// A downloaded YouTube video that's confidently synced to `file_hash`'s own
+/// audio -- ready to play live as a background (`Background`'s `"youtube"`
+/// theme, both desktop and the Chromecast receiver), muted, with the song's
+/// own audio/vocals mixed separately and the video's playback position
+/// offset by `offset_secs` to keep the two timelines aligned.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct YoutubeBackground {
+    /// Absolute server-local path, resolved into a playable URL the same
+    /// way `Song.path`/`sourceVideoPath` are (`/api/asset` or the Tauri
+    /// media server) -- not a public URL by itself.
+    pub video_asset_path: String,
+    pub offset_secs: f64,
+}
+
+/// `None` covers "no video downloaded for this song" and "downloaded but
+/// not confidently synced" alike -- either way there's nothing to play.
+/// Cheap on a cache hit (`video_sync::ensure_synced_offset`'s whole point);
+/// only pays the real detection cost the first time this is called for a
+/// given song.
+pub fn ensure_youtube_background(file_hash: &str) -> Option<YoutubeBackground> {
+    let cache = CacheDir::new();
+    let video_path = cache.youtube_video_path(file_hash);
+    if !video_path.is_file() {
+        return None;
+    }
+
+    let sync = crate::video_sync::ensure_synced_offset(file_hash)
+        .inspect_err(|e| warn!("[youtube_video] {file_hash}: sync detection failed: {e}"))
+        .ok()
+        .flatten()
+        .filter(|s| s.video_offset_secs >= 0.0)?;
+
+    Some(YoutubeBackground {
+        video_asset_path: video_path.to_string_lossy().into_owned(),
+        offset_secs: sync.video_offset_secs,
+    })
 }
 

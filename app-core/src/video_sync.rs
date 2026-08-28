@@ -70,11 +70,45 @@ pub struct SyncResult {
     pub confidence: f32,
 }
 
+/// `detect_sync_offset_for_hash`, but only ever runs the actual detection
+/// once per song -- checks `library_db::youtube_video_sync` first, and on a
+/// cache miss, computes and persists the result (including a "no confident
+/// match" result, so an unsynced song doesn't get re-probed forever). This
+/// is what every caller should use instead of `detect_sync_offset_for_hash`
+/// directly -- see that function's own module-level cost warning (a full
+/// ffmpeg decode of both files plus an O(n*m) correlation search), which is
+/// exactly what this wrapper exists to pay at most once for.
+pub fn ensure_synced_offset(file_hash: &str) -> Result<Option<SyncResult>, String> {
+    if let Some(row) = library_db::get_youtube_video_sync(file_hash).map_err(|e| e.to_string())? {
+        return Ok(row.video_offset_secs.map(|video_offset_secs| SyncResult {
+            video_offset_secs,
+            confidence: row.confidence.unwrap_or(0.0),
+        }));
+    }
+
+    let cache = CacheDir::new();
+    let video_path = cache.youtube_video_path(file_hash);
+    if !video_path.is_file() {
+        return Err(format!("no downloaded YouTube video for {file_hash} -- download one first"));
+    }
+
+    let result = detect_sync_offset_for_hash(file_hash, &video_path)?;
+    library_db::record_youtube_video_sync(
+        file_hash,
+        result.map(|r| r.video_offset_secs),
+        result.map(|r| r.confidence),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
 /// Looks up `file_hash`'s song and its own audio, and checks it against
 /// `video_path` (a downloaded `youtube_video::ensure_youtube_video_downloaded`
 /// output). `Ok(None)` covers both "song not found" and "no confident
 /// match" -- callers don't need to tell those apart, either way there's no
-/// offset to trust.
+/// offset to trust. Expensive (full ffmpeg decode of both files plus an
+/// O(n*m) correlation search) -- most callers want `ensure_synced_offset`
+/// above instead, which caches this.
 pub fn detect_sync_offset_for_hash(
     file_hash: &str,
     video_path: &Path,

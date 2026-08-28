@@ -450,6 +450,11 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             Ok(serde_json::to_value(find_music_video_for_hash(&args.file_hash)).map_err(serde_err)?)
         }
         "download_youtube_video" => download_youtube_video_cmd(events, payload),
+        "load_youtube_background" => {
+            let args: FileHashArgs = deserialize(payload)?;
+            Ok(serde_json::to_value(app_core::ensure_youtube_background(&args.file_hash))
+                .map_err(serde_err)?)
+        }
         "detect_video_sync_offset" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]

@@ -94,10 +94,15 @@ impl IntoResponse for CastError {
 /// leaving the tab hanging blank for up to a minute on a first-time
 /// karaoke-video render.
 ///
-/// Behavior is whatever `receiver_app_id`'s presence in config selects (see
-/// `app_core::cast_song_to_configured_device`) -- for a dedicated trigger
-/// that always exercises the new custom-receiver page regardless of that
-/// config, see `handle_customcast` below.
+/// Always the original DefaultMediaReceiver + `media.load` path (raw audio,
+/// or a pre-rendered karaoke-video MP4 when `chromecast.karaoke_video`),
+/// regardless of whether `chromecast.receiver_app_id` is set -- setting
+/// that field only *enables* `handle_customcast` below, it does not change
+/// what this endpoint does. (An earlier version of this had `/api/cast`
+/// auto-switch to the custom receiver whenever `receiver_app_id` was
+/// configured; that silently broke every existing `/api/cast` URL/
+/// automation the moment the field was set, with no way to opt back out
+/// short of unsetting it again -- reverted in favor of this explicit split.)
 pub async fn handle_cast(
     state: State<AppState>,
     query: Query<CastQuery>,

@@ -64,6 +64,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_analysis_queue_columns(conn)?;
     ensure_parallel_analysis_timings_table(conn)?;
     ensure_youtube_video_lookups_table(conn)?;
+    ensure_youtube_video_sync_table(conn)?;
     ensure_karaoke_video_status_table(conn)?;
     ensure_karaoke_video_runs_table(conn)?;
     ensure_video_processing_queue_table(conn)?;
@@ -342,6 +343,25 @@ fn ensure_youtube_video_lookups_table(conn: &Connection) -> rusqlite::Result<()>
             track_name TEXT,
             artist_name TEXT,
             looked_up_at TEXT NOT NULL
+        );
+    ",
+    )
+}
+
+/// Cache of `video_sync::detect_sync_offset_for_hash`'s result -- see
+/// `youtube_video_sync`'s module doc for why this exists (detection is
+/// expensive, this makes sure it runs at most once per song). `NULL`
+/// `video_offset_secs` with a row present means "detection ran, no
+/// confident match" -- still cached, distinct from no row at all ("never
+/// ran").
+fn ensure_youtube_video_sync_table(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS youtube_video_sync (
+            file_hash TEXT PRIMARY KEY,
+            video_offset_secs REAL,
+            confidence REAL,
+            computed_at TEXT NOT NULL
         );
     ",
     )

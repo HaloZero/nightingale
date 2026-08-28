@@ -21,6 +21,11 @@ interface UseSourceVideoSyncOptions {
   tempoRatio: number;
   subscribe: (fn: TimeSubscriber) => () => void;
   getCurrentTime: () => number;
+  /** Constant seconds added after the tempo ratio -- e.g. a YouTube
+   * background's own video timeline starting `offsetSecs` before the song's
+   * own t=0 (see `video_sync::SyncResult.video_offset_secs`). Defaults to 0,
+   * the source-video-file behavior this hook originally shipped with. */
+  offsetSecs?: number;
 }
 
 function safePlay(video: HTMLVideoElement): void {
@@ -152,6 +157,7 @@ export function useSourceVideoSync({
   tempoRatio,
   subscribe,
   getCurrentTime,
+  offsetSecs = 0,
 }: UseSourceVideoSyncOptions): { ready: boolean } {
   const [ready, setReady] = useState(false);
   const readyRef = useRef(false);
@@ -159,11 +165,12 @@ export function useSourceVideoSync({
 
   const tempoRatioRef = useLatestRef(tempoRatio);
   const isPlayingRef = useLatestRef(isPlaying);
+  const offsetSecsRef = useLatestRef(offsetSecs);
 
   const currentRatio = useCallback(() => normalizeRatio(tempoRatioRef.current), [tempoRatioRef]);
   const toSourceTime = useCallback(
-    (audioTime: number) => Math.max(0, audioTime * currentRatio()),
-    [currentRatio],
+    (audioTime: number) => Math.max(0, audioTime * currentRatio() + offsetSecsRef.current),
+    [currentRatio, offsetSecsRef],
   );
 
   useEffect(() => {

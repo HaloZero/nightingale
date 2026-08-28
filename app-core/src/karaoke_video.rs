@@ -499,7 +499,7 @@ pub fn ensure_youtube_background_karaoke_video(
         )));
     }
 
-    let sync = crate::video_sync::detect_sync_offset_for_hash(file_hash, &youtube_source)
+    let sync = crate::video_sync::ensure_synced_offset(file_hash)
         .map_err(NightingaleError::Other)?
         .filter(|s| s.video_offset_secs >= 0.0)
         .ok_or_else(|| {

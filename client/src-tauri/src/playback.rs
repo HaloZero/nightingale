@@ -1,4 +1,6 @@
-use app_core::{ensure_mp3_stems_ready_payload, AudioPaths, PixabayVideoDownloaded};
+use app_core::{
+    AudioPaths, PixabayVideoDownloaded, YoutubeBackground, ensure_mp3_stems_ready_payload,
+};
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
@@ -23,6 +25,11 @@ pub fn ensure_playable_source_video(file_hash: String) -> Option<String> {
     app_core::ensure_playable_source_video(&file_hash)
         .ok()
         .flatten()
+}
+
+#[tauri::command]
+pub fn load_youtube_background(file_hash: String) -> Option<YoutubeBackground> {
+    app_core::ensure_youtube_background(&file_hash)
 }
 
 #[tauri::command]

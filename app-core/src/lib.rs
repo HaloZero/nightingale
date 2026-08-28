@@ -104,7 +104,7 @@ pub use video_queue::{
     clear as clear_video_queue, mark_processing as mark_video_queue_processing,
 };
 pub use video_sync::{SyncResult, detect_sync_offset_for_hash};
-pub use youtube_video::ensure_youtube_video_downloaded;
+pub use youtube_video::{YoutubeBackground, ensure_youtube_background, ensure_youtube_video_downloaded};
 
 pub fn startup() -> Result<(), String> {
     init_library().map_err(|e| e.to_string())?;
