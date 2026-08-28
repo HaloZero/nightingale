@@ -112,6 +112,7 @@ async fn main() {
         .route("/api/cmd/:name", post(commands::handle_cmd))
         .route("/api/asset", get(media::handle_asset))
         .route("/api/cast", get(cast::handle_cast))
+        .route("/api/customcast", get(cast::handle_customcast))
         .route("/media/:hash/:kind", get(media::handle_hashed))
         .route("/ws", any(ws::handle_upgrade))
         .fallback_service(static_assets)

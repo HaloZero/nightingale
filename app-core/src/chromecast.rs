@@ -97,11 +97,19 @@ fn server_base_url(config: &ChromecastConfig) -> Result<String, NightingaleError
 /// Casts `song` (must be `SongOrigin::LocalFile`) to the device described by
 /// `config`. `guide_volume` (0.0-1.0) only applies to the custom-receiver
 /// path (`config.receiver_app_id`) -- the DefaultMediaReceiver path has no
-/// live audio mixing to control, it just plays a URL.
+/// live audio mixing to control, it just plays a URL. `force_custom_receiver`
+/// is for exercising the custom-receiver path from a dedicated test trigger
+/// (`client/src-server/src/cast.rs`'s `/api/customcast`) independent of
+/// whichever path `receiver_app_id`'s presence would normally select --
+/// still requires `receiver_app_id` to actually be configured, it just
+/// turns "not configured" into a hard error here instead of a silent
+/// fallback to DefaultMediaReceiver, since a caller asking to force the new
+/// path wants to know it didn't happen, not get the old one instead.
 pub fn cast_song_to_configured_device(
     config: &ChromecastConfig,
     song: &Song,
     guide_volume: Option<f64>,
+    force_custom_receiver: bool,
 ) -> Result<(), NightingaleError> {
     ensure_crypto_provider();
 
@@ -109,6 +117,14 @@ pub fn cast_song_to_configured_device(
         "[chromecast] casting {:?} by {:?} (file_hash={}) to {}:{}",
         song.title, song.artist, song.file_hash, config.host, config.port
     );
+
+    if force_custom_receiver && config.receiver_app_id.is_none() {
+        return Err(NightingaleError::Other(
+            "force_custom_receiver requested but chromecast.receiver_app_id is not set in \
+             config.json"
+                .to_string(),
+        ));
+    }
 
     if config.receiver_app_id.is_some() && config.karaoke_video {
         warn!(

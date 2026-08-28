@@ -93,10 +93,41 @@ impl IntoResponse for CastError {
 /// the existing `/ws` event bus (`"cast-progress"` events) instead of
 /// leaving the tab hanging blank for up to a minute on a first-time
 /// karaoke-video render.
+///
+/// Behavior is whatever `receiver_app_id`'s presence in config selects (see
+/// `app_core::cast_song_to_configured_device`) -- for a dedicated trigger
+/// that always exercises the new custom-receiver page regardless of that
+/// config, see `handle_customcast` below.
 pub async fn handle_cast(
+    state: State<AppState>,
+    query: Query<CastQuery>,
+    headers: HeaderMap,
+) -> Response {
+    handle_cast_inner(state, query, headers, false, "/api/cast").await
+}
+
+/// `GET /api/customcast?q=<free text>` -- identical matching/progress
+/// behavior to `handle_cast` above, but always casts via the custom
+/// receiver (`client/src/pages/receiver`), erroring if
+/// `chromecast.receiver_app_id` isn't set rather than silently falling back
+/// to DefaultMediaReceiver. A dedicated trigger for testing/using the new
+/// receiver page independent of whatever `/api/cast`'s default behavior is
+/// -- see `force_custom_receiver` on
+/// `app_core::cast_song_to_configured_device`.
+pub async fn handle_customcast(
+    state: State<AppState>,
+    query: Query<CastQuery>,
+    headers: HeaderMap,
+) -> Response {
+    handle_cast_inner(state, query, headers, true, "/api/customcast").await
+}
+
+async fn handle_cast_inner(
     State(state): State<AppState>,
     Query(query): Query<CastQuery>,
     headers: HeaderMap,
+    force_custom_receiver: bool,
+    base_path: &'static str,
 ) -> Response {
     if query.q.is_none() && query.file_hash.is_none() {
         return ApiError(StatusCode::BAD_REQUEST, "must provide either q or file_hash".into())
@@ -115,6 +146,7 @@ pub async fn handle_cast(
             query.q,
             query.file_hash,
             query.guide_volume,
+            force_custom_receiver,
         )
         .await
         {
@@ -134,13 +166,14 @@ pub async fn handle_cast(
         (None, Some(hash)) => format!("song {hash}"),
         (None, None) => String::new(),
     };
-    let page = Html(render_status_page(&request_id, &display_query));
+    let page = Html(render_status_page(&request_id, &display_query, base_path));
     tokio::spawn(run_cast(
         state.events.clone(),
         request_id,
         query.q,
         query.file_hash,
         query.guide_volume,
+        force_custom_receiver,
     ));
     page.into_response()
 }
@@ -212,6 +245,7 @@ async fn run_cast(
     query: Option<String>,
     file_hash: Option<String>,
     guide_volume: Option<f64>,
+    force_custom_receiver: bool,
 ) -> Result<CastOutcome, CastError> {
     let query = query.unwrap_or_default();
     info!("[cast] query={:?} file_hash={:?}", query, file_hash);
@@ -300,7 +334,12 @@ async fn run_cast(
 
     let cast_song = song.clone();
     let cast_result = tokio::task::spawn_blocking(move || {
-        app_core::cast_song_to_configured_device(&chromecast, &cast_song, guide_volume)
+        app_core::cast_song_to_configured_device(
+            &chromecast,
+            &cast_song,
+            guide_volume,
+            force_custom_receiver,
+        )
     })
     .await
     .map_err(|e| {
@@ -342,9 +381,10 @@ fn html_escape(s: &str) -> String {
         .collect()
 }
 
-fn render_status_page(request_id: &str, query: &str) -> String {
+fn render_status_page(request_id: &str, query: &str, base_path: &str) -> String {
     let query_html = html_escape(query);
     let request_id_html = html_escape(request_id);
+    let base_path_html = html_escape(base_path);
     format!(
         r##"<!doctype html>
 <html>
@@ -413,6 +453,7 @@ fn render_status_page(request_id: &str, query: &str) -> String {
   </div>
   <script>
     const requestId = "{request_id_html}";
+    const basePath = "{base_path_html}";
     const statusEl = document.getElementById("status");
     const cardEl = document.getElementById("card");
     const spinnerEl = document.getElementById("spinner");
@@ -439,7 +480,7 @@ fn render_status_page(request_id: &str, query: &str) -> String {
 
       for (const alt of alternatives) {{
         const link = document.createElement("a");
-        link.href = `/api/cast?file_hash=${{encodeURIComponent(alt.file_hash)}}`;
+        link.href = `${{basePath}}?file_hash=${{encodeURIComponent(alt.file_hash)}}`;
         link.textContent = `${{alt.title}} — ${{alt.artist}}`;
         alternativesEl.appendChild(link);
       }}
