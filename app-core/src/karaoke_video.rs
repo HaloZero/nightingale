@@ -323,12 +323,14 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
 /// than vanishing into a discarded `Result`.
 fn bulk_karaoke_video(
     filters: &LibraryMenuFilters,
+    kind: crate::video_queue::VideoQueueKind,
     action: fn(&str) -> Result<(), String>,
 ) -> usize {
     let hashes =
         library_db::iter_file_hashes_filtered_karaoke_renderable(filters).unwrap_or_default();
     let count = hashes.len();
     info!("[karaoke_video] bulk action starting for {count} eligible song(s)");
+    crate::video_queue::mark_queued_many(kind, &hashes);
     std::thread::spawn(move || {
         let batch_started = std::time::Instant::now();
         for (i, hash) in hashes.iter().enumerate() {
@@ -336,6 +338,7 @@ fn bulk_karaoke_video(
             let label = song_label(hash);
             let song_started = std::time::Instant::now();
             info!("[karaoke_video] ({position}/{count}) starting {label}");
+            let token = crate::video_queue::mark_processing(hash, kind);
             match action(hash) {
                 Ok(()) => info!(
                     "[karaoke_video] ({position}/{count}) {label} done in {:.1}s",
@@ -346,6 +349,7 @@ fn bulk_karaoke_video(
                     song_started.elapsed().as_secs_f64()
                 ),
             }
+            crate::video_queue::clear(hash, kind, &token);
         }
         info!(
             "[karaoke_video] bulk action finished ({count} song(s)) in {:.1}s",
@@ -368,7 +372,7 @@ fn song_label(file_hash: &str) -> String {
 /// Bulk "Render karaoke video" -- no-ops per-song for anything already
 /// fresh relative to its transcript, same as the per-song action.
 pub fn render_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
-    bulk_karaoke_video(filters, |hash| {
+    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
         ensure_karaoke_video(hash, false)
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -378,7 +382,7 @@ pub fn render_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// Bulk "Force re-render karaoke video" -- regenerates every eligible song
 /// unconditionally, same as the per-song action.
 pub fn force_rerender_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
-    bulk_karaoke_video(filters, |hash| {
+    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
         ensure_karaoke_video(hash, true)
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -399,7 +403,7 @@ pub fn force_rerender_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// at info level); only an actual download/sync/render error counts as a
 /// bulk-level failure.
 pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
-    bulk_karaoke_video(filters, |hash| {
+    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Youtube, |hash| {
         let result = ensure_youtube_karaoke_video(hash, false);
         if result.music_video_found {
             result.error.map_or(Ok(()), Err)

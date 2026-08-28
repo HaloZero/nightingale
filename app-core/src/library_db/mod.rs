@@ -38,6 +38,7 @@ mod queries;
 mod rebase;
 pub mod remote;
 mod songs;
+mod video_processing_queue;
 mod youtube_video_lookups;
 
 pub use analysis_queue::{
@@ -53,6 +54,10 @@ pub use migrations::rewrite_legacy_jellyfin_paths;
 pub use parallel_mismatches::{clear_parallel_analysis_mismatch, record_parallel_analysis_mismatch};
 pub use parallel_timings::{ParallelAnalysisTimingRow, insert_parallel_analysis_timing};
 pub use playlists::{PlaylistDefinition, PlaylistSongKeyKind, replace_all_playlists};
+pub use video_processing_queue::{
+    video_queue_clear, video_queue_clear_all, video_queue_load_rows,
+    video_queue_mark_processing, video_queue_mark_queued_many,
+};
 pub use queries::{
     iter_file_hashes_filtered_full_reanalyzable, iter_file_hashes_filtered_karaoke_renderable,
     iter_file_hashes_filtered_not_analyzed, iter_file_hashes_filtered_queued,

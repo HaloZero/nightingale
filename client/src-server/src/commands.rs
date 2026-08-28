@@ -1,9 +1,10 @@
 use app_core::{
-    detect_sync_offset_for_hash, ensure_mp3_stems_ready_payload, find_music_video_for_hash,
-    load_lyrics_file, save_lyrics_and_realign, search_lrclib_for_hash, shift_key_done_payload,
+    clear_video_queue, detect_sync_offset_for_hash, ensure_mp3_stems_ready_payload,
+    find_music_video_for_hash, load_lyrics_file, mark_video_queue_processing,
+    save_lyrics_and_realign, search_lrclib_for_hash, shift_key_done_payload,
     shift_tempo_done_payload, AnalysisQueue, AppConfig, CacheStats, FailureKind,
     LibraryMenuFilters, LibraryMenuItems, LibrarySource, LoadSongsParams, PixabayVideoDownloaded,
-    ProfileStore, SongsStore,
+    ProfileStore, SongsStore, VideoProcessingQueue, VideoQueueKind,
 };
 use axum::{
     extract::{Path as AxumPath, State},
@@ -276,6 +277,7 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         "load_analysis_queue" => {
             Ok(serde_json::to_value(AnalysisQueue::load()).map_err(serde_err)?)
         }
+        "load_video_queue" => Ok(serde_json::to_value(VideoProcessingQueue::load()).map_err(serde_err)?),
         "load_library_menu_items" => {
             let items: LibraryMenuItems = app_core::load_library_menu_items()
                 .map_err(|e| ApiError::internal(e.to_string()))?;
@@ -815,8 +817,10 @@ fn download_youtube_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) 
     let args: Args = deserialize(payload)?;
 
     std::thread::spawn(move || {
+        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Youtube);
         let result =
             app_core::ensure_youtube_video_downloaded(&args.file_hash, &args.youtube_url, false);
+        clear_video_queue(&args.file_hash, VideoQueueKind::Youtube, &token);
         events.emit(
             "youtube-video-download-done",
             &json!({
@@ -849,7 +853,9 @@ fn render_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) ->
     }
     let args: Args = deserialize(payload)?;
     std::thread::spawn(move || {
-        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash, args.force);
+        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Reel);
+        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash.clone(), args.force);
+        clear_video_queue(&args.file_hash, VideoQueueKind::Reel, &token);
         events.emit("karaoke-video-ready", &payload);
     });
     Ok(Value::Null)
@@ -863,7 +869,9 @@ fn render_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) ->
 fn force_rerender_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
     let args: FileHashArgs = deserialize(payload)?;
     std::thread::spawn(move || {
-        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash, true);
+        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Reel);
+        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash.clone(), true);
+        clear_video_queue(&args.file_hash, VideoQueueKind::Reel, &token);
         events.emit("karaoke-video-ready", &payload);
     });
     Ok(Value::Null)
@@ -881,7 +889,9 @@ fn force_rerender_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: V
 fn fetch_youtube_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
     let args: FileHashArgs = deserialize(payload)?;
     std::thread::spawn(move || {
+        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Youtube);
         let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash, false);
+        clear_video_queue(&args.file_hash, VideoQueueKind::Youtube, &token);
         events.emit("youtube-karaoke-video-ready", &payload);
     });
     Ok(Value::Null)
@@ -900,7 +910,9 @@ fn force_fetch_youtube_karaoke_video_cmd(
 ) -> CmdResult {
     let args: FileHashArgs = deserialize(payload)?;
     std::thread::spawn(move || {
+        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Youtube);
         let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash, true);
+        clear_video_queue(&args.file_hash, VideoQueueKind::Youtube, &token);
         events.emit("youtube-karaoke-video-ready", &payload);
     });
     Ok(Value::Null)

@@ -14,6 +14,7 @@ import { Progress } from "./progress";
 import { songKey } from "./shared/song-key";
 import { SongDetailsSidebar } from "./song-details-sidebar";
 import type { SongItemProps } from "./types";
+import { VideoQueueIndicator } from "./video-queue-indicator";
 import { SongGrid } from "./views/song-grid";
 import { SongTable } from "./views/song-table";
 
@@ -138,6 +139,7 @@ export const SongList = () => {
         />
         <Separator />
         <Progress />
+        <VideoQueueIndicator />
         {showEmptyState ? (
           <Empty className="px-4">
             <EmptyHeader>

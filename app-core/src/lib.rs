@@ -22,6 +22,7 @@ mod source;
 mod usdx;
 mod vendor;
 mod vendor_scripts;
+mod video_queue;
 mod video_sync;
 mod youtube_video;
 
@@ -96,6 +97,10 @@ pub use vendor::{
     step_download_ffmpeg, step_download_uv, step_extract_scripts, step_install_packages,
     step_install_python,
 };
+pub use video_queue::{
+    VideoProcessingQueue, VideoQueueEntry, VideoQueueKind, VideoQueueStage,
+    clear as clear_video_queue, mark_processing as mark_video_queue_processing,
+};
 pub use video_sync::{SyncResult, detect_sync_offset_for_hash};
 pub use youtube_video::ensure_youtube_video_downloaded;
 
@@ -121,6 +126,12 @@ pub fn startup() -> Result<(), String> {
     AnalysisQueue::clear();
 
     analyzer::enqueue_many(&restore_hashes);
+
+    // Same reasoning as the AnalysisQueue::clear() above -- whatever process
+    // owned a video_processing_queue row is gone, so nothing is actually in
+    // flight. No restore step: video generation isn't a durable job, it's
+    // just re-triggered by the next freshness-checked bulk/single action.
+    video_queue::clear_all();
 
     let cache = CacheDir::new();
 

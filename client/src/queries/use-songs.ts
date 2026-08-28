@@ -1,6 +1,13 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ANALYSIS_QUEUE, SONGS, SONGS_META, MENU } from "./keys";
-import { getPreloadedSongsMeta, loadAnalysisQueue, loadSongs, loadSongsMeta } from "@/bridge/songs";
+import { ANALYSIS_QUEUE, SONGS, SONGS_META, MENU, VIDEO_QUEUE } from "./keys";
+import {
+  getPreloadedSongsMeta,
+  loadAnalysisQueue,
+  loadSongs,
+  loadSongsMeta,
+  loadVideoQueue,
+} from "@/bridge/songs";
+import { isTauri } from "@/bridge/runtime";
 import { useLibraryFilter } from "@/hooks/use-library-filter";
 import { useSearch } from "@/hooks/use-search";
 import { useRef, useState } from "react";
@@ -104,5 +111,15 @@ export const useAnalysisQueue = () => {
 
       prevEntriesRef.current = entries;
     },
+  });
+};
+
+/** Server-only, like the rest of the karaoke/YouTube-video pipeline -- disabled under Tauri. */
+export const useVideoQueue = () => {
+  return useQuery({
+    queryKey: VIDEO_QUEUE,
+    queryFn: loadVideoQueue,
+    refetchInterval: DEFAULT_REFETCH_INTERVAL,
+    enabled: !isTauri,
   });
 };

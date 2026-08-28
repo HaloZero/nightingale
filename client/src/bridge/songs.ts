@@ -3,6 +3,7 @@ import type { LoadSongsParams } from "@/types/LoadSongsParams";
 import type { SongsMeta } from "@/types/SongsMeta";
 import type { SongsStore } from "@/types/SongsStore";
 import type { Song } from "@/types/Song";
+import type { VideoProcessingQueue } from "@/types/VideoProcessingQueue";
 import { invoke } from "./runtime";
 
 export function getPreloadedSongsMeta(): SongsMeta | undefined {
@@ -26,4 +27,9 @@ export const loadSongsMeta = async (): Promise<SongsMeta> => {
 
 export const loadAnalysisQueue = async (): Promise<AnalysisQueue> => {
   return await invoke<AnalysisQueue>("load_analysis_queue");
+};
+
+/** Server-only, like the rest of the karaoke/YouTube-video bridge -- see `bridge/karaoke-video.ts`. */
+export const loadVideoQueue = async (): Promise<VideoProcessingQueue> => {
+  return await invoke<VideoProcessingQueue>("load_video_queue");
 };

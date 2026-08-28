@@ -4,6 +4,7 @@ export const PROFILES = ["profiles"];
 export const SONGS = ["songs"];
 export const SONGS_META = ["songs-meta"];
 export const ANALYSIS_QUEUE = ["analysis-queue"];
+export const VIDEO_QUEUE = ["video-queue"];
 export const MENU = ["menu"];
 export const UPDATER = ["updater"];
 export const LYRICS = ["lyrics"];

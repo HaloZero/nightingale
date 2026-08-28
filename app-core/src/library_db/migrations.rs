@@ -66,6 +66,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_youtube_video_lookups_table(conn)?;
     ensure_karaoke_video_status_table(conn)?;
     ensure_karaoke_video_runs_table(conn)?;
+    ensure_video_processing_queue_table(conn)?;
 
     let v: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if v >= SCHEMA_VERSION {
@@ -398,6 +399,25 @@ fn ensure_karaoke_video_runs_table(conn: &Connection) -> rusqlite::Result<()> {
             ON karaoke_video_runs(file_hash);
         CREATE INDEX IF NOT EXISTS idx_karaoke_video_runs_started_at
             ON karaoke_video_runs(started_at);
+    ",
+    )
+}
+
+/// Live in-progress state for the same two pipelines -- see
+/// `video_processing_queue`'s module doc for how this differs from the two
+/// tables above (both are cache/history, not "in flight right now").
+fn ensure_video_processing_queue_table(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS video_processing_queue (
+            file_hash TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            PRIMARY KEY (file_hash, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_video_processing_queue_kind
+            ON video_processing_queue(kind);
     ",
     )
 }
