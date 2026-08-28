@@ -12,23 +12,24 @@ const queryClient = new QueryClient();
 
 /**
  * Registers the CAF custom-message listener and returns the most recent
- * `Load` message. In a real cast session `window.cast.framework` is
- * injected by the SDK script tag in receiver.html before this module runs;
- * outside one (a plain desktop browser tab during development) it falls
- * back to reading the same shape from the query string, so the whole
- * render path is exercisable without a physical Chromecast -- see the plan
- * doc's verification section.
+ * `Load` message. `?file_hash=...` in the query string always wins over a
+ * real Cast session, checked first -- the gstatic CAF SDK script tag in
+ * receiver.html still loads and defines `window.cast.framework` in a plain
+ * desktop browser tab (it has no way to know it isn't actually running on a
+ * Chromecast), so branching on "does `window.cast.framework` exist" is not
+ * a reliable signal for "are we in a real Cast session." A real Cast launch
+ * never carries `file_hash` on the receiver URL, so there's no ambiguity in
+ * practice -- this lets the whole render path be exercised from a plain
+ * browser tab without a physical Chromecast, see the plan doc's
+ * verification section.
  */
 function useIncomingLoadMessage(): CastReceiverMessage | null {
   const [message, setMessage] = useState<CastReceiverMessage | null>(null);
 
   useEffect(() => {
-    const context = window.cast?.framework?.CastReceiverContext.getInstance();
-
-    if (!context) {
-      const params = new URLSearchParams(location.search);
-      const fileHash = params.get("file_hash");
-      if (!fileHash) return;
+    const params = new URLSearchParams(location.search);
+    const fileHash = params.get("file_hash");
+    if (fileHash) {
       const guideVolumeParam = params.get("guide_volume");
       setMessage({
         type: "load",
@@ -37,6 +38,9 @@ function useIncomingLoadMessage(): CastReceiverMessage | null {
       });
       return;
     }
+
+    const context = window.cast?.framework?.CastReceiverContext.getInstance();
+    if (!context) return;
 
     context.addCustomMessageListener<CastReceiverMessage>(CAST_NAMESPACE, (event) => {
       setMessage(event.data);
