@@ -26,7 +26,12 @@ export function ReceiverLayout({ config }: ReceiverLayoutProps) {
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black" style={{ contain: "strict" }}>
-      <Background />
+      {/* Background shows a shader loading-animation while !isReady (see
+          background.tsx) -- desirable on desktop, but a plain black screen
+          reads better on a TV during the brief load. Not mounting it at all
+          until ready lets the wrapper's own bg-black show through instead,
+          without touching Background's shared desktop behavior. */}
+      {isReady && <Background />}
 
       {isReady && (
         <LyricsDisplay
