@@ -24,6 +24,7 @@ md-5 = "0.10"
 rust_cast = "0.21"
 rustls = "0.23"
 strsim = "0.11"
+unicode-normalization = "0.1"
 mime_guess = "2"
 ab_glyph = "0.2"
 

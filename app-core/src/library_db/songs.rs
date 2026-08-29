@@ -7,6 +7,7 @@
 //! without copy-pasting the column lists.
 
 use rusqlite::params;
+use tracing::warn;
 
 use crate::song::{Song, TranscriptSource};
 
@@ -192,27 +193,68 @@ pub fn load_song_by_hash(file_hash: &str) -> rusqlite::Result<Option<Song>> {
     })
 }
 
+/// Normalizes a path string for the case/accent-insensitive fallback in
+/// [`load_song_by_path`]: Unicode-NFC-composes it (macOS's filesystem
+/// returns NFD-decomposed accented characters when scanning a directory, so
+/// a path arriving over the network -- e.g. from a peer instance, already
+/// NFC-composed -- can otherwise byte-mismatch an on-disk-scanned path for
+/// the identical filename) and lowercases it (folder/file casing drifts
+/// between two machines' own scans of what's nominally "the same" library,
+/// e.g. via Dropbox re-syncs or manual renames, even though the underlying
+/// filesystem is itself case-insensitive).
+fn normalize_path_for_matching(path: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    path.nfc().collect::<String>().to_lowercase()
+}
+
 /// Looks a song up by its exact library path rather than content hash --
 /// used by `parallel_analysis` to answer a peer's "do you have this file"
 /// check even when the content hash might differ (that mismatch is the
-/// thing being detected, not something to filter out here).
+/// thing being detected, not something to filter out here). Two passes:
+/// first the indexed exact (byte-for-byte) match, which is what every local
+/// caller hits and is the only one the `UNIQUE` index on `path` serves; if
+/// that misses, falls back to a full-table scan comparing
+/// [`normalize_path_for_matching`] on both sides, so a path that's case- or
+/// accent-composition-different from what's stored still resolves to the
+/// same song instead of being reported as absent. The fallback is a full
+/// scan (no index can serve a normalized comparison), but it's only reached
+/// after the fast path already missed -- currently exercised by
+/// `parallel_analysis`'s peer-to-peer path lookups, where casing/accent
+/// drift between two independently-scanned copies of "the same" library is
+/// the common case, not a rare one.
 pub fn load_song_by_path(path: &str) -> rusqlite::Result<Option<Song>> {
     use rusqlite::OptionalExtension;
     with_conn(|c| {
         let mut stmt = c.prepare("SELECT payload FROM songs WHERE path = ?1 LIMIT 1")?;
-        let song = stmt
-            .query_row([path], |r| {
-                let payload: String = r.get(0)?;
-                serde_json::from_str::<Song>(&payload).map_err(|e| {
+        let exact = stmt
+            .query_row([path], load_song_from_payload_column)
+            .optional()?;
+        if exact.is_some() {
+            return Ok(exact);
+        }
+
+        let target = normalize_path_for_matching(path);
+        let mut stmt = c.prepare("SELECT path, payload FROM songs")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let candidate_path: String = row.get(0)?;
+            if normalize_path_for_matching(&candidate_path) == target {
+                warn!(
+                    "[library_db] load_song_by_path: {path:?} only matched via case/accent-\
+                     insensitive fallback -- stored as {candidate_path:?}, likely casing or \
+                     Unicode-composition drift between two scans of the same file"
+                );
+                let payload: String = row.get(1)?;
+                return serde_json::from_str::<Song>(&payload).map(Some).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        0,
+                        1,
                         rusqlite::types::Type::Text,
                         Box::new(e),
                     )
-                })
-            })
-            .optional()?;
-        Ok(song)
+                });
+            }
+        }
+        Ok(None)
     })
 }
 
