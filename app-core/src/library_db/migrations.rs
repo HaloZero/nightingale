@@ -62,6 +62,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_analysis_timings_columns(conn)?;
     ensure_genre_column(conn)?;
     ensure_analysis_queue_columns(conn)?;
+    ensure_parallel_mismatch_columns(conn)?;
     ensure_parallel_analysis_timings_table(conn)?;
     ensure_youtube_video_lookups_table(conn)?;
     ensure_youtube_video_sync_table(conn)?;
@@ -191,6 +192,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
                 path TEXT NOT NULL,
                 peer_url TEXT NOT NULL,
                 peer_hash TEXT,
+                peer_path TEXT,
                 detected_at TEXT NOT NULL
             );
         ",
@@ -293,6 +295,38 @@ fn ensure_analysis_queue_columns(conn: &Connection) -> rusqlite::Result<()> {
     if !existing.contains("failed_acknowledged") {
         conn.execute(
             "ALTER TABLE analysis_queue ADD COLUMN failed_acknowledged INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+/// Adds `peer_path` to `parallel_analysis_mismatches`: recorded when a
+/// "peer has nothing at this relative path" miss turns out to be a moved
+/// file -- the same content hash found on the peer at a different path --
+/// rather than a genuinely absent song. `NULL` for the ordinary "peer truly
+/// has nothing" and "different hash at the same path" cases. Same
+/// version-decoupled existence-check shape as [`ensure_lyrics_columns`].
+fn ensure_parallel_mismatch_columns(conn: &Connection) -> rusqlite::Result<()> {
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'parallel_analysis_mismatches'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !table_exists {
+        return Ok(());
+    }
+
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt =
+            conn.prepare("SELECT name FROM pragma_table_info('parallel_analysis_mismatches')")?;
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?
+    };
+
+    if !existing.contains("peer_path") {
+        conn.execute(
+            "ALTER TABLE parallel_analysis_mismatches ADD COLUMN peer_path TEXT",
             [],
         )?;
     }

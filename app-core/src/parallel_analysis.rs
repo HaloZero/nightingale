@@ -310,21 +310,55 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
 
     let peer_song = match peer_song {
         None => {
-            info!(
-                "[parallel_analysis] {label}: peer has nothing at relative path {relative_path:?}"
-            );
-            record_mismatch(file_hash, &local_path, base_url, None, label);
-            crate::analyzer::return_to_front(file_hash);
-            return DispatchOutcome::Rejected(format!(
-                "peer has nothing at relative path {relative_path:?}"
-            ));
+            // The peer doesn't have anything at the expected relative path --
+            // but before concluding it's genuinely absent, check whether this
+            // exact hash exists somewhere else on the peer (a moved/renamed
+            // file rather than a missing one), so the mismatch report says
+            // "moved to X" instead of just "nothing here".
+            let moved_to = match peer_song_by_hash(base_url, file_hash) {
+                Ok(found) => found,
+                Err(PeerError::Unreachable) => return DispatchOutcome::PeerDown,
+                Err(PeerError::Other) => {
+                    warn!(
+                        "[parallel_analysis] {label}: by-hash lookup on peer failed (non-network) \
+                         while checking for a moved file"
+                    );
+                    None
+                }
+            };
+            match moved_to {
+                Some(song) => {
+                    let peer_path = song.path.to_string_lossy().into_owned();
+                    warn!(
+                        "[parallel_analysis] {label}: peer has nothing at relative path \
+                         {relative_path:?}, but the same hash exists on peer at {peer_path:?} -- \
+                         looks like a moved/renamed file"
+                    );
+                    record_mismatch(file_hash, &local_path, base_url, None, Some(&peer_path), label);
+                    crate::analyzer::return_to_front(file_hash);
+                    return DispatchOutcome::Rejected(format!(
+                        "peer has nothing at relative path {relative_path:?}, but same hash found \
+                         on peer at {peer_path:?}"
+                    ));
+                }
+                None => {
+                    info!(
+                        "[parallel_analysis] {label}: peer has nothing at relative path {relative_path:?}"
+                    );
+                    record_mismatch(file_hash, &local_path, base_url, None, None, label);
+                    crate::analyzer::return_to_front(file_hash);
+                    return DispatchOutcome::Rejected(format!(
+                        "peer has nothing at relative path {relative_path:?}"
+                    ));
+                }
+            }
         }
         Some(song) if song.file_hash != file_hash => {
             warn!(
                 "[parallel_analysis] {label}: peer has a different hash at relative path {relative_path:?} (peer hash={})",
                 song.file_hash
             );
-            record_mismatch(file_hash, &local_path, base_url, Some(&song.file_hash), label);
+            record_mismatch(file_hash, &local_path, base_url, Some(&song.file_hash), None, label);
             crate::analyzer::return_to_front(file_hash);
             return DispatchOutcome::Rejected(format!(
                 "peer has a different hash at {relative_path:?} (peer hash={})",
@@ -381,6 +415,19 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
                 crate::analyzer::return_to_front(file_hash);
                 return DispatchOutcome::Rejected(reason);
             }
+            PollOutcome::PeerFailed(message) => {
+                if AppConfig::load().parallel_analysis_only() {
+                    info!(
+                        "[parallel_analysis] {label}: peer reported a definitive failure and this \
+                         instance is parallel_analysis_only (no local worker to fall back to) -- \
+                         marking failed instead of requeuing"
+                    );
+                    crate::analyzer::mark_failed_from_peer(file_hash, &message);
+                } else {
+                    crate::analyzer::return_to_front(file_hash);
+                }
+                return DispatchOutcome::Rejected(format!("peer reported failure: {message}"));
+            }
             PollOutcome::PeerDown => return DispatchOutcome::PeerDown,
         }
     } else {
@@ -432,20 +479,26 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
 
 /// Records that `file_hash` (at `path`) didn't match on `peer_url` --
 /// `peer_hash` is `None` when the peer had nothing at that path at all, or
-/// `Some` with the peer's differing hash. Libraries are assumed to mirror
-/// each other (`parallel_analysis` is offloading, not syncing), so this is
-/// always worth surfacing rather than silently retrying forever; read the
-/// table with `scripts/parallel_analysis_mismatches.py`.
+/// `Some` with the peer's differing hash. `peer_path` is `Some` when the
+/// peer has nothing at `path` but the *same* `file_hash` was found
+/// elsewhere on the peer -- a moved/renamed file rather than a genuinely
+/// absent one -- and is always `None` when `peer_hash` is `Some` (those are
+/// mutually exclusive: a hash match found elsewhere vs. a different hash
+/// found at the same path). Libraries are assumed to mirror each other
+/// (`parallel_analysis` is offloading, not syncing), so this is always
+/// worth surfacing rather than silently retrying forever; read the table
+/// with `scripts/parallel_analysis_mismatches.py`.
 fn record_mismatch(
     file_hash: &str,
     path: &str,
     peer_url: &str,
     peer_hash: Option<&str>,
+    peer_path: Option<&str>,
     label: &str,
 ) {
-    if let Err(e) =
-        library_db::record_parallel_analysis_mismatch(file_hash, path, peer_url, peer_hash)
-    {
+    if let Err(e) = library_db::record_parallel_analysis_mismatch(
+        file_hash, path, peer_url, peer_hash, peer_path,
+    ) {
         warn!("[parallel_analysis] failed to record mismatch for {label}: {e}");
     }
 }
@@ -495,8 +548,17 @@ enum PollOutcome {
     Done(u32),
     /// Carries a short human-readable reason, propagated up into
     /// `DispatchOutcome::Rejected` so the dispatcher's own log line names
-    /// the cause without needing to scroll up to find it.
+    /// the cause without needing to scroll up to find it. Covers ambiguous
+    /// or transient give-up reasons (timeout, disabled mid-poll, a race
+    /// right as the peer finished) where retrying -- via this peer again,
+    /// another peer, or the local worker -- might still succeed.
     GaveUp(String),
+    /// The peer's own queue explicitly reported this song `Failed`, with its
+    /// message. Unlike `GaveUp`, this is a definitive answer from the
+    /// worker that actually ran the analysis (bad audio, empty stems, etc.)
+    /// -- retrying won't change the outcome, so callers can treat this as
+    /// terminal rather than something to keep bouncing back into the queue.
+    PeerFailed(String),
     PeerDown,
 }
 
@@ -521,7 +583,7 @@ fn poll_until_done(base_url: &str, file_hash: &str, label: &str) -> PollOutcome 
         match peer_queue_status(base_url, file_hash) {
             Ok(Some(QueuedStatus::Failed { message, .. })) => {
                 warn!("[parallel_analysis] {label}: peer reported failure: {message}");
-                return PollOutcome::GaveUp(format!("peer reported failure: {message}"));
+                return PollOutcome::PeerFailed(message);
             }
             Ok(Some(status @ QueuedStatus::Analyzing(pct))) => {
                 if last_logged.as_ref() != Some(&status) || attempt % 5 == 0 {
@@ -544,7 +606,7 @@ fn poll_until_done(base_url: &str, file_hash: &str, label: &str) -> PollOutcome 
                 info!(
                     "[parallel_analysis] {label}: no longer queued on peer, checking whether it finished"
                 );
-                return match peer_song(base_url, file_hash) {
+                return match peer_song_by_hash(base_url, file_hash) {
                     Ok(Some(song)) if song.is_analyzed => {
                         info!("[parallel_analysis] {label}: peer confirms is_analyzed=true");
                         PollOutcome::Done(attempt)
@@ -832,7 +894,7 @@ fn post_cmd(base_url: &str, name: &str, body: Value) -> Result<Value, PeerError>
     })
 }
 
-fn peer_song(base_url: &str, file_hash: &str) -> Result<Option<Song>, PeerError> {
+fn peer_song_by_hash(base_url: &str, file_hash: &str) -> Result<Option<Song>, PeerError> {
     let value = post_cmd(
         base_url,
         "load_songs_by_hashes",

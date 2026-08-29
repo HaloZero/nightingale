@@ -15,17 +15,19 @@ pub fn record_parallel_analysis_mismatch(
     path: &str,
     peer_url: &str,
     peer_hash: Option<&str>,
+    peer_path: Option<&str>,
 ) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
-            "INSERT INTO parallel_analysis_mismatches (file_hash, path, peer_url, peer_hash, detected_at)
-             VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            "INSERT INTO parallel_analysis_mismatches (file_hash, path, peer_url, peer_hash, peer_path, detected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
              ON CONFLICT(file_hash) DO UPDATE SET
                path = excluded.path,
                peer_url = excluded.peer_url,
                peer_hash = excluded.peer_hash,
+               peer_path = excluded.peer_path,
                detected_at = excluded.detected_at",
-            params![file_hash, path, peer_url, peer_hash],
+            params![file_hash, path, peer_url, peer_hash, peer_path],
         )?;
         Ok(())
     })

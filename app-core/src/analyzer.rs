@@ -643,6 +643,26 @@ pub(crate) fn return_to_front(file_hash: &str) {
     ensure_worker_running(&mut state);
 }
 
+/// Marks a hash `Failed` from a peer's definitive analysis failure (see
+/// `parallel_analysis::PollOutcome::PeerFailed`) instead of the usual
+/// `return_to_front`. `claim_from_back_excluding` already popped the hash
+/// out of the queue before dispatch got this far, so -- unlike
+/// `return_to_front` -- there's nothing to re-add; this only updates the
+/// persisted row. Used specifically for `parallel_analysis_only` instances,
+/// where there's no local worker to fall back to and silently requeuing
+/// would just retry the same doomed peer analysis forever with nothing
+/// surfaced to the user.
+pub(crate) fn mark_failed_from_peer(file_hash: &str, message: &str) {
+    update_queue_status(
+        file_hash,
+        QueuedStatus::Failed {
+            kind: FailureKind::Worker,
+            message: message.to_string(),
+            acknowledged: false,
+        },
+    );
+}
+
 /// Flips `parallel_worker_running` on if it's off and there's work to do,
 /// returning whether the caller should spawn the dispatcher thread. Mirrors
 /// `ensure_worker_running`'s start-once semantics for the local worker.
