@@ -496,12 +496,36 @@ static FORCE_LRCLIB: LazyLock<Mutex<HashSet<String>>> =
 /// separation) and keep the already-written LRC-provided transcript.
 static STEMS_ONLY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// Hashes whose next analysis pass should use `alt_align_backend` instead of
-/// the default `align_backend` -- set by the one-off "Realign (alternative
-/// backend)" song action (`realign_with_alt_backend`), so a user trying a
-/// different backend on one song doesn't have to change the global setting.
-static FORCE_ALT_ALIGN: LazyLock<Mutex<HashSet<String>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+/// Hashes whose next analysis pass should use an explicit alignment backend
+/// instead of the default `align_backend` -- set by `realign_with_backend`
+/// (the one-off "Realign (alternative backend)" song action, or a peer
+/// instance honoring a forced backend dispatched to it over the network --
+/// see the `"realign_with_backend"` server command and
+/// `parallel_analysis::dispatch_one`). Carries the resolved backend value
+/// itself (not just a marker) because the network path needs to send a
+/// concrete string across the process boundary -- the receiving peer has no
+/// way to resolve "the dispatching instance's `alt_align_backend` setting"
+/// on its own.
+static FORCE_ALIGN_BACKEND: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Removes and returns any pending forced-alignment-backend override for
+/// `file_hash`, consuming it. Called by `process_song` right before it
+/// builds the analysis command, and by `parallel_analysis::dispatch_one`
+/// once a dispatch to a peer has fully succeeded (so a hash that instead
+/// gets `return_to_front`'d keeps its pending override for the retry).
+pub(crate) fn take_forced_align_backend(file_hash: &str) -> Option<String> {
+    FORCE_ALIGN_BACKEND.lock().unwrap().remove(file_hash)
+}
+
+/// Non-destructive read of the same map `take_forced_align_backend` drains --
+/// used by `parallel_analysis::dispatch_one` to decide whether a hash needs
+/// forcing on the peer and to build the dispatch payload, without consuming
+/// the override before the peer has actually accepted it (see that
+/// function's comments for why early-return paths must leave it in place).
+pub(crate) fn peek_forced_align_backend(file_hash: &str) -> Option<String> {
+    FORCE_ALIGN_BACKEND.lock().unwrap().get(file_hash).cloned()
+}
 
 /// Mark a hash so its next analysis pass separates stems without transcribing,
 /// preserving the transcript built from provided LRC.
@@ -811,8 +835,37 @@ pub fn reanalyze_full(file_hash: &str) {
 }
 
 pub fn realign(file_hash: &str, language: Option<String>) {
+    realign_with_backend(file_hash, None, language);
+}
+
+/// Same as `realign`, but the upcoming analysis pass uses `alt_align_backend`
+/// instead of the default `align_backend` -- see `FORCE_ALIGN_BACKEND`.
+pub fn realign_with_alt_backend(file_hash: &str, language: Option<String>) {
     if is_usdx_song(file_hash) {
         return;
+    }
+
+    let backend = AppConfig::load().alt_align_backend().to_string();
+    realign_with_backend(file_hash, Some(backend), language);
+}
+
+/// Shared body for `realign`/`realign_with_alt_backend`, and for
+/// `parallel_analysis`'s peer-side handling of a dispatched forced-backend
+/// realign (see the `"realign_with_backend"` server command): `backend` is
+/// `None` for a plain realign, or an explicit backend value (already
+/// resolved by the caller -- either `alt_align_backend` locally, or whatever
+/// the dispatching instance sent over the network) to force for the
+/// upcoming pass regardless of the local `align_backend` setting.
+pub fn realign_with_backend(file_hash: &str, backend: Option<String>, language: Option<String>) {
+    if is_usdx_song(file_hash) {
+        return;
+    }
+
+    if let Some(backend) = backend {
+        FORCE_ALIGN_BACKEND
+            .lock()
+            .unwrap()
+            .insert(file_hash.to_string(), backend);
     }
 
     if let Some(lang) = language.as_ref().filter(|lang| !lang.is_empty()) {
@@ -838,17 +891,6 @@ pub fn realign(file_hash: &str, language: Option<String>) {
         None,
     );
     enqueue_one(file_hash);
-}
-
-/// Same as `realign`, but the upcoming analysis pass uses `alt_align_backend`
-/// instead of the default `align_backend` -- see `FORCE_ALT_ALIGN`.
-pub fn realign_with_alt_backend(file_hash: &str, language: Option<String>) {
-    if is_usdx_song(file_hash) {
-        return;
-    }
-
-    FORCE_ALT_ALIGN.lock().unwrap().insert(file_hash.to_string());
-    realign(file_hash, language);
 }
 
 pub fn reanalyze_force_transcribe(file_hash: &str) {
@@ -1126,13 +1168,10 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         fetch_lrclib_lyrics(&song, cache)
     };
 
-    // One-shot override from the "Realign (alternative backend)" action --
-    // see `FORCE_ALT_ALIGN`'s doc comment.
-    let align_backend = if FORCE_ALT_ALIGN.lock().unwrap().remove(file_hash) {
-        config.alt_align_backend()
-    } else {
-        config.align_backend()
-    };
+    // One-shot override from `realign_with_backend` -- see
+    // `FORCE_ALIGN_BACKEND`'s doc comment.
+    let align_backend =
+        take_forced_align_backend(file_hash).unwrap_or_else(|| config.align_backend().to_string());
 
     let mut cmd_json = serde_json::json!({
         "type": "analyze",

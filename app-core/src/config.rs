@@ -246,7 +246,7 @@ pub struct AppConfig {
     pub asr_engine: Option<String>,
     pub align_backend: Option<String>,
     /// Alternative alignment backend, used only for a one-off "Realign
-    /// (alternative backend)" song action (see `FORCE_ALT_ALIGN` in
+    /// (alternative backend)" song action (see `FORCE_ALIGN_BACKEND` in
     /// analyzer.rs) rather than the default `align_backend` used for every
     /// other analysis/realign.
     pub alt_align_backend: Option<String>,

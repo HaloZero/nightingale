@@ -342,10 +342,26 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
     };
 
     let already_analyzed_on_peer = peer_song.is_analyzed;
+    // Peeked, not consumed: every failure path below this point (trigger
+    // failure, poll timeout/peer-down, a failed fetch/finalize further down)
+    // returns via `return_to_front`, which must leave this in place so a
+    // retry still forces the same backend. Only cleared on confirmed success,
+    // at the bottom of this function. Forces a peer re-trigger below even if
+    // the peer already considers the song analyzed -- an alternative-backend
+    // realign has to actually redo the alignment, not just fetch back
+    // whatever the peer had before.
+    let forced_align_backend = crate::analyzer::peek_forced_align_backend(file_hash);
 
-    if !peer_song.is_analyzed {
-        info!("[parallel_analysis] {label}: triggering analysis on peer");
-        match trigger(base_url, file_hash) {
+    if !peer_song.is_analyzed || forced_align_backend.is_some() {
+        if forced_align_backend.is_some() {
+            info!(
+                "[parallel_analysis] {label}: forcing peer to realign with the requested \
+                 alternative backend (already_analyzed_on_peer={already_analyzed_on_peer})"
+            );
+        } else {
+            info!("[parallel_analysis] {label}: triggering analysis on peer");
+        }
+        match trigger(base_url, file_hash, forced_align_backend.as_deref()) {
             Ok(()) => {}
             Err(PeerError::Unreachable) => return DispatchOutcome::PeerDown,
             Err(PeerError::Other) => {
@@ -385,6 +401,11 @@ fn dispatch_one(base_url: &str, file_hash: &str, label: &str) -> DispatchOutcome
     // Check its result rather than assuming "we downloaded fine" means "the
     // song is now marked analyzed".
     if crate::analyzer::finalize_peer_analysis(file_hash) {
+        // Confirmed done -- clear any forced-backend override now rather
+        // than leaving it to `process_song`'s own consumption, which never
+        // runs for a peer-dispatched hash (see `peek_forced_align_backend`'s
+        // doc comment above).
+        crate::analyzer::take_forced_align_backend(file_hash);
         record_timing(
             file_hash,
             base_url,
@@ -848,8 +869,28 @@ fn peer_queue_status(base_url: &str, file_hash: &str) -> Result<Option<QueuedSta
     Ok(response.entries.get(file_hash).cloned())
 }
 
-fn trigger(base_url: &str, file_hash: &str) -> Result<(), PeerError> {
-    post_cmd(base_url, "enqueue_one", json!({ "fileHash": file_hash }))?;
+/// `forced_align_backend` is `Some` when the hash being dispatched has a
+/// pending forced-alignment-backend override (see
+/// `analyzer::FORCE_ALIGN_BACKEND`): the plain `enqueue_one` peer command has
+/// no way to carry that, so this hits the peer-only `realign_with_backend`
+/// command instead, which both forces a redo (deleting the peer's existing
+/// transcript, even if the peer already considers the song analyzed) and
+/// pins the exact backend value -- the peer can't resolve "the dispatching
+/// instance's `alt_align_backend` setting" on its own, so the value must be
+/// the caller's already-resolved string, not a re-lookup of local config.
+fn trigger(base_url: &str, file_hash: &str, forced_align_backend: Option<&str>) -> Result<(), PeerError> {
+    match forced_align_backend {
+        Some(backend) => {
+            post_cmd(
+                base_url,
+                "realign_with_backend",
+                json!({ "fileHash": file_hash, "alignBackend": backend }),
+            )?;
+        }
+        None => {
+            post_cmd(base_url, "enqueue_one", json!({ "fileHash": file_hash }))?;
+        }
+    }
     Ok(())
 }
 

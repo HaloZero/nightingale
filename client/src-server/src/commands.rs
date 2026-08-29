@@ -333,6 +333,23 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             app_core::realign(&args.file_hash, args.language);
             Ok(Value::Null)
         }
+        // Peer-to-peer only: `parallel_analysis::dispatch_one` uses this
+        // instead of the plain `enqueue_one` it normally dispatches with,
+        // when the hash being dispatched has a pending forced-alignment-
+        // backend override (see `FORCE_ALIGN_BACKEND` in app-core's
+        // analyzer.rs). Not exposed in the JS bridge/UI -- same category as
+        // `load_song_by_path`/`load_songs_by_hashes`.
+        "realign_with_backend" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                file_hash: String,
+                align_backend: String,
+            }
+            let args: Args = deserialize(payload)?;
+            app_core::realign_with_backend(&args.file_hash, Some(args.align_backend), None);
+            Ok(Value::Null)
+        }
         "realign_alt" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
