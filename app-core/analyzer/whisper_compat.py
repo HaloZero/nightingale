@@ -162,9 +162,30 @@ def _run_align(raw_segments, audio, language, device, model_name=None):
                 f"[nightingale:LOG] Loading align model for language='{language}' on device='{device}'",
                 flush=True,
             )
-        align_model, metadata = whisperx.load_align_model(
-            language_code=language, device=device, model_name=model_name,
-        )
+        try:
+            align_model, metadata = whisperx.load_align_model(
+                language_code=language, device=device, model_name=model_name,
+            )
+        except ValueError as e:
+            # No wav2vec2 default for this language (e.g. a stale/forced
+            # `language_override`, or a detected language language.py's own
+            # alignable-candidate steering couldn't route around). Retrying
+            # with "en" beats hard-failing the whole song -- word-level
+            # timing degrades but the song still gets a transcript. Only for
+            # the auto-selected-model path: an explicit `model_name` (cjk's
+            # custom checkpoints) failing means something else is wrong and
+            # should surface as-is.
+            if model_name is None and "No default align-model" in str(e):
+                print(
+                    f"[nightingale:LOG] {e}; falling back to 'en' align model",
+                    flush=True,
+                )
+                language = "en"
+                align_model, metadata = whisperx.load_align_model(
+                    language_code=language, device=device, model_name=model_name,
+                )
+            else:
+                raise
         held.append(align_model)
 
         if get_align_backend() == "ctc":

@@ -61,7 +61,9 @@ def process_song(cmd, device):
     skip_transcription = bool(cmd.get("skip_transcription", False))
     skip_separation = bool(cmd.get("skip_separation", False))
 
-    set_align_backend(cmd.get("align_backend", "whisperx"))
+    requested_align_backend = cmd.get("align_backend", "whisperx")
+    print(f"[nightingale:LOG] Requested align_backend: '{requested_align_backend}'", flush=True)
+    set_align_backend(requested_align_backend)
     set_vocal_threshold_pct(cmd.get("vocal_detection_threshold_pct"))
 
     reset_peak_stats()
