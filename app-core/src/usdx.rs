@@ -540,6 +540,7 @@ pub fn build_usdx_song(path: &Path, cache: &CacheDir) -> Result<Song, Nightingal
         is_analyzed: true,
         language: file.language.clone(),
         transcript_source: Some(TranscriptSource::Usdx),
+        align_backend: None,
         key: None,
         override_key: None,
         tempo: 1.0,

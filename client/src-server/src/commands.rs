@@ -333,6 +333,18 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             app_core::realign(&args.file_hash, args.language);
             Ok(Value::Null)
         }
+        "realign_alt" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                file_hash: String,
+                #[serde(default)]
+                language: Option<String>,
+            }
+            let args: Args = deserialize(payload)?;
+            app_core::realign_with_alt_backend(&args.file_hash, args.language);
+            Ok(Value::Null)
+        }
         "reanalyze_force_transcribe" => {
             let args: FileHashArgs = deserialize(payload)?;
             app_core::reanalyze_force_transcribe(&args.file_hash);

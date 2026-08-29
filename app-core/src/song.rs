@@ -106,6 +106,14 @@ pub struct Song {
     pub language: Option<String>,
     #[serde(default)]
     pub transcript_source: Option<TranscriptSource>,
+    /// Which forced-alignment backend actually produced this song's current
+    /// timing (`"whisperx"`, `"ctc"`, or `"qwen"` -- see
+    /// `read_transcript_meta`). `None` for `Lrc`/`Usdx` sources (no aligner
+    /// runs for those) and for songs analyzed before this field existed,
+    /// until they're realigned or backfilled (see
+    /// `scripts/backfill_align_backend.py`).
+    #[serde(default)]
+    pub align_backend: Option<String>,
     #[serde(default)]
     pub key: Option<String>,
     #[serde(default)]
@@ -178,6 +186,7 @@ pub struct TranscriptMetaInfo {
     pub key: Option<String>,
     pub tempo: f64,
     pub no_stems: bool,
+    pub align_backend: Option<String>,
 }
 
 /// File-derived fields -- everything `Song::from_path` reads straight from
@@ -286,6 +295,7 @@ impl Song {
             is_analyzed,
             language,
             transcript_source,
+            align_backend: None,
             key,
             override_key,
             tempo,
@@ -402,6 +412,8 @@ pub fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo 
         tempo: f64,
         #[serde(default)]
         no_stems: bool,
+        #[serde(default)]
+        align_backend: Option<String>,
     }
     let path = cache.transcript_path(hash);
     if let Ok(data) = std::fs::read_to_string(&path) {
@@ -418,6 +430,7 @@ pub fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo 
                 key: parsed.key,
                 tempo: parsed.tempo,
                 no_stems: parsed.no_stems,
+                align_backend: parsed.align_backend,
             };
         }
     }
@@ -427,6 +440,7 @@ pub fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo 
         key: None,
         tempo: default_tempo(),
         no_stems: false,
+        align_backend: None,
     }
 }
 

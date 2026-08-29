@@ -18,6 +18,17 @@ export function formatTranscriptSource(source: Song["transcript_source"]): strin
   return "AI generated";
 }
 
+/** Label for `Song.align_backend` -- `null` for `Lrc`/`Usdx` sources and for
+ * songs analyzed before this field existed (see `Song.align_backend`'s doc
+ * comment), so callers should hide the row entirely rather than show this
+ * fallback. */
+export function formatAlignBackend(backend: Song["align_backend"]): string {
+  if (backend === "ctc") return "CTC Forced Alignment";
+  if (backend === "qwen") return "Qwen Forced Alignment";
+  if (backend === "whisperx") return "WhisperX";
+  return "Unknown";
+}
+
 export function getSongStatusInfo(isAnalyzed: boolean, queueStatus?: QueuedStatus): SongStatusInfo {
   if (queueStatus === "Queued") {
     return {

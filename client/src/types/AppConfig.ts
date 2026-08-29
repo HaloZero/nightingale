@@ -43,6 +43,12 @@ export type AppConfig = {
   separator: string | null;
   asr_engine: string | null;
   align_backend: string | null;
+  /**
+   * Alternative alignment backend, used only for a one-off "Realign
+   * (alternative backend)" song action rather than the default
+   * `align_backend` used for every other analysis/realign.
+   */
+  alt_align_backend: string | null;
   vocal_detection_threshold_pct: number | null;
   /**
    * Whether analysis prefers a song's local lyrics source (a `.lrc`

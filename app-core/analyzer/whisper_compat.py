@@ -95,6 +95,27 @@ def get_align_backend() -> str:
     return _align_backend
 
 
+# Which backend actually ran the most recent wav2vec2-path alignment --
+# "ctc" or "whisperx" -- as opposed to `_align_backend`, the *configured*
+# setting. They can differ: a `"ctc"`-configured song falls through to
+# `whisperx.align` on a non-OOM `ctc_align` failure, and a `"qwen"`-configured
+# song that's unsupported (language/length) falls through to this same
+# wav2vec2 path, where `_run_align` treats any non-"ctc" backend as
+# "whisperx". Set by `_run_align` right before each actual alignment call, so
+# callers (`align.py`, `transcribe.py`) can record provenance accurately
+# after `align_with_fallback` returns.
+_effective_align_backend: str | None = None
+
+
+def _set_effective_align_backend(name: str) -> None:
+    global _effective_align_backend
+    _effective_align_backend = name
+
+
+def get_effective_align_backend() -> str | None:
+    return _effective_align_backend
+
+
 def detect_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
@@ -153,9 +174,11 @@ def _run_align(raw_segments, audio, language, device, model_name=None):
                     f"[nightingale:LOG] Aligning with torchaudio forced_align (ctc) on {device}",
                     flush=True,
                 )
-                return ctc_align.ctc_align(
+                result = ctc_align.ctc_align(
                     raw_segments, align_model, metadata, audio, device,
                 )
+                _set_effective_align_backend("ctc")
+                return result
             except Exception as e:
                 if is_oom(e):
                     # Let align_with_fallback's OOM handling retry (it re-enters
@@ -168,7 +191,9 @@ def _run_align(raw_segments, audio, language, device, model_name=None):
                     flush=True,
                 )
 
-        return whisperx.align(raw_segments, align_model, metadata, audio, device)
+        result = whisperx.align(raw_segments, align_model, metadata, audio, device)
+        _set_effective_align_backend("whisperx")
+        return result
 
 
 def align_with_fallback(raw_segments, audio, language, device, pre_align_cleanup=None, model_name=None):

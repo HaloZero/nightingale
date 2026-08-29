@@ -15,6 +15,13 @@ export type Song = {
   is_analyzed: boolean;
   language: string | null;
   transcript_source: TranscriptSource | null;
+  /**
+   * Which forced-alignment backend actually produced this song's current
+   * timing (`"whisperx"`, `"ctc"`, or `"qwen"`). `None` for `Lrc`/`Usdx`
+   * sources and for songs analyzed before this field existed, until they're
+   * realigned or backfilled.
+   */
+  align_backend: string | null;
   key: string | null;
   override_key: string | null;
   tempo: number;

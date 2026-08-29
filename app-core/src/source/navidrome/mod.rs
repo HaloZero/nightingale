@@ -193,6 +193,7 @@ impl NavidromeSource {
             is_analyzed: false,
             language: None,
             transcript_source: None,
+            align_backend: None,
             key: None,
             override_key: None,
             tempo: 1.0,

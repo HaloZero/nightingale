@@ -90,6 +90,7 @@ export const DEFAULTS = {
   separator: "karaoke",
   asr_engine: "whisper",
   align_backend: "whisperx",
+  alt_align_backend: "whisperx",
   vocal_detection_threshold_pct: 0.15,
   whisper_model: "large-v3",
   beam_size: 8,
@@ -110,6 +111,7 @@ export const DEFAULTS = {
   | "separator"
   | "asr_engine"
   | "align_backend"
+  | "alt_align_backend"
   | "vocal_detection_threshold_pct"
   | "whisper_model"
   | "beam_size"
@@ -172,6 +174,7 @@ export function getAnalysisNav(isParakeet: boolean, showParallelAnalysis: boolea
         batchSize: 7,
         useExternalLyrics: 8,
         restoreAnalyze: 9,
+        altAlignBackend: 10,
       }
     : {
         separator: 1,
@@ -185,6 +188,7 @@ export function getAnalysisNav(isParakeet: boolean, showParallelAnalysis: boolea
         batchSize: 9,
         useExternalLyrics: 10,
         restoreAnalyze: 11,
+        altAlignBackend: 12,
       };
 
   const next = Math.max(...Object.values(base)) + 1;
@@ -224,9 +228,11 @@ export function getSettingsStops(
   // analysis's own [2 (Off/On), 1 (URL field), 1 (Ping button), 2 (only
   // Off/On)] is appended the same way, only when `showParallelAnalysis` is
   // true.
+  // altAlignBackend (a select, 1 stop) is appended the same way, right after
+  // restoreAnalyze and before the parallel-analysis block.
   const base = isParakeet
-    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2]
-    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2];
+    ? [2, 1, 1, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2, 1]
+    : [2, 1, 1, 1, NUMBER_PICKER_SIZE, 1, 2, 2, 1, NUMBER_PICKER_SIZE, 2, 2, 1];
 
   return showParallelAnalysis ? [...base, 2, 1, 1, 2, 2] : [...base, 2];
 }

@@ -716,6 +716,23 @@ export const SettingsPage = () => {
                 </ButtonGroup>
               </Field>
 
+              <Field>
+                <Label htmlFor="align-backend-2">Alternative alignment model</Label>
+                <Hint>
+                  Backend used only by a song's "Realign (alternative backend)" action, so you can
+                  try a different one without changing the default above.
+                </Hint>
+                <SettingsSelect
+                  id="align-backend-2"
+                  label="Alternative forced alignment"
+                  placeholder="Select an alternative alignment backend"
+                  value={config?.alt_align_backend ?? DEFAULTS.alt_align_backend}
+                  options={ALIGN_BACKENDS}
+                  triggerClassName={getFocusClassName(analysisNav.altAlignBackend)}
+                  onValueChange={(alt_align_backend) => mutate({ alt_align_backend })}
+                />
+              </Field>
+
               {showParallelAnalysis && (
                 <>
                   <Field>

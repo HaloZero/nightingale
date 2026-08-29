@@ -1,7 +1,7 @@
 use app_core::{
     acknowledge_failures as core_acknowledge_failures, delete_cache as core_delete_cache,
     enqueue_all as core_enqueue_all, enqueue_one as core_enqueue_one, realign as core_realign,
-    realign_all as core_realign_all,
+    realign_all as core_realign_all, realign_with_alt_backend as core_realign_with_alt_backend,
     reanalyze_all_force_transcribe as core_reanalyze_all_force_transcribe,
     reanalyze_all_full as core_reanalyze_all_full,
     reanalyze_all_transcript as core_reanalyze_all_transcript,
@@ -48,6 +48,11 @@ pub fn reanalyze_full(file_hash: String) {
 #[tauri::command]
 pub fn realign(file_hash: String, language: Option<String>) {
     core_realign(&file_hash, language);
+}
+
+#[tauri::command]
+pub fn realign_alt(file_hash: String, language: Option<String>) {
+    core_realign_with_alt_backend(&file_hash, language);
 }
 
 #[tauri::command]

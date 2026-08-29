@@ -6,6 +6,7 @@ import {
   enqueueAll,
   enqueueOne,
   realign,
+  realignAlt,
   realignAll,
   reanalyzeAllForceTranscribe,
   reanalyzeAllFull,
@@ -164,6 +165,7 @@ export const useAnalysis = () => {
       reanalyzeTranscript: wrap(reanalyzeTranscript, invalidateSongs),
       reanalyzeFull: wrap(reanalyzeFull, invalidateSongs),
       realign: wrap(realign, invalidateSongs),
+      realignAlt: wrap(realignAlt, invalidateSongs),
       reanalyzeForceTranscribe: wrap(reanalyzeForceTranscribe, invalidateSongs),
       refreshMetadata: wrap(refreshMetadata, invalidateSongs),
       refreshMetadataAll: wrapBulk(

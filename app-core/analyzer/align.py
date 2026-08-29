@@ -7,7 +7,10 @@ import cjk
 from audio import detect_vocal_region
 from gpu import gpu_model
 from language import detect_language_multiwindow
-from whisper_compat import progress, align_device_for, compute_type_for, align_with_fallback, get_align_backend
+from whisper_compat import (
+    progress, align_device_for, compute_type_for, align_with_fallback, get_align_backend,
+    get_effective_align_backend,
+)
 
 
 def align_lyrics(
@@ -81,7 +84,10 @@ def align_lyrics(
             if qwen_segments:
                 print(f"[nightingale:LOG] First segment: '{qwen_segments[0]['text'][:100]}'", flush=True)
                 print(f"[nightingale:LOG] Last segment: '{qwen_segments[-1]['text'][:100]}'", flush=True)
-            return {"language": language, "segments": qwen_segments, "source": "lyrics"}
+            return {
+                "language": language, "segments": qwen_segments, "source": "lyrics",
+                "align_backend": "qwen",
+            }
         print(
             "[nightingale:LOG] Qwen lyrics alignment unavailable; falling back to wav2vec2 path",
             flush=True,
@@ -121,7 +127,10 @@ def align_lyrics(
         print(f"[nightingale:LOG] First segment: '{segments[0]['text'][:100]}'", flush=True)
         print(f"[nightingale:LOG] Last segment: '{segments[-1]['text'][:100]}'", flush=True)
 
-    return {"language": language, "segments": segments, "source": "lyrics"}
+    return {
+        "language": language, "segments": segments, "source": "lyrics",
+        "align_backend": get_effective_align_backend(),
+    }
 
 def _normalize(word: str) -> str:
     return re.sub(r"[^\w]", "", word).lower()

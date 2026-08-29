@@ -1,5 +1,6 @@
 import type { Song } from "@/types/Song";
 import { Shifts } from "../shifts";
+import { formatAlignBackend } from "../shared/song-status";
 
 interface KeyTempoSectionProps {
   song: Song;
@@ -41,6 +42,11 @@ export const KeyTempoSection = ({
           Key and tempo controls become available after compatible analysis.
         </p>
       )}
+      {song.align_backend ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Aligned with: {formatAlignBackend(song.align_backend)}
+        </p>
+      ) : null}
     </section>
   );
 };

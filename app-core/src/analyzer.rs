@@ -496,6 +496,13 @@ static FORCE_LRCLIB: LazyLock<Mutex<HashSet<String>>> =
 /// separation) and keep the already-written LRC-provided transcript.
 static STEMS_ONLY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// Hashes whose next analysis pass should use `alt_align_backend` instead of
+/// the default `align_backend` -- set by the one-off "Realign (alternative
+/// backend)" song action (`realign_with_alt_backend`), so a user trying a
+/// different backend on one song doesn't have to change the global setting.
+static FORCE_ALT_ALIGN: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
 /// Mark a hash so its next analysis pass separates stems without transcribing,
 /// preserving the transcript built from provided LRC.
 pub fn mark_stems_only(file_hash: &str) {
@@ -552,13 +559,17 @@ pub(crate) fn update_song_analyzed(
         }
         // LRC-provided songs without stem separation are flagged in the
         // transcript; mirror that onto the song so playback hides the guide.
-        song.no_stems = read_transcript_meta(&CacheDir::new(), file_hash).no_stems;
+        // Also carries which backend actually aligned it, for the same reason.
+        let meta = read_transcript_meta(&CacheDir::new(), file_hash);
+        song.no_stems = meta.no_stems;
+        song.align_backend = meta.align_backend;
     } else {
         song.key = None;
         song.override_key = None;
         song.tempo = 1.0;
         song.key_offset = 0;
         song.no_stems = false;
+        song.align_backend = None;
     }
     let _ = library_db::update_song_fields(file_hash, &song);
 }
@@ -827,6 +838,17 @@ pub fn realign(file_hash: &str, language: Option<String>) {
         None,
     );
     enqueue_one(file_hash);
+}
+
+/// Same as `realign`, but the upcoming analysis pass uses `alt_align_backend`
+/// instead of the default `align_backend` -- see `FORCE_ALT_ALIGN`.
+pub fn realign_with_alt_backend(file_hash: &str, language: Option<String>) {
+    if is_usdx_song(file_hash) {
+        return;
+    }
+
+    FORCE_ALT_ALIGN.lock().unwrap().insert(file_hash.to_string());
+    realign(file_hash, language);
 }
 
 pub fn reanalyze_force_transcribe(file_hash: &str) {
@@ -1104,6 +1126,14 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         fetch_lrclib_lyrics(&song, cache)
     };
 
+    // One-shot override from the "Realign (alternative backend)" action --
+    // see `FORCE_ALT_ALIGN`'s doc comment.
+    let align_backend = if FORCE_ALT_ALIGN.lock().unwrap().remove(file_hash) {
+        config.alt_align_backend()
+    } else {
+        config.align_backend()
+    };
+
     let mut cmd_json = serde_json::json!({
         "type": "analyze",
         "audio_path": local_path.to_string_lossy(),
@@ -1114,7 +1144,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         "batch_size": config.batch_size(),
         "separator": config.separator(),
         "engine": config.asr_engine(),
-        "align_backend": config.align_backend(),
+        "align_backend": align_backend,
         "vocal_detection_threshold_pct": config.vocal_detection_threshold_pct(),
     });
 

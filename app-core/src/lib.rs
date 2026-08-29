@@ -29,10 +29,10 @@ mod youtube_video;
 
 pub use analyzer::{
     AnalysisQueue, FailureKind, acknowledge_failures, delete_cache, enqueue_all, enqueue_one,
-    realign, realign_all, reanalyze_all_force_transcribe, reanalyze_all_full,
-    reanalyze_all_transcript, reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript,
-    refresh_metadata, refresh_metadata_all, remove_from_queue_all, remove_from_queue_one,
-    set_song_language, shutdown_server,
+    realign, realign_all, realign_with_alt_backend, reanalyze_all_force_transcribe,
+    reanalyze_all_full, reanalyze_all_transcript, reanalyze_force_transcribe, reanalyze_full,
+    reanalyze_transcript, refresh_metadata, refresh_metadata_all, remove_from_queue_all,
+    remove_from_queue_one, set_song_language, shutdown_server,
 };
 pub use audiodb::{MusicVideoResult, find_music_video_for_hash};
 pub use cache::{

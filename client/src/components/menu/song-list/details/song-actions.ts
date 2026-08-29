@@ -2,6 +2,7 @@ import type { Song } from "@/types/Song";
 import {
   AlignLeftIcon,
   AudioLinesIcon,
+  FlaskConicalIcon,
   ImageIcon,
   LanguagesIcon,
   ListXIcon,
@@ -26,6 +27,7 @@ interface AnalysisHandlers {
   reanalyzeFull: AnalysisHandler;
   reanalyzeTranscript: AnalysisHandler;
   realign: AnalysisHandler;
+  realignAlt: AnalysisHandler;
   reanalyzeForceTranscribe: AnalysisHandler;
   refreshMetadata: AnalysisHandler;
 }
@@ -132,6 +134,14 @@ export function buildActionGroups({
           title: "Realign",
           description: "Rebuild timing from the current lyrics.",
           onClick: run(`Realigning "${song.title}"`, () => analysis.realign(song.file_hash)),
+        },
+        {
+          icon: FlaskConicalIcon,
+          title: "Realign (alternative backend)",
+          description: "Rebuild timing using the alternative alignment backend from Settings.",
+          onClick: run(`Realigning "${song.title}" with the alternative backend`, () =>
+            analysis.realignAlt(song.file_hash),
+          ),
         },
         {
           icon: RefreshCwIcon,

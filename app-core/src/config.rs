@@ -245,6 +245,11 @@ pub struct AppConfig {
     pub separator: Option<String>,
     pub asr_engine: Option<String>,
     pub align_backend: Option<String>,
+    /// Alternative alignment backend, used only for a one-off "Realign
+    /// (alternative backend)" song action (see `FORCE_ALT_ALIGN` in
+    /// analyzer.rs) rather than the default `align_backend` used for every
+    /// other analysis/realign.
+    pub alt_align_backend: Option<String>,
     pub vocal_detection_threshold_pct: Option<f64>,
     /// Whether analysis prefers a song's local lyrics source (a `.lrc`
     /// sidecar, else an embedded tag -- see `Song::has_external_lyrics`)
@@ -325,6 +330,7 @@ impl Default for AppConfig {
             separator: None,
             asr_engine: None,
             align_backend: None,
+            alt_align_backend: None,
             vocal_detection_threshold_pct: None,
             use_external_lyrics: None,
             auto_analyze: None,
@@ -482,6 +488,10 @@ impl AppConfig {
 
     pub fn align_backend(&self) -> &str {
         self.align_backend.as_deref().unwrap_or("whisperx")
+    }
+
+    pub fn alt_align_backend(&self) -> &str {
+        self.alt_align_backend.as_deref().unwrap_or("whisperx")
     }
 
     pub fn vocal_detection_threshold_pct(&self) -> f64 {

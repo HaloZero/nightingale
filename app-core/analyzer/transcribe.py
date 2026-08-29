@@ -8,7 +8,9 @@ from audio import detect_vocal_region, highpass_filter, normalize_rms
 from gpu import gpu_model, hard_free_gpu
 from hallucination import is_hallucination, remove_hallucinated_words
 from language import detect_language_multiwindow
-from whisper_compat import progress, align_with_fallback, get_align_backend, timing, starting
+from whisper_compat import (
+    progress, align_with_fallback, get_align_backend, get_effective_align_backend, timing, starting,
+)
 
 
 def transcribe_vocals(
@@ -438,7 +440,10 @@ def _align_and_build(raw_segments: list[dict], audio, language: str, device: str
             print(f"[nightingale:LOG] First word: '{segments[0]['words'][0]}'", flush=True)
         print(f"[nightingale:LOG] Last segment: '{segments[-1]['text'][:100]}'", flush=True)
 
-    return {"language": language, "segments": segments}
+    return {
+        "language": language, "segments": segments,
+        "align_backend": get_effective_align_backend(),
+    }
 
 
 def _align_and_build_qwen(raw_segments: list[dict], audio, language: str, pre_align_cleanup=None) -> dict | None:
@@ -487,7 +492,7 @@ def _align_and_build_qwen(raw_segments: list[dict], audio, language: str, pre_al
             print(f"[nightingale:LOG] First word: '{segments[0]['words'][0]}'", flush=True)
         print(f"[nightingale:LOG] Last segment: '{segments[-1]['text'][:100]}'", flush=True)
 
-    return {"language": language, "segments": segments}
+    return {"language": language, "segments": segments, "align_backend": "qwen"}
 
 
 def _retokenize_cjk(raw_segments: list[dict], aligned_segments: list[dict], language: str) -> list[dict]:
