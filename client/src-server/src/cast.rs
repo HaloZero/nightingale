@@ -491,7 +491,12 @@ fn render_status_page(request_id: &str, query: &str, base_path: &str) -> String 
       }}
     }}
 
-    const ws = new WebSocket(`ws://${{location.host}}/ws`);
+    // Match the page's own scheme -- a page loaded over https (e.g. behind
+    // the tailscale-serve HTTPS proxy) can't open a plain ws:// socket,
+    // browsers block it as mixed content and the connection dies before
+    // `onerror` has anything useful to report.
+    const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${{wsProtocol}}//${{location.host}}/ws`);
     ws.onmessage = (evt) => {{
       let msg;
       try {{ msg = JSON.parse(evt.data); }} catch {{ return; }}
