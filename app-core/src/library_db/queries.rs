@@ -190,20 +190,29 @@ fn append_structural_filters(
             // only in the JSON payload (mirrored from the
             // `karaoke_video_status` side table, not real `songs` columns --
             // see `karaoke_video::record_karaoke_video_status`), same
-            // `json_extract` pattern as `language` below. Filtered by exact
-            // version (not "> 0") so v1 and v2 renders show up under
-            // separate library-menu items -- see the `karaoke_video` items
-            // built in `load_library_menu_items` below.
-            "has_karaoke_video_v1" => where_parts
-                .push("json_extract(s.payload, '$.karaoke_video_version') = 1".to_string()),
-            "has_karaoke_video_v2" => where_parts
-                .push("json_extract(s.payload, '$.karaoke_video_version') = 2".to_string()),
-            "has_youtube_karaoke_video_v1" => where_parts.push(
-                "json_extract(s.payload, '$.youtube_karaoke_video_version') = 1".to_string(),
-            ),
-            "has_youtube_karaoke_video_v2" => where_parts.push(
-                "json_extract(s.payload, '$.youtube_karaoke_video_version') = 2".to_string(),
-            ),
+            // `json_extract` pattern as `language` below. Compared against
+            // `RENDER_VERSION` rather than a hardcoded number so these filters
+            // don't silently stop matching anything the next time the render
+            // version bumps (previously hardcoded `= 1`/`= 2` buckets went
+            // stale and hid every video the moment `RENDER_VERSION` reached 3
+            // -- see the `karaoke_video` items built in
+            // `load_library_menu_items` below).
+            "has_karaoke_video" => where_parts.push(format!(
+                "json_extract(s.payload, '$.karaoke_video_version') = {}",
+                crate::karaoke_video::RENDER_VERSION
+            )),
+            "has_karaoke_video_outdated" => where_parts.push(format!(
+                "json_extract(s.payload, '$.karaoke_video_version') > 0 AND json_extract(s.payload, '$.karaoke_video_version') != {}",
+                crate::karaoke_video::RENDER_VERSION
+            )),
+            "has_youtube_karaoke_video" => where_parts.push(format!(
+                "json_extract(s.payload, '$.youtube_karaoke_video_version') = {}",
+                crate::karaoke_video::RENDER_VERSION
+            )),
+            "has_youtube_karaoke_video_outdated" => where_parts.push(format!(
+                "json_extract(s.payload, '$.youtube_karaoke_video_version') > 0 AND json_extract(s.payload, '$.youtube_karaoke_video_version') != {}",
+                crate::karaoke_video::RENDER_VERSION
+            )),
             _ => {}
         }
     }
@@ -624,57 +633,63 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
         // real benefit. Karaoke videos can only exist for analyzed songs
         // (rendering requires a transcript) and never go through
         // `analysis_queue`, so `analysed_count == count` and
-        // `queued_count`/`analysing_count` are always 0 below. Split by
-        // exact version (1 vs 2), not "any version", so the menu can tell
-        // a v1 render (bare lyrics) from a current one (grey pill +
-        // next-line preview) -- see `karaoke_video::RENDER_VERSION`.
-        let (karaoke_v1_total, karaoke_v2_total, youtube_v1_total, youtube_v2_total): (
+        // `queued_count`/`analysing_count` are always 0 below. Split into
+        // "current" (matches `RENDER_VERSION`) vs "outdated" (any other
+        // nonzero version) rather than a hardcoded per-version bucket --
+        // the previous `= 1`/`= 2` buckets went stale and hid every video
+        // the moment `RENDER_VERSION` reached 3, since neither bucket
+        // matched it.
+        let karaoke_render_version = crate::karaoke_video::RENDER_VERSION;
+        let (karaoke_current_total, karaoke_outdated_total, youtube_current_total, youtube_outdated_total): (
             i64,
             i64,
             i64,
             i64,
         ) = c.query_row(
-            "SELECT
-                (SELECT COUNT(*) FROM karaoke_video_status WHERE karaoke_video_version = 1),
-                (SELECT COUNT(*) FROM karaoke_video_status WHERE karaoke_video_version = 2),
-                (SELECT COUNT(*) FROM karaoke_video_status WHERE youtube_karaoke_video_version = 1),
-                (SELECT COUNT(*) FROM karaoke_video_status WHERE youtube_karaoke_video_version = 2)",
+            &format!(
+                "SELECT
+                    (SELECT COUNT(*) FROM karaoke_video_status WHERE karaoke_video_version = {v}),
+                    (SELECT COUNT(*) FROM karaoke_video_status WHERE karaoke_video_version > 0 AND karaoke_video_version != {v}),
+                    (SELECT COUNT(*) FROM karaoke_video_status WHERE youtube_karaoke_video_version = {v}),
+                    (SELECT COUNT(*) FROM karaoke_video_status WHERE youtube_karaoke_video_version > 0 AND youtube_karaoke_video_version != {v})",
+                v = karaoke_render_version
+            ),
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
 
         let karaoke_video = vec![
             LibraryMenuItem {
-                value: "has_karaoke_video_v1".into(),
-                label: "Has karaoke video (v1)".into(),
-                analysed_count: karaoke_v1_total as u64,
+                value: "has_karaoke_video".into(),
+                label: "Has karaoke video".into(),
+                analysed_count: karaoke_current_total as u64,
                 queued_count: 0,
                 analysing_count: 0,
-                count: karaoke_v1_total as u64,
+                count: karaoke_current_total as u64,
             },
             LibraryMenuItem {
-                value: "has_karaoke_video_v2".into(),
-                label: "Has karaoke video (v2)".into(),
-                analysed_count: karaoke_v2_total as u64,
+                value: "has_karaoke_video_outdated".into(),
+                label: "Has karaoke video (outdated)".into(),
+                analysed_count: karaoke_outdated_total as u64,
                 queued_count: 0,
                 analysing_count: 0,
-                count: karaoke_v2_total as u64,
+                count: karaoke_outdated_total as u64,
             },
             LibraryMenuItem {
-                value: "has_youtube_karaoke_video_v1".into(),
-                label: "Has YouTube karaoke video (v1)".into(),
-                analysed_count: youtube_v1_total as u64,
+                value: "has_youtube_karaoke_video".into(),
+                label: "Has YouTube karaoke video".into(),
+                analysed_count: youtube_current_total as u64,
                 queued_count: 0,
                 analysing_count: 0,
-                count: youtube_v1_total as u64,
+                count: youtube_current_total as u64,
             },
             LibraryMenuItem {
-                value: "has_youtube_karaoke_video_v2".into(),
-                label: "Has YouTube karaoke video (v2)".into(),
-                analysed_count: youtube_v2_total as u64,
+                value: "has_youtube_karaoke_video_outdated".into(),
+                label: "Has YouTube karaoke video (outdated)".into(),
+                analysed_count: youtube_outdated_total as u64,
                 queued_count: 0,
                 analysing_count: 0,
-                count: youtube_v2_total as u64,
+                count: youtube_outdated_total as u64,
             },
         ];
 

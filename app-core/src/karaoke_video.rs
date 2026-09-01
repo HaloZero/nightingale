@@ -52,7 +52,7 @@ use crate::vendor::{ensure_font_downloaded, ffmpeg_path, silent_command};
 ///   glyph pixels onto the pill -- v2 punched faint but visible streaky
 ///   holes through the pill along every glyph's antialiased edges, most
 ///   noticeable on the smaller next-line preview text.
-const RENDER_VERSION: u32 = 3;
+pub(crate) const RENDER_VERSION: u32 = 3;
 
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
