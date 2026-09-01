@@ -32,6 +32,28 @@ use crate::library_db;
 use crate::library_model::LibraryMenuFilters;
 use crate::vendor::{ensure_font_downloaded, ffmpeg_path, silent_command};
 
+/// Bump whenever this file's frame-rendering output changes in a way that
+/// should force existing cached videos to re-render even though the
+/// underlying transcript hasn't changed -- `is_fresh` compares this against
+/// the per-song version recorded in the `karaoke_video_status` table (see
+/// `library_db::get_karaoke_video_versions`/`record_karaoke_video_status`)
+/// (mtime-only freshness can't detect a pure code/look change, since
+/// neither the transcript nor its mtime changed).
+///
+/// ## Changelog
+/// - v1: initial ab_glyph + ffmpeg overlay renderer -- title line and a
+///   bare current-line lyrics line, no background pill, no next-line
+///   preview.
+/// - v2: current line now sits on a rounded, semi-transparent grey pill;
+///   the upcoming line is previewed below it, smaller and dimmer, using
+///   the same segment lead-in/lookahead rules as the live in-app lyrics
+///   display (`lyrics-display.tsx`'s `findCurrentSegment`).
+/// - v3: fixed `blend_pixel` overwriting (instead of alpha-compositing)
+///   glyph pixels onto the pill -- v2 punched faint but visible streaky
+///   holes through the pill along every glyph's antialiased edges, most
+///   noticeable on the smaller next-line preview text.
+const RENDER_VERSION: u32 = 3;
+
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
 // 12fps was cheap to rasterize/pipe but visibly choppy once real (panning
@@ -51,8 +73,39 @@ const TITLE_BASELINE_Y: f32 = 135.0;
 const LYRICS_BASELINE_Y: f32 = (HEIGHT as f32) - 180.0;
 
 /// Segment lingers this long past its nominal end before the line clears,
-/// so it doesn't vanish mid-breath between segments.
-const SEGMENT_LINGER_SECS: f64 = 0.4;
+/// so it doesn't vanish mid-breath between segments -- matches the live
+/// in-app lyrics display's `SEGMENT_LINGER` (`lyrics-display.tsx`).
+const SEGMENT_LINGER_SECS: f64 = 0.5;
+/// A line is already considered "current" starting this many seconds
+/// before its nominal `start` -- matches the live display's `LYRICS_LEAD`.
+const LYRICS_LEAD_SECS: f64 = 0.15;
+/// Through a pause shorter than this, `find_current_segment` holds the
+/// finished line current until the next line's lead-in begins (rather than
+/// dropping to nothing mid-pause) -- matches the live display's
+/// `COUNTDOWN_GAP_THRESHOLD`. The video doesn't render the live display's
+/// countdown-number overlay, just reuses its gap-bridging threshold.
+const COUNTDOWN_GAP_THRESHOLD_SECS: f64 = 3.5;
+
+/// Next-line preview text size, and the current/next pill styling --
+/// matches the live in-app lyrics display's current/next line treatment
+/// (`lyrics-display.tsx`: `bg-black/40`/`bg-black/25` rounded pills, next
+/// line rendered smaller and dimmer).
+const NEXT_LYRICS_SIZE: f32 = 40.0;
+const LYRICS_PILL_PAD_X: f32 = 40.0;
+const LYRICS_PILL_PAD_Y: f32 = 22.0;
+const LYRICS_PILL_RADIUS: f32 = 24.0;
+const LYRICS_PILL_ALPHA: f32 = 0.40;
+const NEXT_LYRICS_PILL_PAD_X: f32 = 28.0;
+const NEXT_LYRICS_PILL_PAD_Y: f32 = 14.0;
+const NEXT_LYRICS_PILL_RADIUS: f32 = 16.0;
+const NEXT_LYRICS_PILL_ALPHA: f32 = 0.25;
+/// Gap between the bottom of the current line's pill and the top of the
+/// next line's pill.
+const NEXT_LYRICS_PILL_GAP: f32 = 16.0;
+/// Dim, desaturated grey for the next-line preview -- no accent/unsung
+/// color split like the current line, since none of these words are sung
+/// yet and won't be by the time they scroll up to become current.
+const NEXT_LYRICS_COLOR: [u8; 3] = [190, 190, 190];
 
 const BG_COLOR_HEX: &str = "0x0C0E18";
 const TITLE_COLOR: [u8; 3] = [255, 255, 255];
@@ -170,6 +223,8 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
         && is_fresh(
             &cache.youtube_karaoke_video_path(file_hash),
             &cache.transcript_path(file_hash),
+            file_hash,
+            KaraokeVideoKind::Youtube,
         )
     {
         info!(
@@ -426,7 +481,12 @@ pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::PathBuf, NightingaleError> {
     let started = std::time::Instant::now();
     let video_path = CacheDir::new().karaoke_video_path(file_hash);
-    let result = render_karaoke_video_to(file_hash, force, &video_path, |duration_secs| {
+    let result = render_karaoke_video_to(
+        file_hash,
+        force,
+        &video_path,
+        KaraokeVideoKind::Reel,
+        |duration_secs| {
         let background = select_background_video(duration_secs).map(|path| BackgroundSource {
             path,
             start_offset_secs: 0.0,
@@ -519,9 +579,13 @@ pub fn ensure_youtube_background_karaoke_video(
     };
 
     let video_path = cache.youtube_karaoke_video_path(file_hash);
-    let result = render_karaoke_video_to(file_hash, force, &video_path, move |_duration_secs| {
-        Some(background)
-    });
+    let result = render_karaoke_video_to(
+        file_hash,
+        force,
+        &video_path,
+        KaraokeVideoKind::Youtube,
+        move |_duration_secs| Some(background),
+    );
     if result.is_ok() {
         record_karaoke_video_status(file_hash, KaraokeVideoKind::Youtube);
     }
@@ -539,36 +603,51 @@ enum KaraokeVideoKind {
 }
 
 /// Upserts the `karaoke_video_status` side table for whichever flavor just
-/// rendered successfully, then mirrors the table's current combined state
-/// onto `Song.has_karaoke_video`/`has_youtube_karaoke_video` so the song
+/// rendered successfully with the current `RENDER_VERSION`, then mirrors
+/// the table's current combined state onto
+/// `Song.karaoke_video_version`/`youtube_karaoke_video_version` so the song
 /// list can show it per row without an extra query. Only ever called after
 /// a successful render -- a failed render never invalidates a
 /// pre-existing successful one (see `render_karaoke_video_to`'s
-/// tmp-file-then-rename), so there's no corresponding "mark false" path.
+/// tmp-file-then-rename), so there's no corresponding "mark absent" path.
 ///
-/// Skips the write entirely if this flavor is already recorded: both
-/// `ensure_karaoke_video`/`ensure_youtube_background_karaoke_video` call
-/// this on every `Ok` return, including the freshness-check fast path that
-/// does no actual rendering (e.g. every cast via `best_karaoke_video_path`)
-/// -- without this check that path would do a full side-table write plus
+/// Skips the write entirely if this flavor is already recorded at the
+/// current version: both `ensure_karaoke_video`/
+/// `ensure_youtube_background_karaoke_video` call this on every `Ok`
+/// return, including the freshness-check fast path that does no actual
+/// rendering (e.g. every cast via `best_karaoke_video_path`) -- without
+/// this check that path would do a full side-table write plus
 /// song-payload read/write on every call, defeating the point of it being
 /// a fast path. Still self-heals for libraries that had karaoke videos on
-/// disk from before this table existed: the first `Ok` after upgrade finds
-/// `already_recorded: false` and backfills it once.
+/// disk from before this table existed, or before per-version tracking
+/// existed: the first `Ok` after upgrade finds a stale/absent version and
+/// backfills it once.
 fn record_karaoke_video_status(file_hash: &str, kind: KaraokeVideoKind) {
-    let (has_karaoke_video, has_youtube_karaoke_video) =
-        library_db::get_karaoke_video_status(file_hash).unwrap_or_default();
+    record_karaoke_video_status_at_version(file_hash, kind, RENDER_VERSION);
+}
+
+/// Shared by `record_karaoke_video_status` (always stamps the *current*
+/// `RENDER_VERSION`, since it's only called right after a real render) and
+/// `backfill_karaoke_video_status_from_cache` (stamps a fixed `1`, since a
+/// cache file discovered with no tracking row at all necessarily predates
+/// per-version tracking, and therefore the pill/next-line preview from
+/// `RENDER_VERSION` 2).
+fn record_karaoke_video_status_at_version(file_hash: &str, kind: KaraokeVideoKind, version: u32) {
+    let (reel_version, youtube_version) =
+        library_db::get_karaoke_video_versions(file_hash).unwrap_or_default();
     let already_recorded = match kind {
-        KaraokeVideoKind::Reel => has_karaoke_video,
-        KaraokeVideoKind::Youtube => has_youtube_karaoke_video,
+        KaraokeVideoKind::Reel => reel_version == version,
+        KaraokeVideoKind::Youtube => youtube_version == version,
     };
     if already_recorded {
         return;
     }
 
     let write_result = match kind {
-        KaraokeVideoKind::Reel => library_db::set_has_karaoke_video(file_hash, true),
-        KaraokeVideoKind::Youtube => library_db::set_has_youtube_karaoke_video(file_hash, true),
+        KaraokeVideoKind::Reel => library_db::set_karaoke_video_version(file_hash, version),
+        KaraokeVideoKind::Youtube => {
+            library_db::set_youtube_karaoke_video_version(file_hash, version)
+        }
     };
     if let Err(e) = write_result {
         warn!("[karaoke_video] {file_hash}: failed to record karaoke video status: {e}");
@@ -578,9 +657,14 @@ fn record_karaoke_video_status(file_hash: &str, kind: KaraokeVideoKind) {
     let Ok(Some(mut song)) = library_db::load_song_by_hash(file_hash) else {
         return;
     };
-    song.has_karaoke_video = matches!(kind, KaraokeVideoKind::Reel) || has_karaoke_video;
-    song.has_youtube_karaoke_video =
-        matches!(kind, KaraokeVideoKind::Youtube) || has_youtube_karaoke_video;
+    song.karaoke_video_version = match kind {
+        KaraokeVideoKind::Reel => version,
+        KaraokeVideoKind::Youtube => reel_version,
+    };
+    song.youtube_karaoke_video_version = match kind {
+        KaraokeVideoKind::Youtube => version,
+        KaraokeVideoKind::Reel => youtube_version,
+    };
     if let Err(e) = library_db::update_song_fields(file_hash, &song) {
         warn!("[karaoke_video] {file_hash}: failed to mirror karaoke video status onto song: {e}");
     }
@@ -658,11 +742,11 @@ pub fn backfill_karaoke_video_status_from_cache() -> KaraokeVideoBackfillReport 
             KaraokeVideoKind::Youtube => report.youtube_files_found += 1,
         }
 
-        let (has_karaoke_video, has_youtube_karaoke_video) =
-            library_db::get_karaoke_video_status(file_hash).unwrap_or_default();
+        let (reel_version, youtube_version) =
+            library_db::get_karaoke_video_versions(file_hash).unwrap_or_default();
         let already_recorded = match kind {
-            KaraokeVideoKind::Reel => has_karaoke_video,
-            KaraokeVideoKind::Youtube => has_youtube_karaoke_video,
+            KaraokeVideoKind::Reel => reel_version != 0,
+            KaraokeVideoKind::Youtube => youtube_version != 0,
         };
         if already_recorded {
             continue;
@@ -670,7 +754,11 @@ pub fn backfill_karaoke_video_status_from_cache() -> KaraokeVideoBackfillReport 
 
         match library_db::load_song_by_hash(file_hash) {
             Ok(Some(_)) => {
-                record_karaoke_video_status(file_hash, kind);
+                // Fixed `1`, not `RENDER_VERSION`: a cache file with no
+                // tracking row at all necessarily predates per-version
+                // tracking (see `record_karaoke_video_status_at_version`'s
+                // doc comment).
+                record_karaoke_video_status_at_version(file_hash, kind, 1);
                 match kind {
                     KaraokeVideoKind::Reel => report.reel_backfilled += 1,
                     KaraokeVideoKind::Youtube => report.youtube_backfilled += 1,
@@ -714,7 +802,9 @@ pub fn best_karaoke_video_path(file_hash: &str) -> Result<std::path::PathBuf, Ni
     let youtube_path = cache.youtube_karaoke_video_path(file_hash);
     let transcript_path = cache.transcript_path(file_hash);
 
-    if youtube_path.is_file() && is_fresh(&youtube_path, &transcript_path) {
+    if youtube_path.is_file()
+        && is_fresh(&youtube_path, &transcript_path, file_hash, KaraokeVideoKind::Youtube)
+    {
         info!("[karaoke_video] {file_hash}: using existing YouTube-background render");
         return Ok(youtube_path);
     }
@@ -744,12 +834,13 @@ fn render_karaoke_video_to(
     file_hash: &str,
     force: bool,
     video_path: &std::path::Path,
+    kind: KaraokeVideoKind,
     select_background: impl FnOnce(f64) -> Option<BackgroundSource>,
 ) -> Result<RenderOutcome, NightingaleError> {
     let cache = CacheDir::new();
     let transcript_path = cache.transcript_path(file_hash);
 
-    if !force && is_fresh(video_path, &transcript_path) {
+    if !force && is_fresh(video_path, &transcript_path, file_hash, kind) {
         return Ok(RenderOutcome {
             path: video_path.to_path_buf(),
             skipped_fresh: true,
@@ -832,7 +923,19 @@ fn render_karaoke_video_to(
     })
 }
 
-fn is_fresh(video_path: &std::path::Path, transcript_path: &std::path::Path) -> bool {
+/// A cached video is fresh only if it's both newer than the transcript it
+/// was rendered from *and* was rendered by the current `RENDER_VERSION` --
+/// mtime comparison alone can't catch a pure look/code change (bumping
+/// `RENDER_VERSION` on its own doesn't touch the transcript or its mtime),
+/// so every existing cached video is force-re-rendered exactly once after
+/// a version bump, picking up the new pipeline's look the next time it's
+/// requested (rendered, or cast via `best_karaoke_video_path`).
+fn is_fresh(
+    video_path: &std::path::Path,
+    transcript_path: &std::path::Path,
+    file_hash: &str,
+    kind: KaraokeVideoKind,
+) -> bool {
     let (Ok(video_meta), Ok(transcript_meta)) =
         (video_path.metadata(), transcript_path.metadata())
     else {
@@ -842,7 +945,17 @@ fn is_fresh(video_path: &std::path::Path, transcript_path: &std::path::Path) -> 
     else {
         return false;
     };
-    video_time >= transcript_time
+    if video_time < transcript_time {
+        return false;
+    }
+
+    let (reel_version, youtube_version) =
+        library_db::get_karaoke_video_versions(file_hash).unwrap_or_default();
+    let recorded_version = match kind {
+        KaraokeVideoKind::Reel => reel_version,
+        KaraokeVideoKind::Youtube => youtube_version,
+    };
+    recorded_version == RENDER_VERSION
 }
 
 /// Background video flavors karaoke rendering will pull from, pooled
@@ -1082,11 +1195,55 @@ fn render_and_encode(
     Ok(())
 }
 
+type Segment = (f64, f64, Vec<(String, f64, f64)>);
+
+/// Finds which segment should be treated as "current" at `t`, mirroring
+/// `findCurrentSegment` in `lyrics-display.tsx`: a finished line is held
+/// current through a short pause (`COUNTDOWN_GAP_THRESHOLD_SECS`) until the
+/// next line's lead-in begins, and a line already in its lead-in window
+/// jumps ahead of one that just finished. Always returns an index -- even
+/// well before the first line starts or after the last one ends -- since
+/// the live display separately gates *visibility* on `is_segment_active`,
+/// not on this lookup. Unlike the live display this takes no scan-start
+/// hint: each output frame is computed independently from scratch anyway
+/// (no animation-frame budget to protect), so a plain linear scan over
+/// what's normally a few hundred segments is simplest.
+fn find_current_segment(segments: &[Segment], t: f64) -> usize {
+    for i in 0..segments.len() {
+        let (_start, end, _) = &segments[i];
+        if t >= end + SEGMENT_LINGER_SECS {
+            if let Some((next_start, _, _)) = segments.get(i + 1) {
+                let gap_to_next = next_start - end;
+                if gap_to_next < COUNTDOWN_GAP_THRESHOLD_SECS && t < next_start - LYRICS_LEAD_SECS
+                {
+                    return i;
+                }
+            }
+            continue;
+        }
+
+        if let Some((next_start, _, _)) = segments.get(i + 1) {
+            if t >= next_start - LYRICS_LEAD_SECS {
+                continue;
+            }
+        }
+        return i;
+    }
+    segments.len().saturating_sub(1)
+}
+
+/// Whether the segment `find_current_segment` picked should actually be
+/// shown at `t` -- false during a long gap before the first/between lines,
+/// matching the live display's `isActive` check.
+fn is_segment_active(segment: &Segment, t: f64) -> bool {
+    t >= segment.0 - LYRICS_LEAD_SECS && t <= segment.1 + SEGMENT_LINGER_SECS
+}
+
 fn render_frame(
     buf: &mut [u8],
     font: &FontArc,
     title_line: &str,
-    segments: &[(f64, f64, Vec<(String, f64, f64)>)],
+    segments: &[Segment],
     t: f64,
     accent_color: [u8; 3],
 ) {
@@ -1104,21 +1261,63 @@ fn render_frame(
         TITLE_COLOR,
     );
 
-    if let Some((_, _, words)) = segments
+    if segments.is_empty() {
+        return;
+    }
+    let idx = find_current_segment(segments, t);
+    if !is_segment_active(&segments[idx], t) {
+        return;
+    }
+
+    // Two states: white until a word starts, then it flips to the song's
+    // accent color and stays that color (classic progressive karaoke fill)
+    // rather than reverting to white once it's done.
+    let (_, _, words) = &segments[idx];
+    let colored: Vec<(&str, [u8; 3])> = words
         .iter()
-        .find(|(start, end, _)| t >= *start && t <= *end + SEGMENT_LINGER_SECS)
-    {
-        // Two states: white until a word starts, then it flips to the
-        // song's accent color and stays that color (classic progressive
-        // karaoke fill) rather than reverting to white once it's done.
-        let colored: Vec<(&str, [u8; 3])> = words
-            .iter()
-            .map(|(word, start, _end)| {
-                let color = if t < *start { UNSUNG_COLOR } else { accent_color };
-                (word.as_str(), color)
-            })
-            .collect();
-        draw_words_centered(buf, font, PxScale::from(LYRICS_SIZE), &colored, LYRICS_BASELINE_Y);
+        .map(|(word, start, _end)| {
+            let color = if t < *start { UNSUNG_COLOR } else { accent_color };
+            (word.as_str(), color)
+        })
+        .collect();
+    let pill_bottom = draw_pill_line(
+        buf,
+        font,
+        PxScale::from(LYRICS_SIZE),
+        &colored,
+        LYRICS_BASELINE_Y,
+        LYRICS_PILL_PAD_X,
+        LYRICS_PILL_PAD_Y,
+        LYRICS_PILL_RADIUS,
+        LYRICS_PILL_ALPHA,
+    );
+
+    // Preview of the upcoming line, smaller and dimmer -- same "show the
+    // next line" behavior as the live display's next-line pill, just
+    // without its countdown-number overlay (this renderer has no separate
+    // countdown treatment at all, live or otherwise).
+    if let Some((_, _, next_words)) = segments.get(idx + 1) {
+        if !next_words.is_empty() {
+            let next_scale = PxScale::from(NEXT_LYRICS_SIZE);
+            let next_ascent = font.as_scaled(next_scale).ascent();
+            let next_baseline =
+                pill_bottom + NEXT_LYRICS_PILL_GAP + next_ascent + NEXT_LYRICS_PILL_PAD_Y;
+            let next_colored: Vec<(&str, [u8; 3])> = next_words
+                .iter()
+                .map(|(word, _, _)| (word.as_str(), NEXT_LYRICS_COLOR))
+                .collect();
+            draw_pill_line(
+                buf,
+                font,
+                next_scale,
+                &next_colored,
+                next_baseline,
+                NEXT_LYRICS_PILL_PAD_X,
+                NEXT_LYRICS_PILL_PAD_Y,
+                NEXT_LYRICS_PILL_RADIUS,
+                NEXT_LYRICS_PILL_ALPHA,
+            );
+        }
     }
 }
 
@@ -1181,6 +1380,15 @@ fn draw_line_centered(
     draw_text(buf, font, scale, text, x, baseline_y, color);
 }
 
+fn measure_words_width(font: &FontArc, scale: PxScale, words: &[(&str, [u8; 3])]) -> f32 {
+    if words.is_empty() {
+        return 0.0;
+    }
+    let space_w = measure_width(font, scale, " ");
+    words.iter().map(|(w, _)| measure_width(font, scale, w)).sum::<f32>()
+        + space_w * (words.len() - 1) as f32
+}
+
 fn draw_words_centered(
     buf: &mut [u8],
     font: &FontArc,
@@ -1192,8 +1400,7 @@ fn draw_words_centered(
         return;
     }
     let space_w = measure_width(font, scale, " ");
-    let total: f32 = words.iter().map(|(w, _)| measure_width(font, scale, w)).sum::<f32>()
-        + space_w * (words.len() - 1) as f32;
+    let total = measure_words_width(font, scale, words);
     let mut x = (WIDTH as f32 - total) / 2.0;
     for (i, (word, color)) in words.iter().enumerate() {
         draw_text(buf, font, scale, word, x, baseline_y, *color);
@@ -1204,19 +1411,111 @@ fn draw_words_centered(
     }
 }
 
-/// Sets `(x, y)` to `color` with alpha = `coverage`, unconditionally. Used
-/// for the final fill pass, which is meant to win outright over whatever
-/// the outline passes left at that pixel. The real compositing against
-/// whatever's actually behind this pixel happens later, in ffmpeg's
-/// `overlay` filter.
+/// Draws one lyrics line on top of a semi-transparent grey rounded pill
+/// sized to fit it -- matching the live in-app lyrics display's current/
+/// next line pills (`lyrics-display.tsx`). No-ops (drawing nothing, pill
+/// included) if `words` is empty. Returns the pill's bottom y so a
+/// following line (the next-line preview) can be stacked directly below
+/// it, using this line's own baseline if there's no pill to anchor to.
+#[allow(clippy::too_many_arguments)]
+fn draw_pill_line(
+    buf: &mut [u8],
+    font: &FontArc,
+    scale: PxScale,
+    words: &[(&str, [u8; 3])],
+    baseline_y: f32,
+    pad_x: f32,
+    pad_y: f32,
+    radius: f32,
+    pill_alpha: f32,
+) -> f32 {
+    if words.is_empty() {
+        return baseline_y;
+    }
+
+    let width = measure_words_width(font, scale, words);
+    let scaled = font.as_scaled(scale);
+    // `descent()` is negative (extends below the baseline), so subtracting
+    // it moves *down* from the baseline -- same convention `ascent()`
+    // (positive, above the baseline) relies on for `top` below.
+    let top = baseline_y - scaled.ascent() - pad_y;
+    let bottom = baseline_y - scaled.descent() + pad_y;
+    let half_w = width / 2.0 + pad_x;
+    let center_x = WIDTH as f32 / 2.0;
+
+    draw_pill(buf, center_x - half_w, top, center_x + half_w, bottom, radius, pill_alpha);
+    draw_words_centered(buf, font, scale, words, baseline_y);
+    bottom
+}
+
+/// Alpha-blends a semi-transparent grey rounded rectangle into `buf` using
+/// a standard rounded-box signed-distance field (clamp the pixel into the
+/// inner, non-rounded rect, then compare its distance from that clamped
+/// point to `radius`) with a 1px antialiased edge. Always plain black at
+/// `alpha` -- matching the live display's `bg-black/40`/`bg-black/25`
+/// pills (visually a dark, slightly-transparent grey against most
+/// backgrounds), not a literal grey color.
+fn draw_pill(buf: &mut [u8], x0: f32, y0: f32, x1: f32, y1: f32, radius: f32, alpha: f32) {
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let r = radius.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0).max(0.0);
+    let xi0 = x0.floor().max(0.0) as i32;
+    let xi1 = x1.ceil().min(WIDTH as f32) as i32;
+    let yi0 = y0.floor().max(0.0) as i32;
+    let yi1 = y1.ceil().min(HEIGHT as f32) as i32;
+
+    for y in yi0..yi1 {
+        for x in xi0..xi1 {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let cx = fx.clamp(x0 + r, x1 - r);
+            let cy = fy.clamp(y0 + r, y1 - r);
+            let dist = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt();
+            // Inside the shape once `dist <= r`; ramp coverage down to 0
+            // over a 1px band past that edge for antialiasing.
+            let coverage = (r - dist + 0.5).clamp(0.0, 1.0);
+            if coverage <= 0.0 {
+                continue;
+            }
+            let idx = ((y as u32 * WIDTH + x as u32) * 4) as usize;
+            buf[idx] = 0;
+            buf[idx + 1] = 0;
+            buf[idx + 2] = 0;
+            buf[idx + 3] = (alpha * coverage * 255.0) as u8;
+        }
+    }
+}
+
+/// Source-over alpha-composites `color` at `coverage` opacity onto whatever
+/// is already at `(x, y)`, instead of blindly overwriting it. This matters
+/// once glyphs can be drawn on top of a non-transparent backdrop (the pill,
+/// added for `RENDER_VERSION` 2): a glyph's antialiased edge pixels have
+/// low but nonzero `coverage`, and overwriting outright (the pre-pill
+/// behavior, safe back when every backdrop pixel was fully transparent)
+/// replaced the pill's own alpha at those pixels with the glyph's much
+/// lower edge alpha -- visually, a faint but very visible streaky/torn
+/// look punched through the pill along every glyph's antialiased edges,
+/// most noticeable on the smaller next-line preview text. Straight (not
+/// premultiplied) alpha compositing, matching how alpha is stored
+/// everywhere else in this buffer.
 fn blend_pixel(buf: &mut [u8], x: i32, y: i32, color: [u8; 3], coverage: f32) {
     if x < 0 || y < 0 || x as u32 >= WIDTH || y as u32 >= HEIGHT || coverage <= 0.0 {
         return;
     }
     let idx = ((y as u32 * WIDTH + x as u32) * 4) as usize;
-    let alpha = (coverage.clamp(0.0, 1.0) * 255.0) as u8;
-    buf[idx] = color[0];
-    buf[idx + 1] = color[1];
-    buf[idx + 2] = color[2];
-    buf[idx + 3] = alpha;
+    let src_a = coverage.clamp(0.0, 1.0);
+    let dst_a = buf[idx + 3] as f32 / 255.0;
+    let out_a = src_a + dst_a * (1.0 - src_a);
+    if out_a <= 0.0 {
+        buf[idx + 3] = 0;
+        return;
+    }
+    for c in 0..3 {
+        let src_c = color[c] as f32;
+        let dst_c = buf[idx + c] as f32;
+        let out_c = (src_c * src_a + dst_c * dst_a * (1.0 - src_a)) / out_a;
+        buf[idx + c] = out_c.round().clamp(0.0, 255.0) as u8;
+    }
+    buf[idx + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
 }

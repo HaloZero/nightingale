@@ -208,8 +208,8 @@ impl NavidromeSource {
             no_stems: false,
             has_lrc_file: false,
             has_embedded_lyrics: false,
-            has_karaoke_video: false,
-            has_youtube_karaoke_video: false,
+            karaoke_video_version: 0,
+            youtube_karaoke_video_version: 0,
         })
     }
 

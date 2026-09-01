@@ -43,8 +43,10 @@ const LYRICS_FILTERS: Record<string, LibraryMenuFilters> = {
 };
 
 const KARAOKE_VIDEO_FILTERS: Record<string, LibraryMenuFilters> = {
-  has_karaoke_video: { ...EMPTY_LIBRARY_FILTER, query: "has_karaoke_video" },
-  has_youtube_karaoke_video: { ...EMPTY_LIBRARY_FILTER, query: "has_youtube_karaoke_video" },
+  has_karaoke_video_v1: { ...EMPTY_LIBRARY_FILTER, query: "has_karaoke_video_v1" },
+  has_karaoke_video_v2: { ...EMPTY_LIBRARY_FILTER, query: "has_karaoke_video_v2" },
+  has_youtube_karaoke_video_v1: { ...EMPTY_LIBRARY_FILTER, query: "has_youtube_karaoke_video_v1" },
+  has_youtube_karaoke_video_v2: { ...EMPTY_LIBRARY_FILTER, query: "has_youtube_karaoke_video_v2" },
 };
 
 export function libraryFilterFromMenuSelection(

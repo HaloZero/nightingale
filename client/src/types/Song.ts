@@ -49,18 +49,21 @@ export type Song = {
    */
   has_embedded_lyrics: boolean;
   /**
-   * True when a reel-background karaoke video has been rendered and
-   * cached for this song. Unlike `has_lrc_file`/`has_embedded_lyrics`,
-   * not computed at scan time -- sourced from the `karaoke_video_status`
-   * side table and mirrored onto this field whenever
-   * `karaoke_video::ensure_karaoke_video` succeeds, so the song list can
-   * show it per row without an extra query. See
-   * `library_db::get_karaoke_video_status`.
+   * `0` if no reel-background karaoke video has been rendered/cached for
+   * this song, otherwise the `karaoke_video::RENDER_VERSION` that
+   * produced the currently-cached one -- lets the song list/library menu
+   * tell a v1 render (bare lyrics, pre-dates the grey pill + next-line
+   * preview) from a current one, not just "has one or doesn't". Unlike
+   * `has_lrc_file`/`has_embedded_lyrics`, not computed at scan time --
+   * sourced from the `karaoke_video_status` side table and mirrored onto
+   * this field whenever `karaoke_video::ensure_karaoke_video` succeeds,
+   * so the song list can show it per row without an extra query. See
+   * `library_db::get_karaoke_video_versions`.
    */
-  has_karaoke_video: boolean;
+  karaoke_video_version: number;
   /**
-   * Same as `has_karaoke_video`, for the YouTube-background render --
+   * Same as `karaoke_video_version`, for the YouTube-background render --
    * see `karaoke_video::ensure_youtube_background_karaoke_video`.
    */
-  has_youtube_karaoke_video: boolean;
+  youtube_karaoke_video_version: number;
 };

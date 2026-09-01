@@ -19,16 +19,22 @@ export function StatusBadge({ song, queueStatus }: { song: Song; queueStatus?: Q
         {status.label}
         {source}
       </Badge>
-      {song.has_karaoke_video || song.has_youtube_karaoke_video ? (
+      {song.karaoke_video_version > 0 || song.youtube_karaoke_video_version > 0 ? (
         <span className="inline-flex items-center gap-1 text-muted-foreground">
-          {song.has_karaoke_video ? (
-            <MicIcon className="size-3.5" aria-label="Karaoke video available">
-              <title>Karaoke video available</title>
+          {song.karaoke_video_version > 0 ? (
+            <MicIcon
+              className="size-3.5"
+              aria-label={`Karaoke video available (v${song.karaoke_video_version})`}
+            >
+              <title>Karaoke video available (v{song.karaoke_video_version})</title>
             </MicIcon>
           ) : null}
-          {song.has_youtube_karaoke_video ? (
-            <YoutubeIcon className="size-3.5" aria-label="YouTube karaoke video available">
-              <title>YouTube karaoke video available</title>
+          {song.youtube_karaoke_video_version > 0 ? (
+            <YoutubeIcon
+              className="size-3.5"
+              aria-label={`YouTube karaoke video available (v${song.youtube_karaoke_video_version})`}
+            >
+              <title>YouTube karaoke video available (v{song.youtube_karaoke_video_version})</title>
             </YoutubeIcon>
           ) : null}
         </span>

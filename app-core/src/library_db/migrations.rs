@@ -67,6 +67,7 @@ pub(super) fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_youtube_video_lookups_table(conn)?;
     ensure_youtube_video_sync_table(conn)?;
     ensure_karaoke_video_status_table(conn)?;
+    ensure_karaoke_video_version_columns(conn)?;
     ensure_karaoke_video_runs_table(conn)?;
     ensure_video_processing_queue_table(conn)?;
 
@@ -405,14 +406,19 @@ fn ensure_youtube_video_sync_table(conn: &Connection) -> rusqlite::Result<()> {
 /// YouTube-background karaoke video has been rendered for a song, one row
 /// per song, upserted whenever `karaoke_video::ensure_karaoke_video` /
 /// `ensure_youtube_background_karaoke_video` succeeds -- see
-/// `karaoke_video_status::set_has_karaoke_video`/
-/// `set_has_youtube_karaoke_video`. Separate from `songs` for the same
-/// reason as `youtube_video_lookups` above: this is a cache of a rendered
-/// artifact's presence on disk, not an intrinsic song property. No row
-/// (or a `0` column) means "not rendered" -- there's no need to
-/// distinguish "never attempted" from "attempted and failed" here the way
-/// `youtube_video_lookups` does, since a failed render never deletes a
-/// pre-existing successful one (see `render_karaoke_video_to`).
+/// `karaoke_video_status::set_karaoke_video_version`/
+/// `set_youtube_karaoke_video_version`. This table originally only stored
+/// the plain `has_*` booleans below; `ensure_karaoke_video_version_columns`
+/// (right below this function) adds the per-flavor version columns that
+/// are now the actual source of truth -- the `has_*` columns are legacy,
+/// unread by any code, kept only because this file only ever adds columns.
+/// Separate from `songs` for the same reason as `youtube_video_lookups`
+/// above: this is a cache of a rendered artifact's presence on disk, not
+/// an intrinsic song property. No row (or a `0` version) means "not
+/// rendered" -- there's no need to distinguish "never attempted" from
+/// "attempted and failed" here the way `youtube_video_lookups` does, since
+/// a failed render never deletes a pre-existing successful one (see
+/// `render_karaoke_video_to`).
 fn ensure_karaoke_video_status_table(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "
@@ -423,6 +429,51 @@ fn ensure_karaoke_video_status_table(conn: &Connection) -> rusqlite::Result<()> 
         );
     ",
     )
+}
+
+/// Adds `karaoke_video_version`/`youtube_karaoke_video_version` to
+/// `karaoke_video_status`, replacing the plain `has_*` booleans as the
+/// source of truth for whether a song has a rendered karaoke video: `0`
+/// means none, otherwise the `karaoke_video::RENDER_VERSION` that produced
+/// it, so the library menu/song list can tell a v1 render (bare lyrics,
+/// pre-dates the grey pill + next-line preview) from a current one instead
+/// of just "has one or doesn't" -- see `karaoke_video::is_fresh`, which
+/// also uses this to force a re-render when the pipeline version bumps
+/// even though the transcript hasn't changed. Same version-decoupled
+/// existence-check shape as `ensure_lyrics_columns`. Backfills every
+/// existing `has_karaoke_video = 1` / `has_youtube_karaoke_video = 1` row
+/// to version `1`: every karaoke video on disk before this column existed
+/// was necessarily rendered by the v1 pipeline. The old `has_*` columns
+/// are left in place (unread from here on) rather than dropped, matching
+/// this file's only-ever-add migration convention.
+fn ensure_karaoke_video_version_columns(conn: &Connection) -> rusqlite::Result<()> {
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('karaoke_video_status')")?;
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?
+    };
+
+    if !existing.contains("karaoke_video_version") {
+        conn.execute(
+            "ALTER TABLE karaoke_video_status ADD COLUMN karaoke_video_version INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE karaoke_video_status SET karaoke_video_version = 1 WHERE has_karaoke_video = 1",
+            [],
+        )?;
+    }
+    if !existing.contains("youtube_karaoke_video_version") {
+        conn.execute(
+            "ALTER TABLE karaoke_video_status ADD COLUMN youtube_karaoke_video_version INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE karaoke_video_status SET youtube_karaoke_video_version = 1 WHERE has_youtube_karaoke_video = 1",
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 /// History log for the two karaoke-video pipelines (reel background,

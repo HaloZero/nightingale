@@ -49,7 +49,7 @@ pub use analysis_queue::{
 pub use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
 pub use karaoke_video_runs::{KaraokeVideoRunRow, insert_karaoke_video_run};
 pub use karaoke_video_status::{
-    get_karaoke_video_status, set_has_karaoke_video, set_has_youtube_karaoke_video,
+    get_karaoke_video_versions, set_karaoke_video_version, set_youtube_karaoke_video_version,
 };
 pub use migrations::rewrite_legacy_jellyfin_paths;
 pub use parallel_mismatches::{clear_parallel_analysis_mismatch, record_parallel_analysis_mismatch};

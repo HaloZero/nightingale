@@ -186,15 +186,23 @@ fn append_structural_filters(
             }
             "no_external_lyrics" => where_parts
                 .push("(s.has_lrc_file = 0 AND s.has_embedded_lyrics = 0)".to_string()),
-            // `has_karaoke_video`/`has_youtube_karaoke_video` live only in the
-            // JSON payload (mirrored from the `karaoke_video_status` side
-            // table, not real `songs` columns -- see
-            // `karaoke_video::record_karaoke_video_status`), same
-            // `json_extract` pattern as `language` below.
-            "has_karaoke_video" => where_parts
-                .push("json_extract(s.payload, '$.has_karaoke_video') = 1".to_string()),
-            "has_youtube_karaoke_video" => where_parts.push(
-                "json_extract(s.payload, '$.has_youtube_karaoke_video') = 1".to_string(),
+            // `karaoke_video_version`/`youtube_karaoke_video_version` live
+            // only in the JSON payload (mirrored from the
+            // `karaoke_video_status` side table, not real `songs` columns --
+            // see `karaoke_video::record_karaoke_video_status`), same
+            // `json_extract` pattern as `language` below. Filtered by exact
+            // version (not "> 0") so v1 and v2 renders show up under
+            // separate library-menu items -- see the `karaoke_video` items
+            // built in `load_library_menu_items` below.
+            "has_karaoke_video_v1" => where_parts
+                .push("json_extract(s.payload, '$.karaoke_video_version') = 1".to_string()),
+            "has_karaoke_video_v2" => where_parts
+                .push("json_extract(s.payload, '$.karaoke_video_version') = 2".to_string()),
+            "has_youtube_karaoke_video_v1" => where_parts.push(
+                "json_extract(s.payload, '$.youtube_karaoke_video_version') = 1".to_string(),
+            ),
+            "has_youtube_karaoke_video_v2" => where_parts.push(
+                "json_extract(s.payload, '$.youtube_karaoke_video_version') = 2".to_string(),
             ),
             _ => {}
         }
@@ -616,31 +624,57 @@ pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
         // real benefit. Karaoke videos can only exist for analyzed songs
         // (rendering requires a transcript) and never go through
         // `analysis_queue`, so `analysed_count == count` and
-        // `queued_count`/`analysing_count` are always 0 below.
-        let (karaoke_video_total, youtube_karaoke_video_total): (i64, i64) = c.query_row(
+        // `queued_count`/`analysing_count` are always 0 below. Split by
+        // exact version (1 vs 2), not "any version", so the menu can tell
+        // a v1 render (bare lyrics) from a current one (grey pill +
+        // next-line preview) -- see `karaoke_video::RENDER_VERSION`.
+        let (karaoke_v1_total, karaoke_v2_total, youtube_v1_total, youtube_v2_total): (
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = c.query_row(
             "SELECT
-                (SELECT COUNT(*) FROM karaoke_video_status WHERE has_karaoke_video = 1),
-                (SELECT COUNT(*) FROM karaoke_video_status WHERE has_youtube_karaoke_video = 1)",
+                (SELECT COUNT(*) FROM karaoke_video_status WHERE karaoke_video_version = 1),
+                (SELECT COUNT(*) FROM karaoke_video_status WHERE karaoke_video_version = 2),
+                (SELECT COUNT(*) FROM karaoke_video_status WHERE youtube_karaoke_video_version = 1),
+                (SELECT COUNT(*) FROM karaoke_video_status WHERE youtube_karaoke_video_version = 2)",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
 
         let karaoke_video = vec![
             LibraryMenuItem {
-                value: "has_karaoke_video".into(),
-                label: "Has karaoke video".into(),
-                analysed_count: karaoke_video_total as u64,
+                value: "has_karaoke_video_v1".into(),
+                label: "Has karaoke video (v1)".into(),
+                analysed_count: karaoke_v1_total as u64,
                 queued_count: 0,
                 analysing_count: 0,
-                count: karaoke_video_total as u64,
+                count: karaoke_v1_total as u64,
             },
             LibraryMenuItem {
-                value: "has_youtube_karaoke_video".into(),
-                label: "Has YouTube karaoke video".into(),
-                analysed_count: youtube_karaoke_video_total as u64,
+                value: "has_karaoke_video_v2".into(),
+                label: "Has karaoke video (v2)".into(),
+                analysed_count: karaoke_v2_total as u64,
                 queued_count: 0,
                 analysing_count: 0,
-                count: youtube_karaoke_video_total as u64,
+                count: karaoke_v2_total as u64,
+            },
+            LibraryMenuItem {
+                value: "has_youtube_karaoke_video_v1".into(),
+                label: "Has YouTube karaoke video (v1)".into(),
+                analysed_count: youtube_v1_total as u64,
+                queued_count: 0,
+                analysing_count: 0,
+                count: youtube_v1_total as u64,
+            },
+            LibraryMenuItem {
+                value: "has_youtube_karaoke_video_v2".into(),
+                label: "Has YouTube karaoke video (v2)".into(),
+                analysed_count: youtube_v2_total as u64,
+                queued_count: 0,
+                analysing_count: 0,
+                count: youtube_v2_total as u64,
             },
         ];
 
