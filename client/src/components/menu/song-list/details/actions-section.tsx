@@ -3,12 +3,9 @@ import { useAnalysis } from "@/hooks/use-analysis";
 import { useDialog } from "@/hooks/use-dialog";
 import type { Song } from "@/types/Song";
 import {
-  fetchYoutubeKaraokeVideo,
-  forceFetchYoutubeKaraokeVideo,
-  forceRerenderKaraokeVideo,
+  bestKaraokeVideo,
+  forceBestKaraokeVideo,
   onKaraokeVideoReady,
-  onYoutubeKaraokeVideoReady,
-  renderKaraokeVideo,
 } from "@/bridge/karaoke-video";
 import { isTauri } from "@/bridge/runtime";
 import { useProfiles } from "@/queries/use-profiles";
@@ -45,6 +42,9 @@ export const ActionsSection = ({
   // Unlike the analysis actions above (no completion signal, so `run` just
   // acks the dispatch), rendering has a real completion event -- worth
   // reporting the actual outcome instead of only acking that it started.
+  // `music_video_found: false` means the render fell back to a reel
+  // background rather than failing outright, so it gets its own toast tone
+  // distinct from a genuine failure.
   useEffect(() => {
     if (isTauri) return;
 
@@ -53,33 +53,13 @@ export const ActionsSection = ({
     onKaraokeVideoReady((event) => {
       if (event.file_hash !== song.file_hash) return;
       if (event.error) {
-        toast.error(`Karaoke video render failed for "${song.title}": ${event.error}`);
+        toast.error(`Karaoke video failed for "${song.title}": ${event.error}`);
+      } else if (!event.music_video_found) {
+        toast.success(
+          `Karaoke video ready for "${song.title}" (no official music video found, used a background reel)`,
+        );
       } else {
         toast.success(`Karaoke video ready for "${song.title}"`);
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-
-    return () => unlisten?.();
-  }, [song.file_hash, song.title]);
-
-  // Same completion-event pattern as the plain render above, plus surfacing
-  // the "no music video exists for this song" outcome distinctly from a
-  // genuine failure.
-  useEffect(() => {
-    if (isTauri) return;
-
-    let unlisten: (() => void) | undefined;
-
-    onYoutubeKaraokeVideoReady((event) => {
-      if (event.file_hash !== song.file_hash) return;
-      if (!event.music_video_found) {
-        toast.warning(`No official music video found for "${song.title}"`);
-      } else if (event.error) {
-        toast.error(`YouTube karaoke video failed for "${song.title}": ${event.error}`);
-      } else {
-        toast.success(`YouTube karaoke video ready for "${song.title}"`);
       }
     }).then((fn) => {
       unlisten = fn;
@@ -100,19 +80,11 @@ export const ActionsSection = ({
     showKaraokeVideoActions: !isTauri,
     onRenderKaraokeVideo: () => {
       toast.info(`Rendering karaoke video for "${song.title}"...`);
-      renderKaraokeVideo(song.file_hash);
+      bestKaraokeVideo(song.file_hash);
     },
     onForceRerenderKaraokeVideo: () => {
       toast.info(`Re-rendering karaoke video for "${song.title}"...`);
-      forceRerenderKaraokeVideo(song.file_hash);
-    },
-    onFetchYoutubeKaraokeVideo: () => {
-      toast.info(`Looking up a YouTube video for "${song.title}"...`);
-      fetchYoutubeKaraokeVideo(song.file_hash);
-    },
-    onForceFetchYoutubeKaraokeVideo: () => {
-      toast.info(`Re-fetching YouTube video for "${song.title}"...`);
-      forceFetchYoutubeKaraokeVideo(song.file_hash);
+      forceBestKaraokeVideo(song.file_hash);
     },
   });
 

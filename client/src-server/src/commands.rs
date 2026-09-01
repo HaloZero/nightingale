@@ -560,37 +560,23 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
         "get_background_video_count" => get_background_video_count_cmd(payload),
         "get_background_reel_count" => get_background_reel_count_cmd(payload),
         "build_background_reels" => build_background_reels_cmd(events, payload),
-        "render_karaoke_video" => render_karaoke_video_cmd(events, payload),
-        "force_rerender_karaoke_video" => force_rerender_karaoke_video_cmd(events, payload),
-        "fetch_youtube_karaoke_video" => fetch_youtube_karaoke_video_cmd(events, payload),
-        "force_fetch_youtube_karaoke_video" => {
-            force_fetch_youtube_karaoke_video_cmd(events, payload)
-        }
-        "render_karaoke_video_all" => {
+        "best_karaoke_video" => best_karaoke_video_cmd(events, payload),
+        "force_best_karaoke_video" => force_best_karaoke_video_cmd(events, payload),
+        "best_karaoke_video_all" => {
             #[derive(Deserialize)]
             struct Args {
                 filters: LibraryMenuFilters,
             }
             let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::render_karaoke_video_all(&args.filters)))
+            Ok(Value::from(app_core::best_karaoke_video_all(&args.filters)))
         }
-        "force_rerender_karaoke_video_all" => {
+        "force_best_karaoke_video_all" => {
             #[derive(Deserialize)]
             struct Args {
                 filters: LibraryMenuFilters,
             }
             let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::force_rerender_karaoke_video_all(
-                &args.filters,
-            )))
-        }
-        "fetch_youtube_karaoke_video_all" => {
-            #[derive(Deserialize)]
-            struct Args {
-                filters: LibraryMenuFilters,
-            }
-            let args: Args = deserialize(payload)?;
-            Ok(Value::from(app_core::fetch_youtube_karaoke_video_all(
+            Ok(Value::from(app_core::force_best_karaoke_video_all(
                 &args.filters,
             )))
         }
@@ -868,86 +854,37 @@ fn download_youtube_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) 
     Ok(Value::Null)
 }
 
-/// Renders (or, with `force`, re-renders) a karaoke video without casting
-/// it -- the explicit "make the video" action, independent of
-/// `/api/cast`'s `chromecast.karaoke_video` path. Fire-and-forget thread +
-/// `"karaoke-video-ready"` event, same shape as `ensure_mp3_stems_cmd`'s
-/// `"stems-ready"`. With `force` omitted/false (the common case, e.g. a
-/// bulk "render everything" pass), this is a no-op for a song whose video
-/// is already fresh relative to its transcript -- see `ensure_karaoke_video`'s
-/// `is_fresh` check -- so re-running it over a whole library only pays for
-/// the songs that actually need it.
-fn render_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Args {
-        file_hash: String,
-        #[serde(default)]
-        force: bool,
-    }
-    let args: Args = deserialize(payload)?;
+/// The song-UI "make me a karaoke video" action -- the explicit action,
+/// independent of `/api/cast`'s `chromecast.karaoke_video` path. Chains
+/// `ensure_best_karaoke_video`'s YouTube-first, reel-fallback logic into one
+/// button. Fire-and-forget thread + `"karaoke-video-ready"` event,
+/// same shape as `ensure_mp3_stems_cmd`'s `"stems-ready"`. A no-op if a
+/// fresh YouTube-background render already exists -- see
+/// `force_best_karaoke_video_cmd` below for the "redo it anyway" variant.
+fn best_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+    let args: FileHashArgs = deserialize(payload)?;
     std::thread::spawn(move || {
-        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Reel);
-        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash.clone(), args.force);
-        clear_video_queue(&args.file_hash, VideoQueueKind::Reel, &token);
+        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Youtube);
+        let payload = app_core::ensure_best_karaoke_video(&args.file_hash, false);
+        clear_video_queue(&args.file_hash, VideoQueueKind::Youtube, &token);
         events.emit("karaoke-video-ready", &payload);
     });
     Ok(Value::Null)
 }
 
-/// Same as `render_karaoke_video_cmd` but always `force`s a fresh render --
-/// a distinct command rather than just exposing `force` on the one above so
-/// the two are unambiguous, separately-triggerable UI actions (e.g. "render
-/// if missing" vs. an explicit "no really, redo it" button), not one action
-/// with a checkbox easy to leave on by accident.
-fn force_rerender_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
+/// Same as `best_karaoke_video_cmd` but always `force`s a fresh regenerate,
+/// clearing both cached flavors first (see `ensure_best_karaoke_video`'s
+/// doc comment) -- a distinct command rather than just exposing `force` on
+/// the one above so the two are unambiguous, separately-triggerable UI
+/// actions ("render if missing" vs. an explicit "no really, redo it"
+/// button), not one action with a checkbox easy to leave on by accident.
+fn force_best_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
     let args: FileHashArgs = deserialize(payload)?;
     std::thread::spawn(move || {
-        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Reel);
-        let payload = app_core::ensure_karaoke_video_ready_payload(args.file_hash.clone(), true);
-        clear_video_queue(&args.file_hash, VideoQueueKind::Reel, &token);
+        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Youtube);
+        let payload = app_core::ensure_best_karaoke_video(&args.file_hash, true);
+        clear_video_queue(&args.file_hash, VideoQueueKind::Youtube, &token);
         events.emit("karaoke-video-ready", &payload);
-    });
-    Ok(Value::Null)
-}
-
-/// The song-UI "fetch a YouTube video for this song and build a karaoke
-/// video from it" action -- chains the AudioDB lookup (cached, see
-/// `audiodb::find_music_video_for_hash`'s doc comment), the download, and a
-/// forced karaoke-video re-render into one button. Fire-and-forget thread +
-/// `"youtube-karaoke-video-ready"` event, same shape as the plain
-/// `render_karaoke_video_cmd`/`force_rerender_karaoke_video_cmd` above. A
-/// no-op if a fresh YouTube-background render already exists -- see
-/// `force_fetch_youtube_karaoke_video_cmd` below for the "redo it anyway"
-/// variant.
-fn fetch_youtube_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value) -> CmdResult {
-    let args: FileHashArgs = deserialize(payload)?;
-    std::thread::spawn(move || {
-        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Youtube);
-        let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash, false);
-        clear_video_queue(&args.file_hash, VideoQueueKind::Youtube, &token);
-        events.emit("youtube-karaoke-video-ready", &payload);
-    });
-    Ok(Value::Null)
-}
-
-/// Same as `fetch_youtube_karaoke_video_cmd` but always `force`s a fresh
-/// download and re-render, discarding whatever's cached -- for a bad
-/// download or a stale render, not a wrong AudioDB match (the lookup itself
-/// is still served from its own cache either way, see
-/// `ensure_youtube_karaoke_video`'s doc comment). A distinct command rather
-/// than a `force` flag on the one above, same reasoning as
-/// `force_rerender_karaoke_video_cmd` vs. `render_karaoke_video_cmd`.
-fn force_fetch_youtube_karaoke_video_cmd(
-    events: std::sync::Arc<EventBus>,
-    payload: Value,
-) -> CmdResult {
-    let args: FileHashArgs = deserialize(payload)?;
-    std::thread::spawn(move || {
-        let token = mark_video_queue_processing(&args.file_hash, VideoQueueKind::Youtube);
-        let payload = app_core::ensure_youtube_karaoke_video(&args.file_hash, true);
-        clear_video_queue(&args.file_hash, VideoQueueKind::Youtube, &token);
-        events.emit("youtube-karaoke-video-ready", &payload);
     });
     Ok(Value::Null)
 }

@@ -150,36 +150,14 @@ struct TranscriptDoc {
     segments: Vec<TranscriptSegment>,
 }
 
-/// Mirrors `playback::StemsReady`'s shape -- same "fire a background thread,
-/// emit this on completion" pattern used by the `"render_karaoke_video"`
-/// command.
+/// Result of `ensure_youtube_karaoke_video`/`ensure_best_karaoke_video` --
+/// "fire a background thread, emit this on completion" shape, plus whether
+/// TheAudioDB actually had a music video for this song at all, distinct
+/// from a download/sync/render failure after one was found --
+/// `music_video_found: false` always means `error: Some(...)` too (nothing
+/// to render), but the reverse isn't true.
 #[derive(Debug, Clone, Serialize)]
 pub struct KaraokeVideoReady {
-    pub file_hash: String,
-    pub error: Option<String>,
-}
-
-pub fn ensure_karaoke_video_ready_payload(file_hash: String, force: bool) -> KaraokeVideoReady {
-    match ensure_karaoke_video(&file_hash, force) {
-        Ok(_) => KaraokeVideoReady {
-            file_hash,
-            error: None,
-        },
-        Err(e) => KaraokeVideoReady {
-            file_hash,
-            error: Some(e.to_string()),
-        },
-    }
-}
-
-/// Result of `ensure_youtube_karaoke_video` -- same "fire a background
-/// thread, emit this on completion" shape as `KaraokeVideoReady`, with one
-/// extra field: whether TheAudioDB actually had a music video for this song
-/// at all, distinct from a download/sync/render failure after one was
-/// found -- `music_video_found: false` always means `error: Some(...)` too
-/// (nothing to render), but the reverse isn't true.
-#[derive(Debug, Clone, Serialize)]
-pub struct YoutubeKaraokeVideoReady {
     pub file_hash: String,
     pub music_video_found: bool,
     pub error: Option<String>,
@@ -210,13 +188,11 @@ pub struct YoutubeKaraokeVideoReady {
 /// `force` skips that freshness check entirely and also re-downloads the
 /// source video unconditionally (`ensure_youtube_video_downloaded`'s own
 /// `force`), discarding whatever's cached -- the "no really, redo this one"
-/// button for when the cached video or a previous download was bad, same
-/// role `force_rerender_karaoke_video` plays for the reel pipeline. The
-/// AudioDB lookup itself is untouched either way (still served from its own
-/// cache, see `find_music_video_for_hash`) -- this forces a fresh
-/// download+render of whatever video was already matched, not a fresh
-/// match.
-pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKaraokeVideoReady {
+/// half of `ensure_best_karaoke_video`'s forced path. The AudioDB lookup
+/// itself is untouched either way (still served from its own cache, see
+/// `find_music_video_for_hash`) -- this forces a fresh download+render of
+/// whatever video was already matched, not a fresh match.
+pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> KaraokeVideoReady {
     let pipeline_started = std::time::Instant::now();
     let cache = CacheDir::new();
     if !force
@@ -240,7 +216,7 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
             render_ms: None,
             total_ms: pipeline_started.elapsed().as_millis() as u64,
         });
-        return YoutubeKaraokeVideoReady {
+        return KaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: true,
             error: None,
@@ -264,7 +240,7 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
             render_ms: None,
             total_ms: pipeline_started.elapsed().as_millis() as u64,
         });
-        return YoutubeKaraokeVideoReady {
+        return KaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: false,
             error: Some("no official music video found for this song".to_string()),
@@ -295,7 +271,7 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
             render_ms: None,
             total_ms: pipeline_started.elapsed().as_millis() as u64,
         });
-        return YoutubeKaraokeVideoReady {
+        return KaraokeVideoReady {
             file_hash: file_hash.to_string(),
             music_video_found: true,
             error: Some(format!("failed to download music video: {e}")),
@@ -328,7 +304,7 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
                 render_ms: Some(render_ms),
                 total_ms,
             });
-            YoutubeKaraokeVideoReady {
+            KaraokeVideoReady {
                 file_hash: file_hash.to_string(),
                 music_video_found: true,
                 error: None,
@@ -350,7 +326,7 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
                 render_ms: Some(render_ms),
                 total_ms,
             });
-            YoutubeKaraokeVideoReady {
+            KaraokeVideoReady {
                 file_hash: file_hash.to_string(),
                 music_video_found: true,
                 error: Some(format!("failed to render karaoke video: {e}")),
@@ -359,7 +335,97 @@ pub fn ensure_youtube_karaoke_video(file_hash: &str, force: bool) -> YoutubeKara
     }
 }
 
-/// Shared bulk-dispatch shape for the three karaoke video actions below:
+/// The single "get me a karaoke video" action exposed in the UI -- replaces
+/// what used to be four separate actions (render/force-rerender reel,
+/// fetch/force-refetch YouTube) with two: this, and this with `force: true`.
+/// Always prefers a YouTube-background render (`ensure_youtube_karaoke_video`:
+/// TheAudioDB lookup -> yt-dlp download -> render), falling back to the
+/// reel-background pipeline (`ensure_karaoke_video`) only when no
+/// YouTube-backed video could be produced -- no official music video found,
+/// or one was found but couldn't be downloaded or confidently synced.
+/// `music_video_found`/`error` describe the YouTube attempt specifically
+/// (see `KaraokeVideoReady`'s doc comment); `error` is only set here
+/// if *both* the YouTube attempt and the reel fallback fail.
+///
+/// `force` first clears both cached flavors via `clear_cached_karaoke_
+/// videos` -- without that, a flavor that doesn't happen to regenerate this
+/// run (e.g. a YouTube video is found this time where previously none was,
+/// so the old reel fallback never gets touched) would keep looking fresh to
+/// `is_fresh` and could still win the "best" pick over the fresh one.
+pub fn ensure_best_karaoke_video(file_hash: &str, force: bool) -> KaraokeVideoReady {
+    if force {
+        clear_cached_karaoke_videos(file_hash);
+    }
+
+    let youtube_result = ensure_youtube_karaoke_video(file_hash, force);
+    if youtube_result.error.is_none() {
+        return youtube_result;
+    }
+
+    info!(
+        "[karaoke_video] {file_hash}: no YouTube-background render available ({}), falling back \
+         to reel background",
+        youtube_result.error.as_deref().unwrap_or("unknown error")
+    );
+    match ensure_karaoke_video(file_hash, force) {
+        Ok(_) => KaraokeVideoReady {
+            file_hash: file_hash.to_string(),
+            music_video_found: youtube_result.music_video_found,
+            error: None,
+        },
+        Err(e) => KaraokeVideoReady {
+            file_hash: file_hash.to_string(),
+            music_video_found: youtube_result.music_video_found,
+            error: Some(format!(
+                "no YouTube-background render ({}) and reel fallback also failed: {e}",
+                youtube_result.error.unwrap_or_default()
+            )),
+        },
+    }
+}
+
+/// Deletes both cached karaoke-video flavors for `file_hash` (reel- and
+/// YouTube-background) and zeroes their recorded version in
+/// `karaoke_video_status`, mirroring the reset onto `Song.karaoke_video_
+/// version`/`youtube_karaoke_video_version` same as `record_karaoke_video_
+/// status_at_version` does for a successful render. Called by `ensure_best_
+/// karaoke_video`'s `force` path before regenerating -- see that function's
+/// doc comment for why a forced "start over" needs both flavors cleared
+/// up front, not just whichever one this run ends up re-rendering.
+fn clear_cached_karaoke_videos(file_hash: &str) {
+    let cache = CacheDir::new();
+    for path in [
+        cache.karaoke_video_path(file_hash),
+        cache.youtube_karaoke_video_path(file_hash),
+    ] {
+        if path.is_file() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                warn!(
+                    "[karaoke_video] {file_hash}: failed to remove {}: {e}",
+                    path.display()
+                );
+            }
+        }
+    }
+    if let Err(e) = library_db::set_karaoke_video_version(file_hash, 0) {
+        warn!("[karaoke_video] {file_hash}: failed to clear reel version: {e}");
+    }
+    if let Err(e) = library_db::set_youtube_karaoke_video_version(file_hash, 0) {
+        warn!("[karaoke_video] {file_hash}: failed to clear YouTube version: {e}");
+    }
+    if let Ok(Some(mut song)) = library_db::load_song_by_hash(file_hash) {
+        song.karaoke_video_version = 0;
+        song.youtube_karaoke_video_version = 0;
+        if let Err(e) = library_db::update_song_fields(file_hash, &song) {
+            warn!(
+                "[karaoke_video] {file_hash}: failed to mirror cleared karaoke video status onto \
+                 song: {e}"
+            );
+        }
+    }
+}
+
+/// Shared bulk-dispatch shape for the karaoke video actions below:
 /// resolve `filters` to eligible hashes (`iter_file_hashes_filtered_
 /// karaoke_renderable`), hand the count back immediately, and run `action`
 /// over each hash sequentially on a background thread. Backgrounded (like
@@ -424,47 +490,27 @@ fn song_label(file_hash: &str) -> String {
     }
 }
 
-/// Bulk "Render karaoke video" -- no-ops per-song for anything already
-/// fresh relative to its transcript, same as the per-song action.
-pub fn render_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
-    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
-        ensure_karaoke_video(hash, false)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })
-}
-
-/// Bulk "Force re-render karaoke video" -- regenerates every eligible song
-/// unconditionally, same as the per-song action.
-pub fn force_rerender_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
-    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
-        ensure_karaoke_video(hash, true)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })
-}
-
-/// Bulk "Fetch YouTube karaoke video" -- runs `ensure_youtube_karaoke_video`
-/// (lookup -> download -> render) per eligible song. TheAudioDB lookups are
-/// already throttled at the source (`audiodb::MIN_LOOKUP_INTERVAL`) and
-/// downloads at the source (`youtube_video::MIN_DOWNLOAD_INTERVAL`), and
-/// this only ever calls one song at a time on one thread, so a large
+/// Bulk counterpart to `ensure_best_karaoke_video` -- runs the
+/// YouTube-first, reel-fallback chain per eligible song. TheAudioDB lookups
+/// and downloads are both throttled at the source
+/// (`audiodb::MIN_LOOKUP_INTERVAL`/`youtube_video::MIN_DOWNLOAD_INTERVAL`),
+/// and this only ever calls one song at a time on one thread, so a large
 /// filtered set with a cold lookup/download cache is slow here by design,
 /// not accidentally -- that's the tradeoff for staying under TheAudioDB's
-/// free tier and being polite to YouTube.
-///
-/// `music_video_found: false` is reported as `Ok` to the bulk dispatcher
-/// (not a failure -- `ensure_youtube_karaoke_video` already logs that case
-/// at info level); only an actual download/sync/render error counts as a
-/// bulk-level failure.
-pub fn fetch_youtube_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
+/// free tier and being polite to YouTube. Marked under the `Youtube` video
+/// queue kind since that's the pipeline attempted first, even for songs
+/// that end up falling back to a reel render.
+pub fn best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
     bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Youtube, |hash| {
-        let result = ensure_youtube_karaoke_video(hash, false);
-        if result.music_video_found {
-            result.error.map_or(Ok(()), Err)
-        } else {
-            Ok(())
-        }
+        ensure_best_karaoke_video(hash, false).error.map_or(Ok(()), Err)
+    })
+}
+
+/// Bulk "Force" counterpart -- clears and regenerates both flavors
+/// unconditionally for every eligible song, same as the per-song action.
+pub fn force_best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
+    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Youtube, |hash| {
+        ensure_best_karaoke_video(hash, true).error.map_or(Ok(()), Err)
     })
 }
 
