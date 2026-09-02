@@ -428,14 +428,21 @@ fn clear_cached_karaoke_videos(file_hash: &str) {
 /// Shared bulk-dispatch shape for the karaoke video actions below:
 /// resolve `filters` to eligible hashes (`iter_file_hashes_filtered_
 /// karaoke_renderable`), hand the count back immediately, and run `action`
-/// over each hash sequentially on a background thread. Backgrounded (like
-/// `analyzer::refresh_metadata_all`, unlike `reanalyze_all_full`) because
-/// each call here does real ffmpeg work directly and blocking -- there's no
-/// existing worker queue for karaoke video the way there is for analysis.
-/// Sequential, not one-thread-per-song: N parallel ffmpeg encodes (or, for
-/// the YouTube variant, N concurrent yt-dlp downloads racing past
-/// `youtube_video`'s own throttle) would defeat the point of the
-/// throttling/single-flight care already taken per-song.
+/// over each hash sequentially on its own background thread. Backgrounded
+/// (like `analyzer::refresh_metadata_all`, unlike `reanalyze_all_full`)
+/// because each call here does real ffmpeg/network work directly and
+/// blocking -- there's no existing worker queue for karaoke video the way
+/// there is for analysis. Sequential *within* one call, not
+/// one-thread-per-song: N parallel ffmpeg encodes (or, for the YouTube
+/// variant, N concurrent yt-dlp downloads racing past `youtube_video`'s own
+/// throttle) would defeat the point of the throttling/single-flight care
+/// already taken per-song.
+///
+/// `best_karaoke_video_all`/`force_best_karaoke_video_all` each call this
+/// twice, once per `kind`, deliberately -- two independent single-file
+/// walks on two independent threads, so a slow/throttled/failing YouTube
+/// walk never stalls the (much faster, purely local) reel walk. See their
+/// doc comments for why that split exists.
 ///
 /// Logs a `(i/count)` position line before each song and a done/failed line
 /// with that song's elapsed time after, plus a total-elapsed line when the
@@ -490,27 +497,64 @@ fn song_label(file_hash: &str) -> String {
     }
 }
 
-/// Bulk counterpart to `ensure_best_karaoke_video` -- runs the
-/// YouTube-first, reel-fallback chain per eligible song. TheAudioDB lookups
-/// and downloads are both throttled at the source
-/// (`audiodb::MIN_LOOKUP_INTERVAL`/`youtube_video::MIN_DOWNLOAD_INTERVAL`),
-/// and this only ever calls one song at a time on one thread, so a large
-/// filtered set with a cold lookup/download cache is slow here by design,
-/// not accidentally -- that's the tradeoff for staying under TheAudioDB's
-/// free tier and being polite to YouTube. Marked under the `Youtube` video
-/// queue kind since that's the pipeline attempted first, even for songs
-/// that end up falling back to a reel render.
+/// Bulk counterpart to `ensure_best_karaoke_video` -- unlike that
+/// per-song, YouTube-first-with-reel-fallback chain, this dispatches two
+/// *independent* sweeps over the same eligible-song list, each on its own
+/// background thread (two separate `bulk_karaoke_video` calls): one renders
+/// reels directly, the other drives the YouTube lookup/download/render
+/// pipeline. They used to be one combined sweep that tried YouTube first
+/// and only rendered a reel on failure, all on a single thread -- since
+/// TheAudioDB lookups and yt-dlp downloads are throttled at the source
+/// (`audiodb::MIN_LOOKUP_INTERVAL`/`youtube_video::MIN_DOWNLOAD_INTERVAL`)
+/// and have no timeout, a slow or hung YouTube step for one song stalled
+/// reel rendering for every song behind it in the walk. Running them
+/// independently means reel coverage for the whole filtered set finishes at
+/// its own (CPU/ffmpeg-bound, much faster) pace regardless of how YouTube's
+/// slower, less reliable pipeline is doing; `best_karaoke_video_path`
+/// already prefers a YouTube render over reel whenever one exists on disk,
+/// so casting picks up each song's YouTube video automatically whenever the
+/// YouTube sweep gets to it -- no coordination needed between the two.
+///
+/// The reel sweep skips a song entirely (`has_fresh_youtube_video`) if it
+/// already has a fresh YouTube-background render, so re-running this after
+/// the YouTube sweep has filled in doesn't waste time re-rendering reels
+/// nobody will see. The very first pass over a song can't know in advance
+/// whether YouTube will succeed, so some reels that turn out to be
+/// superseded by YouTube shortly after are an accepted tradeoff of not
+/// blocking reel on YouTube's outcome.
 pub fn best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
+    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
+        if has_fresh_youtube_video(hash) {
+            return Ok(());
+        }
+        ensure_karaoke_video(hash, false)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    });
     bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Youtube, |hash| {
-        ensure_best_karaoke_video(hash, false).error.map_or(Ok(()), Err)
+        ensure_youtube_karaoke_video(hash, false)
+            .error
+            .map_or(Ok(()), Err)
     })
 }
 
-/// Bulk "Force" counterpart -- clears and regenerates both flavors
-/// unconditionally for every eligible song, same as the per-song action.
+/// Bulk "Force" counterpart -- same two independent sweeps as
+/// `best_karaoke_video_all`, but each unconditionally regenerates its own
+/// flavor (skipping the freshness/`has_fresh_youtube_video` checks) instead
+/// of clearing both flavors together the way the per-song forced action
+/// does. Deliberately simpler than that: force-refreshing reels
+/// library-wide shouldn't also wipe out already-good YouTube videos (or
+/// vice versa), so each sweep only ever touches its own cached flavor.
 pub fn force_best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
+    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
+        ensure_karaoke_video(hash, true)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    });
     bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Youtube, |hash| {
-        ensure_best_karaoke_video(hash, true).error.map_or(Ok(()), Err)
+        ensure_youtube_karaoke_video(hash, true)
+            .error
+            .map_or(Ok(()), Err)
     })
 }
 
@@ -844,18 +888,29 @@ pub fn backfill_karaoke_video_status_from_cache() -> KaraokeVideoBackfillReport 
 /// already on disk for the YouTube side, so casting stays fast and never
 /// surprises the user with a network fetch.
 pub fn best_karaoke_video_path(file_hash: &str) -> Result<std::path::PathBuf, NightingaleError> {
-    let cache = CacheDir::new();
-    let youtube_path = cache.youtube_karaoke_video_path(file_hash);
-    let transcript_path = cache.transcript_path(file_hash);
-
-    if youtube_path.is_file()
-        && is_fresh(&youtube_path, &transcript_path, file_hash, KaraokeVideoKind::Youtube)
-    {
+    if has_fresh_youtube_video(file_hash) {
         info!("[karaoke_video] {file_hash}: using existing YouTube-background render");
-        return Ok(youtube_path);
+        return Ok(CacheDir::new().youtube_karaoke_video_path(file_hash));
     }
 
     ensure_karaoke_video(file_hash, false)
+}
+
+/// True if a fresh YouTube-background render already exists for
+/// `file_hash` -- factored out of `best_karaoke_video_path`'s inline check
+/// since the decoupled bulk reel sweep (`best_karaoke_video_all`) also
+/// needs it, to skip rendering a reel nobody will see once YouTube has
+/// already produced a nicer video for that song.
+fn has_fresh_youtube_video(file_hash: &str) -> bool {
+    let cache = CacheDir::new();
+    let youtube_path = cache.youtube_karaoke_video_path(file_hash);
+    youtube_path.is_file()
+        && is_fresh(
+            &youtube_path,
+            &cache.transcript_path(file_hash),
+            file_hash,
+            KaraokeVideoKind::Youtube,
+        )
 }
 
 /// Outcome of `render_karaoke_video_to`, distinguishing "nothing to do,
