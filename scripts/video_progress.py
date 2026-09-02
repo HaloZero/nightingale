@@ -162,7 +162,9 @@ def report_pipeline(
         print(f"    Avg total:    {fmt_duration(avg_total_seconds)}")
 
         rate_per_hour = rendered_window / hours
-        print(f"    Rate:         {rate_per_hour:.2f} renders/hour")
+        print(f"    Wall-clock rate: {rate_per_hour:.2f} renders/hour "
+              f"({rendered_window} renders / {window}, includes any idle/non-render time --"
+              f" renders aren't triggered back-to-back)")
 
         if remaining > 0:
             active_eta = remaining * avg_total_seconds
