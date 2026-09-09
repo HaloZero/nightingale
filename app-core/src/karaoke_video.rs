@@ -896,6 +896,25 @@ pub fn best_karaoke_video_path(file_hash: &str) -> Result<std::path::PathBuf, Ni
     ensure_karaoke_video(file_hash, false)
 }
 
+/// Read-only counterpart to `best_karaoke_video_path`: returns whichever
+/// karaoke video is already cached on disk for `file_hash` (YouTube-
+/// background preferred, falling back to reel-background), or `None` if
+/// neither has been rendered yet. Unlike `best_karaoke_video_path`, never
+/// triggers a render itself -- used to let the UI link straight to an
+/// existing video (e.g. a "Play karaoke video" preview button) without
+/// risking a slow synchronous render on click.
+pub fn existing_karaoke_video_path(file_hash: &str) -> Option<std::path::PathBuf> {
+    let cache = CacheDir::new();
+
+    let youtube_path = cache.youtube_karaoke_video_path(file_hash);
+    if youtube_path.is_file() {
+        return Some(youtube_path);
+    }
+
+    let reel_path = cache.karaoke_video_path(file_hash);
+    reel_path.is_file().then_some(reel_path)
+}
+
 /// True if a fresh YouTube-background render already exists for
 /// `file_hash` -- factored out of `best_karaoke_video_path`'s inline check
 /// since the decoupled bulk reel sweep (`best_karaoke_video_all`) also

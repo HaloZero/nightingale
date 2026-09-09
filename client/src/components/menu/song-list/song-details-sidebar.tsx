@@ -1,15 +1,18 @@
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Separator } from "@/components/ui/separator";
+import { openUrl } from "@/bridge/opener";
+import { getBestKaraokeVideoPath, playbackAdapter } from "@/bridge/playback";
 import { useBestScoresBySongForActiveProfile } from "@/hooks/use-best-scores-by-song";
 import { usePreparePlaybackMutation } from "@/mutations/use-prepare-playback-mutation";
 import { SONGS } from "@/queries/keys";
 import type { QueuedStatus } from "@/types/QueuedStatus";
 import type { Song } from "@/types/Song";
 import { useQueryClient } from "@tanstack/react-query";
-import { PlayIcon } from "lucide-react";
+import { PlayIcon, VideoIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { ActionsSection } from "./details/actions-section";
 import { KeyTempoSection } from "./details/key-tempo-section";
 import { SongDetailsHeader } from "./details/song-details-header";
@@ -30,6 +33,8 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
   const { mutate: preparePlayback, isLoading: preparingPlayback } = usePreparePlaybackMutation();
   const [tempo, setTempo] = useState(song.tempo);
   const [keyOffset, setKeyOffset] = useState(song.key_offset);
+  const [openingKaraokeVideo, setOpeningKaraokeVideo] = useState(false);
+  const hasKaraokeVideo = song.karaoke_video_version > 0 || song.youtube_karaoke_video_version > 0;
 
   const status = getSongStatusInfo(song.is_analyzed, queueStatus);
   const analysisBusy = queueStatus === "Queued" || Boolean(status.isAnalyzing);
@@ -67,6 +72,24 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
     );
   };
 
+  const handlePlayKaraokeVideo = async () => {
+    setOpeningKaraokeVideo(true);
+    try {
+      await playbackAdapter.init();
+      const path = await getBestKaraokeVideoPath(song.file_hash);
+      if (!path) {
+        toast.error("No karaoke video is cached for this song yet");
+        return;
+      }
+      await openUrl(playbackAdapter.toMediaUrl(path));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error(`Couldn't open karaoke video: ${message}`);
+    } finally {
+      setOpeningKaraokeVideo(false);
+    }
+  };
+
   return (
     <aside
       ref={detailsRef}
@@ -101,7 +124,7 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
         />
       </div>
 
-      <footer className="border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <footer className="flex flex-col gap-2 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <Button
           size="lg"
           className="h-8 w-full disabled:bg-primary/50 disabled:text-primary-foreground/45 disabled:opacity-100"
@@ -119,6 +142,27 @@ export const SongDetailsSidebar = ({ song, queueStatus, onClose }: SongDetailsSi
             </>
           )}
         </Button>
+
+        {hasKaraokeVideo ? (
+          <Button
+            variant="secondary"
+            size="lg"
+            className="h-8 w-full"
+            disabled={openingKaraokeVideo}
+            aria-busy={openingKaraokeVideo}
+            onClick={handlePlayKaraokeVideo}
+          >
+            {openingKaraokeVideo ? (
+              <>
+                <Spinner className="size-4" /> Opening…
+              </>
+            ) : (
+              <>
+                <VideoIcon /> Play karaoke video
+              </>
+            )}
+          </Button>
+        ) : null}
       </footer>
     </aside>
   );

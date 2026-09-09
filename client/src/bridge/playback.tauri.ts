@@ -20,6 +20,10 @@ export const ensurePlayableSourceVideo = async (fileHash: string): Promise<strin
   return await invoke<string | null>("ensure_playable_source_video", { fileHash });
 };
 
+export const getBestKaraokeVideoPath = async (fileHash: string): Promise<string | null> => {
+  return await invoke<string | null>("get_best_karaoke_video_path", { fileHash });
+};
+
 export const loadYoutubeBackground = async (
   fileHash: string,
 ): Promise<YoutubeBackground | null> => {

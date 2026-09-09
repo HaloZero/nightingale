@@ -24,7 +24,7 @@ use lyrics::{apply_timed_lyrics, load_lyrics, provide_lrc, save_lyrics, search_l
 use microphones::{list_microphones, set_monitor_gain, start_mic_capture, stop_mic_capture};
 use playback::{
     ensure_mp3_stems, ensure_playable_source_video, fetch_pixabay_videos, get_audio_paths,
-    load_transcript, load_youtube_background,
+    get_best_karaoke_video_path, load_transcript, load_youtube_background,
 };
 use profile::{add_score, create_profile, delete_profile, load_profiles, switch_profile};
 use scanner::{
@@ -155,6 +155,7 @@ pub fn run() {
             get_audio_paths,
             ensure_mp3_stems,
             ensure_playable_source_video,
+            get_best_karaoke_video_path,
             load_youtube_background,
             fetch_pixabay_videos,
             get_media_endpoint,

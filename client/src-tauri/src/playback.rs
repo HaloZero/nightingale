@@ -28,6 +28,11 @@ pub fn ensure_playable_source_video(file_hash: String) -> Option<String> {
 }
 
 #[tauri::command]
+pub fn get_best_karaoke_video_path(file_hash: String) -> Option<String> {
+    app_core::existing_karaoke_video_path(&file_hash).map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 pub fn load_youtube_background(file_hash: String) -> Option<YoutubeBackground> {
     app_core::ensure_youtube_background(&file_hash)
 }

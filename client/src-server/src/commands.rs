@@ -555,6 +555,12 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
                 .flatten();
             Ok(serde_json::to_value(path).map_err(serde_err)?)
         }
+        "get_best_karaoke_video_path" => {
+            let args: FileHashArgs = deserialize(payload)?;
+            let path = app_core::existing_karaoke_video_path(&args.file_hash)
+                .map(|p| p.to_string_lossy().into_owned());
+            Ok(serde_json::to_value(path).map_err(serde_err)?)
+        }
         "fetch_pixabay_videos" => fetch_pixabay_videos_cmd(events, payload),
         "download_all_pixabay_videos" => download_all_pixabay_videos_cmd(events, payload),
         "get_background_video_count" => get_background_video_count_cmd(payload),

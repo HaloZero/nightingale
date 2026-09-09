@@ -48,7 +48,7 @@ pub use karaoke_video::{
     KaraokeVideoBackfillReport, KaraokeVideoReady, backfill_karaoke_video_status_from_cache,
     best_karaoke_video_all, best_karaoke_video_path, ensure_best_karaoke_video,
     ensure_karaoke_video, ensure_youtube_background_karaoke_video, ensure_youtube_karaoke_video,
-    force_best_karaoke_video_all,
+    existing_karaoke_video_path, force_best_karaoke_video_all,
 };
 pub use library_db::{init_library, library_db_path};
 pub use library_menu::{LibraryMenuItem, LibraryMenuItems, load_library_menu_items};

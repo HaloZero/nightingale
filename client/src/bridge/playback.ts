@@ -5,6 +5,7 @@ import {
   ensurePlayableSourceVideo as tauriEnsurePlayableSourceVideo,
   fetchPixabayVideos as tauriFetchPixabayVideos,
   getAudioPaths as tauriRawGetAudioPaths,
+  getBestKaraokeVideoPath as tauriGetBestKaraokeVideoPath,
   getMediaEndpoint as tauriGetMediaEndpoint,
   loadTranscript as tauriLoadTranscript,
   loadYoutubeBackground as tauriLoadYoutubeBackground,
@@ -106,6 +107,7 @@ export const playbackAdapter: PlaybackAdapter = isTauri ? tauriPlaybackAdapter :
 export const loadTranscript = tauriLoadTranscript;
 export const ensureMp3Stems = tauriEnsureMp3Stems;
 export const ensurePlayableSourceVideo = tauriEnsurePlayableSourceVideo;
+export const getBestKaraokeVideoPath = tauriGetBestKaraokeVideoPath;
 export const loadYoutubeBackground = tauriLoadYoutubeBackground;
 export const fetchPixabayVideos = tauriFetchPixabayVideos;
 export const onStemsReady = tauriOnStemsReady;
