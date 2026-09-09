@@ -6,7 +6,7 @@ const CAPACITY: usize = 256;
 /// Mirrors the Tauri `app.emit("name", payload)` envelope so the web frontend
 /// can listen for the same event names via the runtime shim.
 #[derive(Clone, Debug, Serialize)]
-pub struct EventEnvelope {
+pub(crate) struct EventEnvelope {
     pub r#type: String,
     pub payload: serde_json::Value,
 }
@@ -15,21 +15,21 @@ pub struct EventEnvelope {
 /// Cloning the bus is cheap; senders go through `broadcast::Sender`, receivers
 /// are spawned per-WebSocket.
 #[derive(Clone)]
-pub struct EventBus {
+pub(crate) struct EventBus {
     tx: broadcast::Sender<EventEnvelope>,
 }
 
 impl EventBus {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (tx, _) = broadcast::channel(CAPACITY);
         Self { tx }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<EventEnvelope> {
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<EventEnvelope> {
         self.tx.subscribe()
     }
 
-    pub fn emit_value(&self, name: &str, payload: serde_json::Value) {
+    pub(crate) fn emit_value(&self, name: &str, payload: serde_json::Value) {
         let envelope = EventEnvelope {
             r#type: name.to_string(),
             payload,
@@ -39,7 +39,7 @@ impl EventBus {
         let _ = self.tx.send(envelope);
     }
 
-    pub fn emit<T: Serialize>(&self, name: &str, payload: &T) {
+    pub(crate) fn emit<T: Serialize>(&self, name: &str, payload: &T) {
         match serde_json::to_value(payload) {
             Ok(value) => self.emit_value(name, value),
             Err(e) => tracing::warn!("failed to serialise event {name}: {e}"),

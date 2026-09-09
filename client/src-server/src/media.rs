@@ -49,14 +49,14 @@ fn allowed_roots() -> Vec<PathBuf> {
 }
 
 #[derive(Deserialize)]
-pub struct AssetQuery {
+pub(crate) struct AssetQuery {
     path: String,
 }
 
 /// Path-keyed file route used for media that does not have a stable hash key
 /// (Pixabay backgrounds, ffmpeg-transcoded source videos, etc.). Every path
 /// is canonicalised against the allowed roots before serving.
-pub async fn handle_asset(
+pub(crate) async fn handle_asset(
     State(_state): State<AppState>,
     Query(query): Query<AssetQuery>,
     headers: HeaderMap,
@@ -68,7 +68,7 @@ pub async fn handle_asset(
 /// Hash-keyed route for song stems and source video. The browser never sees
 /// the underlying filesystem path; `kind` controls which `app-core` helper
 /// resolves the path on the server.
-pub async fn handle_hashed(
+pub(crate) async fn handle_hashed(
     State(_state): State<AppState>,
     AxumPath((hash, kind)): AxumPath<(String, String)>,
     headers: HeaderMap,
@@ -114,10 +114,10 @@ async fn serve(path: &Path, _headers: HeaderMap, request: Request<Body>) -> Resp
         Ok(response) => annotate_audio(response.map(Body::new)),
         Err(e) => {
             tracing::warn!("media serve error: {e}");
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from("failed to serve media"))
-                .unwrap()
+            response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Body::from("failed to serve media"),
+            )
         }
     }
 }
@@ -135,9 +135,12 @@ fn annotate_audio(mut response: Response<Body>) -> Response<Body> {
     response
 }
 
+fn response(status: StatusCode, body: Body) -> Response<Body> {
+    let mut response = Response::new(body);
+    *response.status_mut() = status;
+    response
+}
+
 fn not_found(reason: &str) -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(Body::from(reason.to_string()))
-        .unwrap()
+    response(StatusCode::NOT_FOUND, Body::from(reason.to_string()))
 }

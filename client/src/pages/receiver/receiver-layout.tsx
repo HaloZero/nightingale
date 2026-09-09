@@ -7,25 +7,27 @@
  * background and synced lyrics, which is exactly what was asked for.
  */
 
-import "./receiver.css";
-import { Background } from "@/components/playback/background";
-import { LyricsDisplay } from "@/components/playback/lyrics-display";
-import { usePlaybackTranscriptState, usePlaybackTransportState } from "@/contexts/playback";
-import type { AppConfig } from "@/types/AppConfig";
+import './receiver.css';
 
-interface ReceiverLayoutProps {
+import { Background } from '@/features/playback/components/background';
+import { LyricsDisplay } from '@/features/playback/components/lyrics-display';
+import { usePlaybackTranscriptState } from '@/features/playback/providers/playback-transcript-context';
+import { usePlaybackTransportState } from '@/features/playback/providers/playback-transport-context';
+import type { AppConfig } from '@/types/AppConfig';
+
+type ReceiverLayoutProps = {
   config: AppConfig | null;
-}
+};
 
 export function ReceiverLayout({ config }: ReceiverLayoutProps) {
   const { isReady } = usePlaybackTransportState();
   const { segments } = usePlaybackTranscriptState();
 
-  const verticalPosition = config?.lyrics_vertical_position ?? "bottom";
-  const horizontalPosition = config?.lyrics_horizontal_position ?? "center";
+  const verticalPosition = config?.lyrics_vertical_position ?? 'bottom';
+  const horizontalPosition = config?.lyrics_horizontal_position ?? 'center';
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-black" style={{ contain: "strict" }}>
+    <div className="fixed inset-0 overflow-hidden bg-black" style={{ contain: 'strict' }}>
       {/* Background shows a shader loading-animation while !isReady (see
           background.tsx) -- desirable on desktop, but a plain black screen
           reads better on a TV during the brief load. Not mounting it at all
@@ -39,10 +41,10 @@ export function ReceiverLayout({ config }: ReceiverLayoutProps) {
           verticalPosition={verticalPosition}
           horizontalPosition={horizontalPosition}
           classNames={{
-            currentPill: "receiver-lyrics-pill",
-            currentLine: "receiver-lyrics-line",
-            nextPill: "receiver-lyrics-next-pill",
-            nextLine: "receiver-lyrics-next-line",
+            currentPill: 'receiver-lyrics-pill',
+            currentLine: 'receiver-lyrics-line',
+            nextPill: 'receiver-lyrics-next-pill',
+            nextLine: 'receiver-lyrics-next-line',
           }}
         />
       )}

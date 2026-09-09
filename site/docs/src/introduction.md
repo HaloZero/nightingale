@@ -21,9 +21,11 @@ Ships as a single binary. No manual installation of Python, ffmpeg, or ML models
 - **Profiles** — per-player score tracking
 - **Video Files** — use video files with synchronized background playback
 - **Audio-Reactive Backgrounds** — 10 GPU shaders that react to your mic, 5 Pixabay video flavors, source-video for video files
-- **Redesigned Song Browser** — switch between table and artwork-grid views, then open a dedicated details sidebar to review status, adjust key/tempo, manage lyrics, and start playback
-- **Sidebar Filters, Playlists + Analyze All** — combine search with artist, album, playlist, analysis-status, and lyric-source filters; browse existing folder/Plex/Jellyfin/Navidrome playlists; then batch-analyze the current selection or enable auto-analysis after scans
-- **Mic Monitoring + Latency Test** — optional live mic monitoring with adjustable gain (0–200%) and calibration
+- **Song Browser + Bulk Tools** — switch between table and artwork-grid views, sort the table by multiple columns, and run analysis, metadata refresh, realignment, or cache actions across the current filtered list
+- **Sidebar Filters + Playlists** — combine search with artist, album, playlist, analysis-status, and lyric-source filters, and browse existing folder/Plex/Jellyfin/Navidrome playlists
+- **Playback Queue + Session Mode** — build a set list, manage what plays next, and keep the menu available while playback runs in a dedicated window or browser tab
+- **Custom Playback Layout** — place lyrics at the top, center, or bottom and left, center, or right; scale lyrics and the pitch graph independently from 50–250%
+- **Mic Monitoring + Setup Tests** — optional live mic monitoring with adjustable gain (0–200%), latency calibration, recording/playback testing, and Windows ASIO support
 - **Flexible Storage** — split cache, videos, models, and vendor tools into separate folders
 - **Gamepad + Touch Support** — full gamepad navigation and touch playback controls
 - **Self-Contained** — zero manual dependency setup

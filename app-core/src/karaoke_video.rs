@@ -764,7 +764,7 @@ fn record_karaoke_video_status_at_version(file_hash: &str, kind: KaraokeVideoKin
 /// don't each have to handle the (unlikely, but possible) insert failure --
 /// a failure to log a run is worth a warning, never worth failing the
 /// actual render/fetch over.
-fn record_karaoke_video_run(row: &library_db::KaraokeVideoRunRow) {
+fn record_karaoke_video_run(row: &library_db::KaraokeVideoRunRow<'_>) {
     if let Err(e) = library_db::insert_karaoke_video_run(row) {
         warn!(
             "[karaoke_video] {}: failed to record run: {e}",

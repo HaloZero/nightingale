@@ -1,63 +1,63 @@
-import type { MediaEndpoint } from "@/types/MediaEndpoint";
-import type { AudioPaths } from "@/types/Transcript";
-import type { Transcript } from "@/types/Transcript";
-import type { YoutubeBackground } from "@/types/YoutubeBackground";
-import { invoke, listen, type UnlistenFn } from "./runtime";
+import type { MediaEndpoint } from '@/types/MediaEndpoint';
+import type { AudioPaths, Transcript } from '@/types/Transcript';
+import type { YoutubeBackground } from '@/types/YoutubeBackground';
+
+import { invoke, listen, type UnlistenFn } from './runtime';
 
 export const loadTranscript = async (fileHash: string): Promise<Transcript> => {
-  return await invoke<Transcript>("load_transcript", { fileHash });
+  return await invoke<Transcript>('load_transcript', { fileHash });
 };
 
 export const getAudioPaths = async (fileHash: string): Promise<AudioPaths> => {
-  return await invoke<AudioPaths>("get_audio_paths", { fileHash });
+  return await invoke<AudioPaths>('get_audio_paths', { fileHash });
 };
 
 export const ensureMp3Stems = (fileHash: string): void => {
-  void invoke<void>("ensure_mp3_stems", { fileHash });
+  void invoke<void>('ensure_mp3_stems', { fileHash });
 };
 
 export const ensurePlayableSourceVideo = async (fileHash: string): Promise<string | null> => {
-  return await invoke<string | null>("ensure_playable_source_video", { fileHash });
+  return await invoke<string | null>('ensure_playable_source_video', { fileHash });
 };
 
 export const getBestKaraokeVideoPath = async (fileHash: string): Promise<string | null> => {
-  return await invoke<string | null>("get_best_karaoke_video_path", { fileHash });
+  return await invoke<string | null>('get_best_karaoke_video_path', { fileHash });
 };
 
 export const loadYoutubeBackground = async (
   fileHash: string,
 ): Promise<YoutubeBackground | null> => {
-  return await invoke<YoutubeBackground | null>("load_youtube_background", { fileHash });
+  return await invoke<YoutubeBackground | null>('load_youtube_background', { fileHash });
 };
 
-export interface StemsReadyEvent {
+export type StemsReadyEvent = {
   file_hash: string;
   error: string | null;
-}
+};
 
 export const onStemsReady = async (cb: (event: StemsReadyEvent) => void): Promise<UnlistenFn> => {
-  return await listen<StemsReadyEvent>("stems-ready", ({ payload }) => cb(payload));
+  return await listen<StemsReadyEvent>('stems-ready', ({ payload }) => cb(payload));
 };
 
 export const fetchPixabayVideos = async (flavor: string): Promise<string[]> => {
-  return await invoke<string[]>("fetch_pixabay_videos", { flavor });
+  return await invoke<string[]>('fetch_pixabay_videos', { flavor });
 };
 
 export const getMediaEndpoint = async (): Promise<MediaEndpoint> => {
-  return await invoke<MediaEndpoint>("get_media_endpoint");
+  return await invoke<MediaEndpoint>('get_media_endpoint');
 };
 
-export interface PixabayVideoDownloaded {
+export type PixabayVideoDownloaded = {
   flavor: string;
   path: string;
   evictedPath?: string;
-}
+};
 
 export const onPixabayVideoDownloaded = async (
   cb: (event: PixabayVideoDownloaded) => void,
 ): Promise<UnlistenFn> => {
   return await listen<{ flavor: string; path: string; evicted_path: string | null }>(
-    "pixabay-video-downloaded",
+    'pixabay-video-downloaded',
     ({ payload }) =>
       cb({
         flavor: payload.flavor,

@@ -86,7 +86,7 @@ struct AudioDbTrack {
 /// to decide what's safe to cache: an `Err` must never be cached as "no
 /// video exists," or a transient failure (rate limit included) would
 /// permanently and incorrectly stick a song with that verdict.
-pub fn find_music_video(song: &Song) -> Result<Option<MusicVideoResult>, String> {
+pub(crate) fn find_music_video(song: &Song) -> Result<Option<MusicVideoResult>, String> {
     if song.title.is_empty() || song.artist.is_empty() || song.artist == "Unknown Artist" {
         return Ok(None);
     }

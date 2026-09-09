@@ -15,14 +15,14 @@ use serde::Serialize;
 const LAST_SEGMENT_SECS: f64 = 4.0;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LrcWord {
+pub(crate) struct LrcWord {
     pub word: String,
     pub start: f64,
     pub end: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LrcSegment {
+pub(crate) struct LrcSegment {
     pub text: String,
     pub start: f64,
     pub end: f64,
@@ -30,7 +30,7 @@ pub struct LrcSegment {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParsedLrc {
+pub(crate) struct ParsedLrc {
     pub segments: Vec<LrcSegment>,
 }
 
@@ -83,24 +83,26 @@ fn parse_word_tokens(content: &str) -> Vec<(f64, String)> {
     let mut i = 0;
 
     while i < content.len() {
-        if content[i..].starts_with('<') {
-            if let Some(close_rel) = content[i..].find('>') {
-                let inner = &content[i + 1..i + close_rel];
-                if let Some(ts) = parse_timestamp(inner) {
-                    if let Some(prev_ts) = cur_ts {
-                        let text = cur_text.trim().to_string();
-                        if !text.is_empty() {
-                            tokens.push((prev_ts, text));
-                        }
+        if content[i..].starts_with('<')
+            && let Some(close_rel) = content[i..].find('>')
+        {
+            let inner = &content[i + 1..i + close_rel];
+            if let Some(ts) = parse_timestamp(inner) {
+                if let Some(prev_ts) = cur_ts {
+                    let text = cur_text.trim().to_string();
+                    if !text.is_empty() {
+                        tokens.push((prev_ts, text));
                     }
-                    cur_text.clear();
-                    cur_ts = Some(ts);
-                    i += close_rel + 1;
-                    continue;
                 }
+                cur_text.clear();
+                cur_ts = Some(ts);
+                i += close_rel + 1;
+                continue;
             }
         }
-        let ch = content[i..].chars().next().unwrap();
+        let Some(ch) = content[i..].chars().next() else {
+            break;
+        };
         cur_text.push(ch);
         i += ch.len_utf8();
     }
@@ -152,7 +154,7 @@ fn split_line(line: &str) -> (Vec<f64>, String, Option<f64>) {
 
 /// Parse LRC / Enhanced LRC text into ordered segments. Returns an error when
 /// no timestamped lyric lines are found.
-pub fn parse_lrc(text: &str) -> Result<ParsedLrc, String> {
+pub(crate) fn parse_lrc(text: &str) -> Result<ParsedLrc, String> {
     let mut entries: Vec<RawEntry> = Vec::new();
     // Timestamps on empty lines (e.g. a trailing `[mm:ss.xx]`) don't produce a
     // segment; they mark where the previous line's highlight should stop.

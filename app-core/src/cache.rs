@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -16,6 +17,12 @@ pub struct CachePaths {
 #[derive(Debug, Clone)]
 pub struct CacheDir {
     pub path: PathBuf,
+}
+
+impl Default for CacheDir {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CacheDir {
@@ -227,7 +234,7 @@ fn is_variant_transcript_file(name: &str, hash: &str) -> bool {
     name.starts_with(&format!("{hash}_transcript_")) && name.ends_with(".json")
 }
 
-pub fn sanitize_key(key: &str) -> String {
+pub(crate) fn sanitize_key(key: &str) -> String {
     let mut out = String::with_capacity(key.len());
     for ch in key.trim().chars() {
         if ch.is_ascii_alphanumeric() || ch == '#' || ch == 'b' {
@@ -244,7 +251,7 @@ pub fn sanitize_key(key: &str) -> String {
     }
 }
 
-pub fn normalize_tempo(tempo: f64) -> f64 {
+pub(crate) fn normalize_tempo(tempo: f64) -> f64 {
     if !tempo.is_finite() || tempo <= 0.0 {
         1.0
     } else {
@@ -252,7 +259,7 @@ pub fn normalize_tempo(tempo: f64) -> f64 {
     }
 }
 
-pub fn format_tempo(tempo: f64) -> String {
+pub(crate) fn format_tempo(tempo: f64) -> String {
     format!("{:.1}", normalize_tempo(tempo))
 }
 
@@ -297,11 +304,26 @@ impl CacheStats {
     }
 }
 
+static DEFAULT_DATA_PATH_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_default_data_path(path: PathBuf) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err("data path cannot be empty".into());
+    }
+    DEFAULT_DATA_PATH_OVERRIDE
+        .set(path)
+        .map_err(|_| "default data path already configured".into())
+}
+
 pub fn nightingale_dir() -> PathBuf {
     configured_data_path().unwrap_or_else(default_nightingale_dir)
 }
 
 pub fn default_nightingale_dir() -> PathBuf {
+    if let Some(path) = DEFAULT_DATA_PATH_OVERRIDE.get() {
+        return path.clone();
+    }
+
     if let Some(path) = std::env::var_os("NIGHTINGALE_DATA_PATH") {
         let p = PathBuf::from(path);
 
@@ -315,29 +337,29 @@ pub fn default_nightingale_dir() -> PathBuf {
         .join(".nightingale")
 }
 
-pub fn config_path() -> PathBuf {
+pub(crate) fn config_path() -> PathBuf {
     default_nightingale_dir().join("config.json")
 }
 
-pub fn profiles_path() -> PathBuf {
+pub(crate) fn profiles_path() -> PathBuf {
     nightingale_dir().join("profiles.json")
 }
 
-pub fn songs_path() -> PathBuf {
+pub(crate) fn songs_path() -> PathBuf {
     nightingale_dir().join("songs.json")
 }
 
-pub fn analysis_queue_path() -> PathBuf {
+pub(crate) fn analysis_queue_path() -> PathBuf {
     nightingale_dir().join("analysis_queue.json")
 }
 
-pub fn songs_cache_dir() -> PathBuf {
+pub(crate) fn songs_cache_dir() -> PathBuf {
     configured_cache_paths()
         .songs
         .unwrap_or_else(|| nightingale_dir().join("cache"))
 }
 
-pub fn videos_dir() -> PathBuf {
+pub(crate) fn videos_dir() -> PathBuf {
     configured_cache_paths()
         .videos
         .unwrap_or_else(|| nightingale_dir().join("videos"))
@@ -358,19 +380,19 @@ pub fn reels_dir(flavor: &str) -> PathBuf {
 /// these across every reel that picks a given clip instead of re-decoding
 /// and re-encoding it from the raw source each time. Sibling to
 /// `reels_dir(flavor)`.
-pub fn normalized_clips_dir(flavor: &str) -> PathBuf {
+pub(crate) fn normalized_clips_dir(flavor: &str) -> PathBuf {
     let dir = videos_dir().join(format!("{flavor}_normalized"));
     std::fs::create_dir_all(&dir).ok();
     dir
 }
 
-pub fn models_dir() -> PathBuf {
+pub(crate) fn models_dir() -> PathBuf {
     configured_cache_paths()
         .models
         .unwrap_or_else(|| nightingale_dir().join("models"))
 }
 
-pub fn vendor_dir() -> PathBuf {
+pub(crate) fn vendor_dir() -> PathBuf {
     configured_cache_paths()
         .vendor
         .unwrap_or_else(|| nightingale_dir().join("vendor"))
@@ -380,7 +402,7 @@ pub fn cache_roots() -> Vec<PathBuf> {
     vec![songs_cache_dir(), videos_dir(), models_dir(), vendor_dir()]
 }
 
-pub fn dir_size(path: &Path) -> u64 {
+pub(crate) fn dir_size(path: &Path) -> u64 {
     if !path.is_dir() {
         return 0;
     }
@@ -394,7 +416,7 @@ pub fn dir_size(path: &Path) -> u64 {
         .sum()
 }
 
-pub fn clearable_video_bytes() -> u64 {
+pub(crate) fn clearable_video_bytes() -> u64 {
     let base = videos_dir();
 
     if !base.is_dir() {
@@ -650,7 +672,7 @@ fn cleanup_migrated_source_entries(old_root: &Path, migrated: &[std::ffi::OsStri
     }
 }
 
-pub fn migrate_directory_contents(old_root: &Path, new_root: &Path) -> Result<(), String> {
+pub(crate) fn migrate_directory_contents(old_root: &Path, new_root: &Path) -> Result<(), String> {
     if same_path(old_root, new_root) || !old_root.is_dir() {
         std::fs::create_dir_all(new_root)
             .map_err(|e| format!("failed creating cache path {:?}: {e}", new_root))?;
@@ -663,8 +685,7 @@ pub fn migrate_directory_contents(old_root: &Path, new_root: &Path) -> Result<()
 
     std::fs::create_dir_all(new_root)
         .map_err(|e| format!("failed creating cache path {:?}: {e}", new_root))?;
-    let migrated =
-        migrate_data_entries_with(old_root, new_root, |src, dst| copy_path_entry(src, dst))?;
+    let migrated = migrate_data_entries_with(old_root, new_root, copy_path_entry)?;
     cleanup_migrated_source_entries(old_root, &migrated);
 
     Ok(())
@@ -692,8 +713,7 @@ pub fn change_app_data_path(new_path: PathBuf) -> Result<PathBuf, String> {
 
     std::fs::create_dir_all(&new_root)
         .map_err(|e| format!("failed creating new data path {:?}: {e}", new_root))?;
-    let migrated =
-        migrate_data_entries_with(&old_root, &new_root, |src, dst| copy_path_entry(src, dst))?;
+    let migrated = migrate_data_entries_with(&old_root, &new_root, copy_path_entry)?;
 
     crate::library_db::rebase_song_album_art_paths(&old_root, &new_root)?;
     crate::library_db::reconnect_library_at_root(&new_root)?;

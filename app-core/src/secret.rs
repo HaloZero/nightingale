@@ -32,7 +32,7 @@ const ENVELOPE_PREFIX: &str = "enc:v1:";
 
 /// Encrypt `plain` into the on-disk envelope format. Empty strings round-trip
 /// to empty strings (no envelope wrap — there's nothing to protect).
-pub fn encrypt_string(plain: &str) -> String {
+pub(crate) fn encrypt_string(plain: &str) -> String {
     if plain.is_empty() {
         return String::new();
     }
@@ -51,7 +51,7 @@ pub fn encrypt_string(plain: &str) -> String {
 
 /// Decrypt an envelope. Strings without the `enc:v1:` prefix pass through
 /// unchanged so we can migrate legacy plaintext rows transparently.
-pub fn decrypt_string(value: &str) -> String {
+pub(crate) fn decrypt_string(value: &str) -> String {
     let Some(b64) = value.strip_prefix(ENVELOPE_PREFIX) else {
         return value.to_string();
     };
@@ -72,7 +72,7 @@ pub fn decrypt_string(value: &str) -> String {
 
 /// True if `value` is already wrapped — used to skip the round-trip when a
 /// caller wants to know "did this load come back encrypted?".
-pub fn is_encrypted(value: &str) -> bool {
+pub(crate) fn is_encrypted(value: &str) -> bool {
     value.starts_with(ENVELOPE_PREFIX)
 }
 

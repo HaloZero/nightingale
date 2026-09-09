@@ -46,22 +46,21 @@ struct Args {
 }
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
+async fn main() -> Result<(), String> {
     let args = Args::parse();
+    let data = args
+        .data
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    let library = args
+        .library
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
 
-    if let Some(data) = args.data.as_deref() {
-        // Setting at process start lets `app_core::default_nightingale_dir`
-        // pick it up for both the config seed and every later `step_*` call.
-        // Safety: must happen before any thread reads the env.
-        unsafe { std::env::set_var("NIGHTINGALE_DATA_PATH", data) };
-    }
-
-    if let Some(library) = args.library.as_deref() {
-        // Mirror the data path: persist to the env so `/api/bootstrap` can
-        // report the library as env-pinned regardless of whether the value
-        // arrived via `--library` or the env var.
-        // Safety: must happen before any thread reads the env.
-        unsafe { std::env::set_var("NIGHTINGALE_LIBRARY_PATH", library) };
+    if let Some(data) = data {
+        app_core::set_default_data_path(data.into())?;
     }
 
     let _ = dotenvy_quiet();
@@ -81,19 +80,14 @@ async fn main() {
     if args.backfill_karaoke_video_status {
         let report = app_core::backfill_karaoke_video_status_from_cache();
         tracing::info!("{report:?}");
-        return;
+        return Ok(());
     }
 
-    if let Some(library) = args
-        .library
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(library) = library {
         pin_folder_library(library);
     }
 
-    let state = AppState::new();
+    let state = AppState::new(data.is_some(), library.is_some());
 
     // Compression is scoped to just the frontend bundle (this fallback),
     // not the whole router -- `/api/asset` and `/media/:hash/:kind` stream
@@ -137,6 +131,7 @@ async fn main() {
 
     tracing::info!("shutting down analyzer / vendor processes");
     app_core::shutdown_server();
+    Ok(())
 }
 
 /// Force the library source to a folder at `path`, declaratively. Running with

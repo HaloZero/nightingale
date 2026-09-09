@@ -1,5 +1,6 @@
-import { exit as tauriExit } from "@tauri-apps/plugin-process";
-import { isTauri } from "./runtime";
+import { exit as tauriExit } from '@tauri-apps/plugin-process';
+
+import { isTauri } from './runtime';
 
 /**
  * Whether the host has a meaningful "quit the app" affordance. Tauri can

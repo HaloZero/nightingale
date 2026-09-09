@@ -4,7 +4,7 @@ use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{LazyLock, Mutex, mpsc};
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use crate::cache::{CacheDir, models_dir};
 use crate::config::AppConfig;
 use crate::error::NightingaleError;
 use crate::library_db;
-use crate::library_model::LibraryMenuFilters;
+use crate::library_model::{LibraryMenuFilters, SongTarget};
 use crate::lyrics::{fetch_lrclib_lyrics, local_lyrics_path, write_lyrics_file};
 use crate::song::{Song, SongOrigin, TranscriptSource, compute_file_hash, read_transcript_meta};
 use crate::source::active_source;
@@ -245,6 +245,7 @@ impl Drop for ServerProcess {
         let pid = self.child.id();
         info!("[analyzer] Killing server process (pid={pid})");
         SERVER_PID.store(0, Ordering::SeqCst);
+        lock_unpoisoned(&SERVER_INTERRUPT).take();
         if let Ok(stream) = self.writer.get_ref().try_clone() {
             let _ = stream.shutdown(Shutdown::Both);
         }
@@ -254,6 +255,11 @@ impl Drop for ServerProcess {
 }
 
 static ANALYZER_SERVER: LazyLock<Mutex<Option<ServerProcess>>> = LazyLock::new(|| Mutex::new(None));
+static SERVER_INTERRUPT: LazyLock<Mutex<Option<TcpStream>>> = LazyLock::new(|| Mutex::new(None));
+
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 #[derive(Debug, Deserialize)]
 struct ReadyHandshake {
@@ -327,7 +333,7 @@ fn connect_and_authenticate(
     let mut writer = BufWriter::new(writer_stream);
 
     let hello = serde_json::json!({"type": "hello", "token": token});
-    writer.write_all(serde_json::to_string(&hello).unwrap().as_bytes())?;
+    serde_json::to_writer(&mut writer, &hello)?;
     writer.write_all(b"\n")?;
     writer.flush()?;
 
@@ -357,7 +363,7 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
     let script = analyzer_dir().join("server.py");
     let models = models_dir();
     let ffmpeg = ffmpeg_path();
-    let ffmpeg_dir = ffmpeg.parent().unwrap_or(std::path::Path::new("."));
+    let ffmpeg_dir = ffmpeg.parent().unwrap_or(Path::new("."));
     let path_env = if let Some(existing) = std::env::var_os("PATH") {
         let mut paths = std::env::split_paths(&existing).collect::<Vec<_>>();
         paths.insert(0, ffmpeg_dir.to_path_buf());
@@ -433,6 +439,17 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
         }
     };
 
+    let interrupt = match writer.get_ref().try_clone() {
+        Ok(stream) => stream,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            SERVER_PID.store(0, Ordering::SeqCst);
+            return Err(error.into());
+        }
+    };
+    *lock_unpoisoned(&SERVER_INTERRUPT) = Some(interrupt);
+
     drain_lines_to_log(stdout_reader, "stdout");
     if let Some(stderr) = child.stderr.take() {
         drain_lines_to_log(BufReader::new(stderr), "stderr");
@@ -446,7 +463,7 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
 }
 
 fn ensure_server(
-    guard: &mut std::sync::MutexGuard<Option<ServerProcess>>,
+    guard: &mut MutexGuard<'_, Option<ServerProcess>>,
 ) -> Result<(), NightingaleError> {
     if guard.is_some() {
         return Ok(());
@@ -461,6 +478,7 @@ fn ensure_server(
 struct AnalyzerState {
     queue: VecDeque<String>,
     active_hash: Option<String>,
+    cancelled: HashSet<String>,
     worker_running: bool,
     /// Whether `parallel_analysis`'s dispatcher thread is currently draining
     /// the back of `queue` to hand songs to a peer instance. Owned here
@@ -473,6 +491,7 @@ static ANALYZER: LazyLock<Mutex<AnalyzerState>> = LazyLock::new(|| {
     Mutex::new(AnalyzerState {
         queue: VecDeque::new(),
         active_hash: None,
+        cancelled: HashSet::new(),
         worker_running: false,
         parallel_worker_running: false,
     })
@@ -529,8 +548,8 @@ pub(crate) fn peek_forced_align_backend(file_hash: &str) -> Option<String> {
 
 /// Mark a hash so its next analysis pass separates stems without transcribing,
 /// preserving the transcript built from provided LRC.
-pub fn mark_stems_only(file_hash: &str) {
-    STEMS_ONLY.lock().unwrap().insert(file_hash.to_string());
+pub(crate) fn mark_stems_only(file_hash: &str) {
+    lock_unpoisoned(&STEMS_ONLY).insert(file_hash.to_string());
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -561,6 +580,27 @@ pub fn remove_from_queue_one(file_hash: &str) {
     drop(state);
     remove_from_queue(file_hash);
 }
+
+fn take_cancelled(initial_hash: &str, file_hash: &str) -> bool {
+    let mut state = lock_unpoisoned(&ANALYZER);
+    state.cancelled.remove(initial_hash) | state.cancelled.remove(file_hash)
+}
+
+fn discard_cancelled_job(initial_hash: &str, file_hash: &str) -> bool {
+    if !take_cancelled(initial_hash, file_hash) {
+        return false;
+    }
+
+    remove_from_queue(initial_hash);
+    remove_from_queue(file_hash);
+    lock_unpoisoned(&FORCE_TRANSCRIBE).remove(initial_hash);
+    lock_unpoisoned(&FORCE_TRANSCRIBE).remove(file_hash);
+    lock_unpoisoned(&STEMS_ONLY).remove(initial_hash);
+    lock_unpoisoned(&STEMS_ONLY).remove(file_hash);
+    info!("[analyzer] Analysis cancelled for {file_hash}");
+    true
+}
+
 
 pub(crate) fn update_song_analyzed(
     file_hash: &str,
@@ -603,7 +643,7 @@ pub(crate) fn update_song_analyzed(
 /// so the local worker must never start (including via `return_to_front`'s
 /// peer-rejected fallback).
 fn ensure_worker_running(state: &mut AnalyzerState) {
-    if crate::config::AppConfig::load().parallel_analysis_only() {
+    if AppConfig::load().parallel_analysis_only() {
         return;
     }
     if !state.worker_running && !state.queue.is_empty() {
@@ -624,7 +664,7 @@ fn ensure_worker_running(state: &mut AnalyzerState) {
 /// skips hashes the peer has already rejected/failed/timed out on this run
 /// (so one stuck song can't spin the dispatcher in a tight retry loop while
 /// leaving the rest of the queue untouched).
-pub(crate) fn claim_from_back_excluding(skip: &std::collections::HashSet<String>) -> Option<String> {
+pub(crate) fn claim_from_back_excluding(skip: &HashSet<String>) -> Option<String> {
     let mut state = ANALYZER.lock().unwrap();
     let idx = state.queue.iter().rposition(|h| !skip.contains(h))?;
     state.queue.remove(idx)
@@ -688,7 +728,7 @@ pub(crate) fn stop_parallel_dispatcher() {
 /// Returns whether the song actually ended up marked analyzed -- see
 /// `finalize_song`'s doc comment for why the caller must check this instead
 /// of assuming success.
-pub fn finalize_peer_analysis(file_hash: &str) -> bool {
+pub(crate) fn finalize_peer_analysis(file_hash: &str) -> bool {
     finalize_song(file_hash, &CacheDir::new())
 }
 
@@ -748,6 +788,120 @@ pub(crate) fn enqueue_many(file_hashes: &[String]) {
     crate::parallel_analysis::ensure_dispatcher_running();
 }
 
+fn resolve_target<F>(target: SongTarget, filtered: F) -> Result<Vec<String>, String>
+where
+    F: FnOnce(&LibraryMenuFilters) -> rusqlite::Result<Vec<String>>,
+{
+    let mut hashes = match target {
+        SongTarget::Hashes { hashes } => hashes,
+        SongTarget::Filter { filters } => filtered(&filters).map_err(|e| e.to_string())?,
+    };
+    let mut seen = HashSet::new();
+    hashes.retain(|hash| seen.insert(hash.clone()));
+    Ok(hashes)
+}
+
+fn enqueue_hashes(mut hashes: Vec<String>, skip_persisted: bool) -> usize {
+    hashes.retain(|hash| !is_usdx_song(hash));
+    let persisted = skip_persisted.then(AnalysisQueue::load);
+    let mut state = lock_unpoisoned(&ANALYZER);
+    let mut newly_queued = Vec::new();
+
+    for file_hash in hashes {
+        if persisted
+            .as_ref()
+            .is_some_and(|queue| queue.entries.contains_key(&file_hash))
+        {
+            continue;
+        }
+        if state.active_hash.as_deref() != Some(&file_hash)
+            && !state.queue.iter().any(|hash| hash == &file_hash)
+        {
+            state.queue.push_back(file_hash.clone());
+            newly_queued.push(file_hash);
+        }
+    }
+
+    let should_start = !state.worker_running && !state.queue.is_empty();
+    if should_start {
+        state.worker_running = true;
+    }
+    drop(state);
+
+    for hash in &newly_queued {
+        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None, None, false);
+    }
+
+    if should_start {
+        spawn_worker();
+    }
+
+    newly_queued.len()
+}
+
+pub fn enqueue(target: SongTarget) -> Result<usize, String> {
+    let (hashes, skip_persisted) = match target {
+        SongTarget::Hashes { hashes } => (hashes, false),
+        SongTarget::Filter { filters } => (
+            library_db::iter_file_hashes_filtered_not_analyzed(&filters)
+                .map_err(|e| e.to_string())?,
+            true,
+        ),
+    };
+    Ok(enqueue_hashes(hashes, skip_persisted))
+}
+
+pub fn cancel_analysis(target: SongTarget) -> Result<usize, String> {
+    let hashes = resolve_target(target, library_db::iter_file_hashes_filtered_analysis_busy)?;
+    let persisted = AnalysisQueue::load();
+    let has_active_row = persisted
+        .entries
+        .values()
+        .any(|status| matches!(status, QueuedStatus::Analyzing(_)));
+    let mut state = lock_unpoisoned(&ANALYZER);
+    let mut affected = Vec::new();
+    let mut interrupt = false;
+
+    for hash in hashes {
+        let persisted_busy = persisted.entries.get(&hash).is_some_and(|status| {
+            matches!(status, QueuedStatus::Queued | QueuedStatus::Analyzing(_))
+        });
+        let active =
+            state.active_hash.as_deref() == Some(&hash) && (persisted_busy || has_active_row);
+        let queued = state.queue.iter().any(|queued_hash| queued_hash == &hash);
+
+        if !persisted_busy && !active && !queued {
+            continue;
+        }
+
+        state.queue.retain(|queued_hash| queued_hash != &hash);
+        let persisted_analyzing = matches!(
+            persisted.entries.get(&hash),
+            Some(QueuedStatus::Analyzing(_))
+        );
+        if active || persisted_analyzing {
+            state.cancelled.insert(hash.clone());
+        }
+        if persisted_analyzing || (active && has_active_row) {
+            interrupt = true;
+        }
+        affected.push(hash);
+    }
+    drop(state);
+
+    for hash in &affected {
+        remove_from_queue(hash);
+        lock_unpoisoned(&FORCE_TRANSCRIBE).remove(hash);
+        lock_unpoisoned(&STEMS_ONLY).remove(hash);
+    }
+
+    if interrupt && let Some(stream) = lock_unpoisoned(&SERVER_INTERRUPT).as_ref() {
+        let _ = stream.shutdown(Shutdown::Both);
+    }
+
+    Ok(affected.len())
+}
+
 pub fn enqueue_all(filters: &LibraryMenuFilters) {
     let queue = AnalysisQueue::load();
     let mut state = ANALYZER.lock().unwrap();
@@ -767,7 +921,7 @@ pub fn enqueue_all(filters: &LibraryMenuFilters) {
         }
     }
 
-    let should_start = !crate::config::AppConfig::load().parallel_analysis_only()
+    let should_start = !AppConfig::load().parallel_analysis_only()
         && !state.worker_running
         && !state.queue.is_empty();
     if should_start {
@@ -790,15 +944,15 @@ pub fn shutdown_server() {
     let pid = SERVER_PID.swap(0, Ordering::SeqCst);
     if pid != 0 {
         info!("[analyzer] Graceful shutdown of server (pid={pid})");
-        if let Ok(mut guard) = ANALYZER_SERVER.try_lock() {
-            if let Some(server) = guard.as_mut() {
-                let _ = server.writer.write_all(b"{\"type\":\"quit\"}\n");
-                let _ = server.writer.flush();
-            }
+        if let Ok(mut guard) = ANALYZER_SERVER.try_lock()
+            && let Some(server) = guard.as_mut()
+        {
+            let _ = server.writer.write_all(b"{\"type\":\"quit\"}\n");
+            let _ = server.writer.flush();
         }
         std::thread::spawn(move || {
             let _ = Command::new("kill").args([&pid.to_string()]).status();
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            std::thread::sleep(Duration::from_secs(3));
             let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
         });
     }
@@ -918,10 +1072,7 @@ pub fn reanalyze_force_transcribe(file_hash: &str) {
         return;
     }
 
-    FORCE_TRANSCRIBE
-        .lock()
-        .unwrap()
-        .insert(file_hash.to_string());
+    lock_unpoisoned(&FORCE_TRANSCRIBE).insert(file_hash.to_string());
 
     reanalyze(file_hash, false);
 }
@@ -1094,8 +1245,8 @@ fn spawn_worker() {
             // draining anything further -- the rest of the queue is left for
             // `parallel_analysis`'s dispatcher to claim from the back.
             let file_hash = {
-                let mut state = ANALYZER.lock().unwrap();
-                if crate::config::AppConfig::load().parallel_analysis_only() {
+                let mut state = lock_unpoisoned(&ANALYZER);
+                if AppConfig::load().parallel_analysis_only() {
                     state.worker_running = false;
                     state.active_hash = None;
                     return;
@@ -1115,7 +1266,7 @@ fn spawn_worker() {
 
             process_song(&file_hash, &cache);
 
-            let mut state = ANALYZER.lock().unwrap();
+            let mut state = lock_unpoisoned(&ANALYZER);
             state.active_hash = None;
         }
     });
@@ -1123,26 +1274,34 @@ fn spawn_worker() {
 
 fn process_song(initial_hash: &str, cache: &CacheDir) {
     let Some(song) = library_db::load_song_by_hash(initial_hash).ok().flatten() else {
-        warn!("[analyzer] Song with hash {initial_hash} not found in store, skipping");
+        if !discard_cancelled_job(initial_hash, initial_hash) {
+            warn!("[analyzer] Song with hash {initial_hash} not found in store, skipping");
+        }
         return;
     };
 
     let (song, local_path, file_hash_owned) = match prepare_audio_for_analysis(&song, cache) {
         Ok(out) => out,
         Err(e) => {
-            warn!("[analyzer] Failed to prepare audio for analysis: {e}");
-            update_queue_status(
-                initial_hash,
-                QueuedStatus::Failed {
-                    kind: FailureKind::AudioPrep,
-                    message: format!("audio prep failed: {e}"),
-                    acknowledged: false,
-                },
-            );
+            if !discard_cancelled_job(initial_hash, initial_hash) {
+                warn!("[analyzer] Failed to prepare audio for analysis: {e}");
+                update_queue_status(
+                    initial_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::AudioPrep,
+                        message: format!("audio prep failed: {e}"),
+                        acknowledged: false,
+                    },
+                );
+            }
             return;
         }
     };
     let file_hash = file_hash_owned.as_str();
+
+    if discard_cancelled_job(initial_hash, file_hash) {
+        return;
+    }
 
     info!(
         "[analyzer] Starting analysis: {} (hash={})",
@@ -1155,7 +1314,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
     // Stems-only: keep the LRC-provided transcript and just separate stems.
     // The intent may have been keyed by the pre-rekey hash for remote songs.
     let stems_only = {
-        let mut set = STEMS_ONLY.lock().unwrap();
+        let mut set = lock_unpoisoned(&STEMS_ONLY);
         set.remove(file_hash) || set.remove(initial_hash)
     };
     if stems_only && file_hash != initial_hash {
@@ -1168,8 +1327,8 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
     }
 
     let config = AppConfig::load();
-    let skip_lrclib = stems_only || FORCE_TRANSCRIBE.lock().unwrap().remove(file_hash);
-    let force_lrclib = FORCE_LRCLIB.lock().unwrap().remove(file_hash);
+    let skip_lrclib = stems_only || lock_unpoisoned(&FORCE_TRANSCRIBE).remove(file_hash);
+    let force_lrclib = lock_unpoisoned(&FORCE_LRCLIB).remove(file_hash);
     // Local lyrics (a `.lrc` sidecar or a tag embedded in the file itself)
     // take priority over the LRCLIB network lookup when the user has opted
     // in via `use_external_lyrics`: whichever is found first is the one
@@ -1228,29 +1387,79 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         cmd_json["language"] = serde_json::json!(lang);
     }
 
-    let json_str = serde_json::to_string(&cmd_json).unwrap();
+    if discard_cancelled_job(initial_hash, file_hash) {
+        return;
+    }
+
+    let json_str = match serde_json::to_string(&cmd_json) {
+        Ok(json) => json,
+        Err(error) => {
+            if !discard_cancelled_job(initial_hash, file_hash) {
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::Worker,
+                        message: error.to_string(),
+                        acknowledged: false,
+                    },
+                );
+            }
+            return;
+        }
+    };
     let mut retried = false;
 
     loop {
-        let mut guard = ANALYZER_SERVER.lock().unwrap();
+        let mut guard = lock_unpoisoned(&ANALYZER_SERVER);
 
         if let Err(e) = ensure_server(&mut guard) {
-            warn!("[analyzer] Failed to start server: {e}");
+            if !discard_cancelled_job(initial_hash, file_hash) {
+                warn!("[analyzer] Failed to start server: {e}");
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::ServerStartup,
+                        message: e.to_string(),
+                        acknowledged: false,
+                    },
+                );
+            }
+            return;
+        }
+
+        if discard_cancelled_job(initial_hash, file_hash) {
+            *guard = None;
+            return;
+        }
+
+        let Some(server) = guard.as_mut() else {
             update_queue_status(
                 file_hash,
                 QueuedStatus::Failed {
                     kind: FailureKind::ServerStartup,
-                    message: e.to_string(),
+                    message: "analyzer server unavailable".into(),
                     acknowledged: false,
                 },
             );
             return;
-        }
-
-        let server = guard.as_mut().unwrap();
+        };
         let attempt_start = Instant::now();
-        match send_and_monitor(server, &json_str, Some(file_hash)) {
+        match send_and_monitor(server, &json_str, Some(file_hash), Some(initial_hash)) {
             Ok(SongResult::Done(stage_timings, contention_snapshot)) => {
+                let mut state = lock_unpoisoned(&ANALYZER);
+                let cancelled =
+                    state.cancelled.remove(initial_hash) | state.cancelled.remove(file_hash);
+                if cancelled {
+                    drop(state);
+                    remove_from_queue(initial_hash);
+                    remove_from_queue(file_hash);
+                    lock_unpoisoned(&FORCE_TRANSCRIBE).remove(initial_hash);
+                    lock_unpoisoned(&FORCE_TRANSCRIBE).remove(file_hash);
+                    lock_unpoisoned(&STEMS_ONLY).remove(initial_hash);
+                    lock_unpoisoned(&STEMS_ONLY).remove(file_hash);
+                    *guard = None;
+                    return;
+                }
                 let total_ms = attempt_start.elapsed().as_millis() as u64;
                 info!("[analyzer:timing] hash={file_hash} stage=total ms={total_ms}");
                 if config.track_analysis_timings() {
@@ -1263,6 +1472,11 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                     );
                 }
                 finalize_song(file_hash, cache);
+                return;
+            }
+            Ok(SongResult::Cancelled) => {
+                let _ = discard_cancelled_job(initial_hash, file_hash);
+                *guard = None;
                 return;
             }
             Ok(SongResult::Oom) => {
@@ -1297,6 +1511,11 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                 return;
             }
             Err(e) => {
+                if discard_cancelled_job(initial_hash, file_hash) {
+                    *guard = None;
+                    return;
+                }
+
                 warn!("[analyzer] Server crashed: {e}");
                 *guard = None;
 
@@ -1384,7 +1603,7 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) -> bool {
 /// The musical key is then detected on a background thread (which contends on
 /// the analyzer server) and patched in once it lands, so the key/tempo controls
 /// unlock later without blocking playback.
-pub fn prepare_lrc_no_stems(file_hash: &str) -> Result<(), NightingaleError> {
+pub(crate) fn prepare_lrc_no_stems(file_hash: &str) -> Result<(), NightingaleError> {
     let cache = CacheDir::new();
     let Some(song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
         return Err(NightingaleError::Other("Song not found".into()));
@@ -1460,16 +1679,21 @@ fn run_key_pass(
         "skip_transcription": true,
         "skip_separation": true,
     });
-    let json_str = serde_json::to_string(&cmd_json).unwrap();
+    let json_str = serde_json::to_string(&cmd_json)?;
 
     let mut retried = false;
     loop {
-        let mut guard = ANALYZER_SERVER.lock().unwrap();
+        let mut guard = lock_unpoisoned(&ANALYZER_SERVER);
         ensure_server(&mut guard)?;
-        let server = guard.as_mut().unwrap();
+        let server = guard
+            .as_mut()
+            .ok_or_else(|| NightingaleError::Other("analyzer server unavailable".into()))?;
         // `None` progress hash keeps this off the status pipe (no queue rows).
-        match send_and_monitor(server, &json_str, None) {
+        match send_and_monitor(server, &json_str, None, None) {
             Ok(SongResult::Done(..)) => return Ok(()),
+            Ok(SongResult::Cancelled) => {
+                return Err(NightingaleError::Other("key detection cancelled".into()));
+            }
             Ok(SongResult::Oom) | Err(_) => {
                 *guard = None;
                 if !retried {
@@ -1548,6 +1772,7 @@ fn prepare_audio_for_analysis(
 
 enum SongResult {
     Done(Vec<(String, u64)>, Option<ContentionSnapshot>),
+    Cancelled,
     Oom,
     Error(String),
 }
@@ -1626,6 +1851,7 @@ fn send_and_monitor(
     server: &mut ServerProcess,
     json_cmd: &str,
     progress_hash: Option<&str>,
+    initial_hash: Option<&str>,
 ) -> Result<SongResult, NightingaleError> {
     server.writer.write_all(json_cmd.as_bytes())?;
     server.writer.write_all(b"\n")?;
@@ -1639,11 +1865,27 @@ fn send_and_monitor(
     let mut separation_snapshot_rx: Option<mpsc::Receiver<ContentionSnapshot>> = None;
     let mut contention_snapshot: Option<ContentionSnapshot> = None;
     loop {
+        if progress_hash.is_some_and(|hash| {
+            let state = lock_unpoisoned(&ANALYZER);
+            state.cancelled.contains(hash)
+                || initial_hash.is_some_and(|initial| state.cancelled.contains(initial))
+        }) {
+            return Ok(SongResult::Cancelled);
+        }
+
         line_buf.clear();
         let bytes = server.reader.read_line(&mut line_buf)?;
 
         if bytes == 0 {
             return Err("Server closed connection unexpectedly".into());
+        }
+
+        if progress_hash.is_some_and(|hash| {
+            let state = lock_unpoisoned(&ANALYZER);
+            state.cancelled.contains(hash)
+                || initial_hash.is_some_and(|initial| state.cancelled.contains(initial))
+        }) {
+            return Ok(SongResult::Cancelled);
         }
 
         let line = line_buf.trim();

@@ -107,3 +107,4 @@ During playback, lyrics are displayed with word-by-word highlighting:
 - **Upcoming words** — shown in a dimmer color
 - **Next line** — previewed below the current line
 - **Reading** — for CJK songs, the romanized reading is shown above each token in a smaller weight
+- **Lyric gaps** — during longer pauses between lyric lines, a compact countdown appears beneath the song details while a circular bubble counts down the final three seconds beside the upcoming line. Lines from the next lyric block are not previewed across an instrumental break.

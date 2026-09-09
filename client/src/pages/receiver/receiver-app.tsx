@@ -1,13 +1,15 @@
-import { PlaybackProviders } from "@/contexts/playback";
-import { loadSongsByHashes } from "@/bridge/songs";
-import { useConfig } from "@/queries/use-config";
-import { CAST_NAMESPACE } from "@/lib/cast/protocol";
-import type { AppConfig } from "@/types/AppConfig";
-import type { CastReceiverMessage } from "@/types/CastReceiverMessage";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { MemoryRouter } from "react-router";
-import { ReceiverLayout } from "./receiver-layout";
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { MemoryRouter } from 'react-router';
+
+import { loadSongsByHashes } from '@/bridge/songs';
+import { CAST_NAMESPACE } from '@/features/playback/lib/cast/protocol';
+import { PlaybackProviders } from '@/features/playback/providers';
+import { useConfig } from '@/shared/config/use-config';
+import type { AppConfig } from '@/types/AppConfig';
+import type { CastReceiverMessage } from '@/types/CastReceiverMessage';
+
+import { ReceiverLayout } from './receiver-layout';
 
 const queryClient = new QueryClient();
 
@@ -24,27 +26,49 @@ const queryClient = new QueryClient();
  * browser tab without a physical Chromecast, see the plan doc's
  * verification section.
  */
+function urlLoadMessage(): CastReceiverMessage | null {
+  const params = new URLSearchParams(location.search);
+  const fileHash = params.get('file_hash');
+  if (fileHash === null) {
+    return null;
+  }
+  const guideVolumeParam = params.get('guide_volume');
+  return {
+    type: 'load',
+    file_hash: fileHash,
+    guide_volume: guideVolumeParam !== null ? Number(guideVolumeParam) : null,
+  };
+}
+
 function useIncomingLoadMessage(): CastReceiverMessage | null {
-  const [message, setMessage] = useState<CastReceiverMessage | null>(null);
+  // `?file_hash=...` in the query string always wins over a real Cast
+  // session -- the gstatic CAF SDK script tag in receiver.html still loads
+  // and defines `window.cast.framework` in a plain desktop browser tab (it
+  // has no way to know it isn't actually running on a Chromecast), so
+  // branching on "does `window.cast.framework` exist" is not a reliable
+  // signal for "are we in a real Cast session." A real Cast launch never
+  // carries `file_hash` on the receiver URL, so there's no ambiguity in
+  // practice -- this lets the whole render path be exercised from a plain
+  // browser tab without a physical Chromecast, see the plan doc's
+  // verification section. Read once via lazy `useState` init (the query
+  // string doesn't change without a full page reload) rather than an
+  // effect, so this branch never costs an extra render.
+  const [urlMessage] = useState<CastReceiverMessage | null>(urlLoadMessage);
+  const [castMessage, setCastMessage] = useState<CastReceiverMessage | null>(null);
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const fileHash = params.get("file_hash");
-    if (fileHash) {
-      const guideVolumeParam = params.get("guide_volume");
-      setMessage({
-        type: "load",
-        file_hash: fileHash,
-        guide_volume: guideVolumeParam ? Number(guideVolumeParam) : null,
-      });
+    if (urlMessage !== null) {
       return;
     }
 
-    const context = window.cast?.framework?.CastReceiverContext.getInstance();
-    if (!context) return;
+    const framework = window.cast?.framework;
+    if (framework === undefined) {
+      return;
+    }
+    const context = framework.CastReceiverContext.getInstance();
 
     context.addCustomMessageListener<CastReceiverMessage>(CAST_NAMESPACE, (event) => {
-      setMessage(event.data);
+      setCastMessage(event.data);
     });
     // Bypasses cast.framework's PlayerManager/MediaManager entirely (no
     // standard Media session -- playback is our own Web Audio graph via
@@ -52,9 +76,9 @@ function useIncomingLoadMessage(): CastReceiverMessage | null {
     // to key off; disable it explicitly or the receiver can get killed
     // mid-song.
     context.start({ disableIdleTimeout: true });
-  }, []);
+  }, [urlMessage]);
 
-  return message;
+  return urlMessage ?? castMessage;
 }
 
 function ReceiverContent() {
@@ -63,9 +87,14 @@ function ReceiverContent() {
   const fileHash = message?.file_hash;
 
   const { data: songs } = useQuery({
-    queryKey: ["receiver-song", fileHash],
-    queryFn: () => loadSongsByHashes([fileHash as string]),
-    enabled: Boolean(fileHash),
+    queryKey: ['receiver-song', fileHash],
+    queryFn: () => {
+      if (fileHash === undefined) {
+        throw new Error('fileHash is required');
+      }
+      return loadSongsByHashes([fileHash]);
+    },
+    enabled: fileHash !== undefined,
   });
   const song = songs?.[0];
 
@@ -74,7 +103,9 @@ function ReceiverContent() {
   // than pass `config` through unmodified, since `PlaybackMicProvider`
   // defaults `mic_active` to true when config is null.
   const effectiveConfig = useMemo<AppConfig | null>(() => {
-    if (!config) return null;
+    if (!config) {
+      return null;
+    }
     return {
       ...config,
       guide_volume: message?.guide_volume ?? config.guide_volume,

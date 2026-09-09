@@ -72,7 +72,7 @@ pub struct JellyfinClient {
 
 impl JellyfinClient {
     pub fn new(base_url: impl Into<String>, headers: AuthHeaders) -> Self {
-        let config = ureq::Agent::config_builder()
+        let config = Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
             .build();
@@ -88,7 +88,7 @@ impl JellyfinClient {
     /// where the request itself may take arbitrarily long but bytes arrive
     /// continuously.
     pub fn for_downloads(base_url: impl Into<String>, headers: AuthHeaders) -> Self {
-        let config = ureq::Agent::config_builder()
+        let config = Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(10)))
             .build();
         let agent = Agent::new_with_config(config);
@@ -265,6 +265,6 @@ impl Read for StreamBody {
     }
 }
 
-pub fn trim_base_url(url: &str) -> String {
+pub(crate) fn trim_base_url(url: &str) -> String {
     url.trim_end_matches('/').to_string()
 }

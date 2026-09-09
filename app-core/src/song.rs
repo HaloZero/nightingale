@@ -183,7 +183,7 @@ fn default_genre() -> String {
 }
 
 #[derive(Debug, Clone)]
-pub struct TranscriptMetaInfo {
+pub(crate) struct TranscriptMetaInfo {
     pub source: TranscriptSource,
     pub language: Option<String>,
     pub key: Option<String>,
@@ -366,7 +366,7 @@ pub(crate) fn compute_file_hash(path: &Path) -> Result<String, std::io::Error> {
     Ok(hasher.finalize().to_hex()[..32].to_string())
 }
 
-pub fn build_song(path: &Path, cache: &CacheDir, is_video: bool) -> Result<Song, NightingaleError> {
+pub(crate) fn build_song(path: &Path, cache: &CacheDir, is_video: bool) -> Result<Song, NightingaleError> {
     let file_hash = compute_file_hash(path)?;
 
     let is_analyzed = cache.transcript_exists(&file_hash);
@@ -402,7 +402,7 @@ pub fn build_song(path: &Path, cache: &CacheDir, is_video: bool) -> Result<Song,
     Ok(song)
 }
 
-pub fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo {
+pub(crate) fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo {
     #[derive(serde::Deserialize)]
     struct TranscriptMeta {
         #[serde(default)]
@@ -419,23 +419,23 @@ pub fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMetaInfo 
         align_backend: Option<String>,
     }
     let path = cache.transcript_path(hash);
-    if let Ok(data) = std::fs::read_to_string(&path) {
-        if let Ok(parsed) = serde_json::from_str::<TranscriptMeta>(&data) {
-            let src = match parsed.source.as_deref() {
-                Some("lyrics") => TranscriptSource::Lyrics,
-                Some("usdx") => TranscriptSource::Usdx,
-                Some("lrc") => TranscriptSource::Lrc,
-                _ => TranscriptSource::Generated,
-            };
-            return TranscriptMetaInfo {
-                source: src,
-                language: parsed.language,
-                key: parsed.key,
-                tempo: parsed.tempo,
-                no_stems: parsed.no_stems,
-                align_backend: parsed.align_backend,
-            };
-        }
+    if let Ok(data) = std::fs::read_to_string(&path)
+        && let Ok(parsed) = serde_json::from_str::<TranscriptMeta>(&data)
+    {
+        let src = match parsed.source.as_deref() {
+            Some("lyrics") => TranscriptSource::Lyrics,
+            Some("usdx") => TranscriptSource::Usdx,
+            Some("lrc") => TranscriptSource::Lrc,
+            _ => TranscriptSource::Generated,
+        };
+        return TranscriptMetaInfo {
+            source: src,
+            language: parsed.language,
+            key: parsed.key,
+            tempo: parsed.tempo,
+            no_stems: parsed.no_stems,
+            align_backend: parsed.align_backend,
+        };
     }
     TranscriptMetaInfo {
         source: TranscriptSource::Generated,

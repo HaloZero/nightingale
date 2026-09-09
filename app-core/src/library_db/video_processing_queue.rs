@@ -17,7 +17,7 @@ use rusqlite::params;
 
 use super::connection::{with_conn, with_conn_mut};
 
-pub fn video_queue_mark_queued_many(kind: &str, file_hashes: &[String]) -> rusqlite::Result<()> {
+pub(crate) fn video_queue_mark_queued_many(kind: &str, file_hashes: &[String]) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         let tx = c.transaction()?;
         for file_hash in file_hashes {
@@ -35,7 +35,7 @@ pub fn video_queue_mark_queued_many(kind: &str, file_hashes: &[String]) -> rusql
 
 /// Returns the `started_at` token written for this row -- pass it back to
 /// `video_queue_clear` to guard against clearing a different in-flight run.
-pub fn video_queue_mark_processing(file_hash: &str, kind: &str) -> rusqlite::Result<String> {
+pub(crate) fn video_queue_mark_processing(file_hash: &str, kind: &str) -> rusqlite::Result<String> {
     with_conn_mut(|c| {
         c.query_row(
             "INSERT INTO video_processing_queue (file_hash, kind, stage, started_at)
@@ -50,7 +50,7 @@ pub fn video_queue_mark_processing(file_hash: &str, kind: &str) -> rusqlite::Res
     })
 }
 
-pub fn video_queue_clear(file_hash: &str, kind: &str, started_at: &str) -> rusqlite::Result<()> {
+pub(crate) fn video_queue_clear(file_hash: &str, kind: &str, started_at: &str) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "DELETE FROM video_processing_queue
@@ -66,14 +66,14 @@ pub fn video_queue_clear(file_hash: &str, kind: &str, started_at: &str) -> rusql
 /// `AnalysisQueue::clear()` in `startup()`, but with no restore/re-enqueue
 /// step: video generation isn't a durable job, it just gets re-triggered by
 /// the next freshness-checked bulk/single action).
-pub fn video_queue_clear_all() -> rusqlite::Result<()> {
+pub(crate) fn video_queue_clear_all() -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute("DELETE FROM video_processing_queue", [])?;
         Ok(())
     })
 }
 
-pub fn video_queue_load_rows() -> rusqlite::Result<Vec<(String, String, String)>> {
+pub(crate) fn video_queue_load_rows() -> rusqlite::Result<Vec<(String, String, String)>> {
     with_conn(|c| {
         let mut stmt =
             c.prepare("SELECT file_hash, kind, stage FROM video_processing_queue")?;

@@ -1,4 +1,3 @@
-use cpal::device_description::DeviceType;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -14,31 +13,37 @@ use ts_rs::TS;
 const SAMPLE_CHUNK: usize = 512;
 const AUDIO_QUEUE_CAP: usize = 24_000;
 const PCM_QUEUE_CAP: usize = 24_000;
+const MONITOR_START_BUFFER: usize = 512;
 const DEFAULT_MONITOR_GAIN: f32 = 0.65;
 const MAX_MONITOR_GAIN: f32 = 2.0;
 
 static MONITOR_GAIN_BITS: AtomicU32 = AtomicU32::new(DEFAULT_MONITOR_GAIN.to_bits());
 
+type SampleSink = Arc<dyn Fn(&[f32]) + Send + Sync>;
+type SampleSource = Arc<Mutex<Box<dyn FnMut() -> f32 + Send>>>;
+
 fn monitor_gain() -> f32 {
     f32::from_bits(MONITOR_GAIN_BITS.load(Ordering::Relaxed))
 }
 
-pub fn set_monitor_gain(gain: f32) {
+pub(crate) fn set_monitor_gain(gain: f32) {
     let clamped = gain.clamp(0.0, MAX_MONITOR_GAIN);
     MONITOR_GAIN_BITS.store(clamped.to_bits(), Ordering::Relaxed);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct MicrophoneInfo {
+pub(crate) struct MicrophoneInfo {
+    pub id: String,
     pub name: String,
+    pub host: String,
 }
 
 /// Mono PCM frame streamed from Rust to JS. JS owns all DSP (pitch, reactive
 /// analysis) and runs it on a sliding window built from these frames.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
-pub struct MicSampleFrame {
+pub(crate) struct MicSampleFrame {
     pub sample_rate: u32,
     pub samples: Vec<f32>,
 }
@@ -46,14 +51,9 @@ pub struct MicSampleFrame {
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[ts(export)]
 #[serde(default)]
-pub struct MicCaptureOptions {
+#[derive(Default)]
+pub(crate) struct MicCaptureOptions {
     pub emit_audio: bool,
-}
-
-impl Default for MicCaptureOptions {
-    fn default() -> Self {
-        Self { emit_audio: false }
-    }
 }
 
 fn device_display_name(device: &cpal::Device) -> String {
@@ -66,35 +66,73 @@ fn device_display_name(device: &cpal::Device) -> String {
     desc.to_string()
 }
 
-fn is_virtual(device: &cpal::Device) -> bool {
-    let Ok(desc) = device.description() else {
-        return false;
-    };
-    matches!(desc.device_type(), DeviceType::Virtual)
+/// Returns all available audio host APIs on this platform with human-readable labels.
+/// On Windows: includes both WASAPI and ASIO (when available)
+/// On other platforms: uses the platform's default audio API
+fn audio_hosts() -> Vec<(cpal::HostId, &'static str)> {
+    cpal::available_hosts()
+        .into_iter()
+        .map(|id| {
+            let label = match id {
+                #[cfg(windows)]
+                cpal::HostId::Wasapi => "WASAPI",
+                #[cfg(windows)]
+                cpal::HostId::Asio => "ASIO",
+                #[cfg(not(windows))]
+                _ => id.name(),
+            };
+            (id, label)
+        })
+        .collect()
 }
 
+/// Discovers all available input microphones across all audio host APIs.
+/// Devices retain their host-qualified IDs so identically named WASAPI, ASIO,
+/// and virtual inputs remain independently selectable.
 #[tauri::command]
-pub fn list_microphones() -> Result<Vec<MicrophoneInfo>, String> {
-    let host = cpal::default_host();
-    let devices = host
-        .input_devices()
-        .map_err(|e| format!("input devices: {e}"))?;
-
+pub(crate) fn list_microphones() -> Result<Vec<MicrophoneInfo>, String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
+    let mut errors = Vec::new();
 
-    for device in devices {
-        if device.default_input_config().is_err() || is_virtual(&device) {
+    for (host_id, host_name) in audio_hosts() {
+        let Ok(host) = cpal::host_from_id(host_id) else {
             continue;
-        }
-        let name = device_display_name(&device);
-        let key = name.to_lowercase();
-        if seen.insert(key) {
-            out.push(MicrophoneInfo { name });
+        };
+        let devices = match host.input_devices() {
+            Ok(devices) => devices,
+            Err(error) => {
+                errors.push(format!("{host_name}: {error}"));
+                continue;
+            }
+        };
+
+        for device in devices {
+            if device.default_input_config().is_err() {
+                continue;
+            }
+
+            let name = device_display_name(&device);
+            let raw_id = device
+                .id()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|_| name.clone());
+            let id = format!("{host_name}:{raw_id}");
+            if seen.insert(id.clone()) {
+                out.push(MicrophoneInfo {
+                    id,
+                    name,
+                    host: host_name.to_string(),
+                });
+            }
         }
     }
 
-    Ok(out)
+    if out.is_empty() && !errors.is_empty() {
+        Err(format!("input devices: {}", errors.join("; ")))
+    } else {
+        Ok(out)
+    }
 }
 
 fn i16_to_f32(sample: i16) -> f32 {
@@ -121,7 +159,7 @@ fn f32_to_u32(sample: f32) -> u32 {
     ((sample.clamp(-1.0, 1.0) * 0.5 + 0.5) * u32::MAX as f32) as u32
 }
 
-fn push_mapped_input<T, F>(data: &[T], push: &Arc<dyn Fn(&[f32]) + Send + Sync>, mut map: F)
+fn push_mapped_input<T, F>(data: &[T], push: &SampleSink, mut map: F)
 where
     T: Copy,
     F: FnMut(T) -> f32,
@@ -130,15 +168,37 @@ where
     push(&floats);
 }
 
+fn strongest_input_channel(data: &[f32], channels: usize) -> usize {
+    let mut energy = vec![0.0; channels];
+    for frame in data.chunks(channels) {
+        for (channel, sample) in frame.iter().enumerate() {
+            energy[channel] += sample * sample;
+        }
+    }
+
+    energy
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .map_or(0, |(channel, _)| channel)
+}
+
 fn write_output_frames<T, F>(
     data: &mut [T],
     channels: usize,
-    next_sample: &Arc<dyn Fn() -> f32 + Send + Sync>,
+    next_sample: &SampleSource,
     mut map: F,
 ) where
     T: Copy,
     F: FnMut(f32) -> T,
 {
+    let Ok(mut next_sample) = next_sample.try_lock() else {
+        for sample in data {
+            *sample = map(0.0);
+        }
+        return;
+    };
+
     for frame in data.chunks_mut(channels) {
         let out_sample = map(next_sample());
         for out in frame {
@@ -182,21 +242,46 @@ fn stop_internal() {
 }
 
 fn find_device(preferred: Option<&str>) -> Result<(cpal::Device, String), String> {
-    let host = cpal::default_host();
+    if let Some(preference) = preferred {
+        let hosts = audio_hosts();
+        let qualified_preference = preference.split_once(':').filter(|(preferred_host, _)| {
+            hosts
+                .iter()
+                .any(|(_, host_name)| host_name == preferred_host)
+        });
 
-    if let Some(name) = preferred {
-        let devices = host
-            .input_devices()
-            .map_err(|e| format!("input devices: {e}"))?;
-        for dev in devices {
-            if device_display_name(&dev) == name {
-                return Ok((dev, name.to_string()));
+        for (host_id, host_name) in hosts {
+            if qualified_preference.is_some_and(|(preferred_host, _)| preferred_host != host_name) {
+                continue;
+            }
+
+            let Ok(host) = cpal::host_from_id(host_id) else {
+                continue;
+            };
+            let Ok(devices) = host.input_devices() else {
+                continue;
+            };
+            for dev in devices {
+                let display_name = device_display_name(&dev);
+                let raw_id = dev
+                    .id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|_| display_name.clone());
+                let id_matches = qualified_preference.map_or_else(
+                    || raw_id == preference,
+                    |(_, preferred_id)| raw_id == preferred_id,
+                );
+                // Name matching preserves preferences saved by older versions.
+                if id_matches || (qualified_preference.is_none() && display_name == preference) {
+                    return Ok((dev, display_name));
+                }
             }
         }
-        return Err(format!("Microphone '{name}' not found"));
+        return Err(format!("Microphone '{preference}' not found"));
     }
 
-    let device = host
+    // No preference: use the system default input device
+    let device = cpal::default_host()
         .default_input_device()
         .ok_or_else(|| "No default microphone found".to_string())?;
     let name = device_display_name(&device);
@@ -204,7 +289,7 @@ fn find_device(preferred: Option<&str>) -> Result<(cpal::Device, String), String
 }
 
 #[tauri::command]
-pub fn start_mic_capture(
+pub(crate) fn start_mic_capture(
     preferred: Option<String>,
     options: Option<MicCaptureOptions>,
     on_samples: Channel<MicSampleFrame>,
@@ -261,13 +346,14 @@ fn try_build_stream(
     audio_shared: Arc<Mutex<VecDeque<f32>>>,
 ) -> Option<cpal::Stream> {
     let ch = config.channels as usize;
-    let push_samples: Arc<dyn Fn(&[f32]) + Send + Sync> = {
+    let push_samples: SampleSink = {
         let pcm_cb = Arc::clone(&pcm_shared);
         let audio_cb = Arc::clone(&audio_shared);
         Arc::new(move |data: &[f32]| {
             let mut mono_samples = Vec::with_capacity(data.len() / ch.max(1));
-            for chunk in data.chunks(ch) {
-                mono_samples.push(chunk.iter().sum::<f32>() / ch as f32);
+            let active_channel = strongest_input_channel(data, ch);
+            for frame in data.chunks(ch) {
+                mono_samples.push(frame.get(active_channel).copied().unwrap_or(0.0));
             }
 
             if let Ok(mut q) = pcm_cb.try_lock() {
@@ -346,6 +432,7 @@ fn try_build_stream(
 
 fn try_build_output_stream(
     device: &cpal::Device,
+    input_sample_rate: cpal::SampleRate,
     audio_shared: Arc<Mutex<VecDeque<f32>>>,
 ) -> Option<cpal::Stream> {
     let default_cfg = match device.default_output_config() {
@@ -362,19 +449,48 @@ fn try_build_output_stream(
         buffer_size: cpal::BufferSize::Default,
     };
     let ch = config.channels as usize;
+    let sample_rate_ratio = f64::from(input_sample_rate) / f64::from(config.sample_rate);
 
-    let next_sample: Arc<dyn Fn() -> f32 + Send + Sync> = {
+    let next_sample: SampleSource = {
         let audio_shared = Arc::clone(&audio_shared);
-        Arc::new(move || -> f32 {
+        let mut current = 0.0;
+        let mut next = 0.0;
+        let mut position = 0.0;
+        let mut initialized = false;
+        let mut buffered = VecDeque::new();
+        Arc::new(Mutex::new(Box::new(move || -> f32 {
             if !MONITOR_ENABLED.load(Ordering::Relaxed) {
                 return 0.0;
             }
-            if let Ok(mut q) = audio_shared.try_lock() {
-                q.pop_front().unwrap_or(0.0) * monitor_gain()
-            } else {
-                0.0
+
+            if !initialized {
+                let Ok(mut queue) = audio_shared.try_lock() else {
+                    return 0.0;
+                };
+                if queue.len() < MONITOR_START_BUFFER {
+                    return 0.0;
+                }
+                buffered.extend(queue.drain(..));
+                current = buffered.pop_front().unwrap_or(0.0);
+                next = buffered.pop_front().unwrap_or(0.0);
+                initialized = true;
             }
-        })
+
+            let sample = current + (next - current) * position as f32;
+            position += sample_rate_ratio;
+            while position >= 1.0 {
+                current = next;
+                if buffered.is_empty() {
+                    if let Ok(mut queue) = audio_shared.try_lock() {
+                        buffered.extend(queue.drain(..));
+                    }
+                }
+                next = buffered.pop_front().unwrap_or(0.0);
+                position -= 1.0;
+            }
+
+            sample * monitor_gain()
+        })))
     };
 
     use cpal::SampleFormat;
@@ -499,7 +615,7 @@ fn run_mic_loop(device: cpal::Device, name: &str, shutdown: Arc<AtomicBool>) {
     let monitor_stream = cpal::default_host()
         .default_output_device()
         .and_then(|output_device| {
-            try_build_output_stream(&output_device, Arc::clone(&audio_shared))
+            try_build_output_stream(&output_device, sr, Arc::clone(&audio_shared))
         });
     if monitor_stream.is_none() {
         warn!("[mic] no output monitoring stream available");
@@ -532,7 +648,7 @@ fn run_mic_loop(device: cpal::Device, name: &str, shutdown: Arc<AtomicBool>) {
 }
 
 #[tauri::command]
-pub fn stop_mic_capture() {
+pub(crate) fn stop_mic_capture() {
     let _guard = MIC_OP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     stop_internal();
 }

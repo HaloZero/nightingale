@@ -16,12 +16,12 @@ use crate::error::NightingaleError;
 use crate::library_db;
 use crate::song::Song;
 
-pub mod folder;
-pub mod jellyfin;
-pub mod navidrome;
-pub mod plex;
+pub(crate) mod folder;
+pub(crate) mod jellyfin;
+pub(crate) mod navidrome;
+pub(crate) mod plex;
 
-pub use folder::FolderSource;
+pub(crate) use folder::FolderSource;
 pub use jellyfin::{JellyfinAuth, JellyfinSource};
 pub use navidrome::{NavidromeAuth, NavidromeSource};
 pub use plex::{PlexAuth, PlexSource};
@@ -29,7 +29,7 @@ pub use plex::{PlexAuth, PlexSource};
 /// How many songs we buffer in memory before flushing them to the library DB
 /// during a scan. Small enough to keep memory bounded, large enough to avoid
 /// the per-transaction overhead of writing rows one-by-one.
-pub const SCAN_BATCH_SIZE: usize = 25;
+pub(crate) const SCAN_BATCH_SIZE: usize = 25;
 
 /// Coarse-grained discriminator surfaced to the UI / commands layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +75,9 @@ pub trait MediaSource: Send + Sync {
     /// - bailing out when the scan generation has been bumped
     fn scan(&self, ctx: &ScanContext<'_>) -> Result<(), NightingaleError>;
 
+    /// Refresh source-owned metadata without touching analysis state or identity.
+    fn refresh_metadata(&self, song: &mut Song, cache: &CacheDir) -> Result<(), NightingaleError>;
+
     /// Make sure the song's source file is present on disk and return a path
     /// the analyzer (ffmpeg + Python) or the player can read. For `LocalFile`
     /// origins this just hands `song.path` back; remote sources download to
@@ -104,6 +107,27 @@ pub trait MediaSource: Send + Sync {
     }
 }
 
+pub(crate) fn apply_refreshed_metadata(song: &mut Song, refreshed: Song) {
+    song.title = refreshed.title;
+    song.artist = refreshed.artist;
+    song.album = refreshed.album;
+    song.duration_secs = refreshed.duration_secs;
+    song.album_art_path = refreshed.album_art_path;
+    song.is_video = refreshed.is_video;
+    song.origin = refreshed.origin;
+}
+
+pub(crate) fn retained_cover(song: &Song, tag_unchanged: bool) -> Option<PathBuf> {
+    tag_unchanged
+        .then(|| {
+            song.album_art_path
+                .as_ref()
+                .filter(|path| path.is_file())
+                .cloned()
+        })
+        .flatten()
+}
+
 /// Shared by every scan implementation: drain `batch` into the DB if it's
 /// non-empty (and the scan generation is still current).
 pub(crate) fn flush_batch(batch: &mut Vec<Song>, generation: u64) {
@@ -119,7 +143,7 @@ pub fn active_source() -> Result<Option<Box<dyn MediaSource>>, NightingaleError>
     active_source_from_config(&AppConfig::load())
 }
 
-pub fn active_source_from_config(
+pub(crate) fn active_source_from_config(
     config: &AppConfig,
 ) -> Result<Option<Box<dyn MediaSource>>, NightingaleError> {
     let Some(src) = config.library_source.as_ref() else {

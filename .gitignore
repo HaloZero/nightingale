@@ -25,3 +25,51 @@ songs*
 
 # Analyzer benchmark output (scripts/bench_analyze.py)
 bench_out/
+
+# Mac Files
+**/.DS_Store
+
+**/__pycache__
+
+# JavaScript build output
+client/node_modules/
+client/dist/
+*.tsbuildinfo
+
+# Generated per-agent configuration and local agent state
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+QWEN.md
+REASONIX.md
+kilo.jsonc
+opencode.jsonc
+replit.md
+.agents/
+.aiassistant/
+.augment/
+.claude/
+.cline/
+.clinerules/
+.continue/
+.cursor/
+.devin/
+.factory/
+.goosehints
+.grok/
+.hermes.md
+.junie/
+.kilo/
+.kiro/
+.opencode/
+.pi/
+.pi-subagents/
+.qwen/
+.roo/
+.rovodev/
+.rules
+.takt/
+.trae/
+.windsurf/
+.github/copilot-instructions.md
+.github/instructions/

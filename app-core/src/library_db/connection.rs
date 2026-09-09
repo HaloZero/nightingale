@@ -14,6 +14,13 @@ use super::migrations::{configure, run_migrations};
 
 static LIBRARY_DB: OnceLock<Mutex<Connection>> = OnceLock::new();
 
+fn lock_error() -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+        Some("library db connection lock poisoned".into()),
+    )
+}
+
 pub(super) fn is_initialised() -> bool {
     LIBRARY_DB.get().is_some()
 }
@@ -29,7 +36,9 @@ pub(super) fn install(conn: Connection) -> rusqlite::Result<()> {
 
 pub(super) fn replace_or_install(conn: Connection) -> Result<(), String> {
     if let Some(existing) = LIBRARY_DB.get() {
-        let mut guard = existing.lock().unwrap();
+        let mut guard = existing
+            .lock()
+            .map_err(|_| "library db connection lock poisoned")?;
         *guard = conn;
         return Ok(());
     }
@@ -60,7 +69,7 @@ pub(crate) fn with_conn<T, F: FnOnce(&Connection) -> rusqlite::Result<T>>(
             )
         })?
         .lock()
-        .unwrap();
+        .map_err(|_| lock_error())?;
     f(&g)
 }
 
@@ -76,6 +85,6 @@ pub(crate) fn with_conn_mut<T, F: FnOnce(&mut Connection) -> rusqlite::Result<T>
             )
         })?
         .lock()
-        .unwrap();
+        .map_err(|_| lock_error())?;
     f(&mut g)
 }

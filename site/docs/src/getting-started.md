@@ -56,7 +56,9 @@ When prompted, select your music folder. Nightingale scans it for supported audi
 
 Use the song-list toolbar to switch between a compact table and an artwork grid. Search combines with sidebar selections and the toolbar's analysis-status and lyric-source filters, so you can narrow the library without losing context.
 
-Select a song to open its details sidebar before playback. From there you can review the cover, metadata, and analysis state; adjust key and tempo; edit or provide lyrics; run analysis actions; or press **Play**. Nightingale restores the selected song and scroll position when you return from playback.
+Select a song to open its details sidebar before playback. From there you can review the cover, metadata, and analysis state; adjust key and tempo; edit or provide lyrics; run analysis actions; play immediately; or add the song to the playback queue. Open the queue from the toolbar to see what is next, remove individual songs, start the queue, or clear it.
+
+Choose **Settings → Playback → Session mode** to open playback in a dedicated desktop window or browser tab while the menu remains available for queue management. The same settings page has a live preview for lyric placement and independent lyric and pitch-graph scaling.
 
 ## Analysis
 
@@ -69,7 +71,7 @@ Before most songs can be played as karaoke, they need to be analyzed:
 
 Timed LRC / Enhanced LRC and UltraStar songs can skip some or all of this pipeline. See [Lyrics & Transcription](./lyrics.md#editing--providing-lyrics) and [UltraStar Deluxe](./usdx.md).
 
-You can also batch analysis with **Analyze All** from the song list toolbar, or enable **Settings → Analysis → Auto-analyze** to queue newly discovered unanalyzed songs after each scan. **Analyze All** respects the active search, sidebar selection, status filter, and lyric-source filter.
+Use the song-list actions menu to analyze songs, cancel active analysis, refresh metadata, realign lyrics, reanalyze, or clear cached results across the current filtered list. You can also enable **Settings → Analysis → Auto-analyze** to queue newly discovered unanalyzed songs after each scan. Bulk actions respect the active search, sidebar selection, status filter, and lyric-source filter.
 
 <!-- TODO: screenshot of the song library with a mix of analyzed/queued/not-analyzed songs -->
 

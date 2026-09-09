@@ -21,11 +21,24 @@ impl SongsStore {
         let processed = library_db::load_all_songs().unwrap_or_default();
         let (folder, count) = library_db::read_library_meta().unwrap_or((String::new(), 0));
         let processed_count = processed.len();
+        let analyzed_count = processed.iter().filter(|song| song.is_analyzed).count();
+        let analysis_busy_count = analyzer::AnalysisQueue::load()
+            .entries
+            .values()
+            .filter(|status| {
+                matches!(
+                    status,
+                    analyzer::QueuedStatus::Queued | analyzer::QueuedStatus::Analyzing(_)
+                )
+            })
+            .count();
         SongsStore {
             count,
             folder,
             processed,
             processed_count,
+            analyzed_count,
+            analysis_busy_count,
         }
     }
 
@@ -35,6 +48,8 @@ impl SongsStore {
             folder: String::new(),
             processed: Vec::new(),
             processed_count: 0,
+            analyzed_count: 0,
+            analysis_busy_count: 0,
         })
     }
 

@@ -2,6 +2,7 @@
 import type { CachePaths } from "./CachePaths";
 import type { ChromecastConfig } from "./ChromecastConfig";
 import type { LibrarySource } from "./LibrarySource";
+import type { SongSort } from "./SongSort";
 
 export type AppConfig = {
   data_path: string | null;
@@ -15,6 +16,7 @@ export type AppConfig = {
   last_theme: number | null;
   guide_volume: number | null;
   fullscreen: boolean | null;
+  playback_mode: string | null;
   dark_mode: boolean | null;
   mic_active: boolean | null;
   /**
@@ -40,6 +42,8 @@ export type AppConfig = {
   pixabay_video_rotation: boolean | null;
   lyrics_vertical_position: string | null;
   lyrics_horizontal_position: string | null;
+  lyrics_scale: number | null;
+  pitch_graph_scale: number | null;
   separator: string | null;
   asr_engine: string | null;
   align_backend: string | null;
@@ -82,6 +86,7 @@ export type AppConfig = {
    */
   refresh_lyrics_on_scan: boolean | null;
   song_list_view: string | null;
+  song_list_sort: SongSort[] | null;
   language_overrides: { [key in string]: string } | null;
   /**
    * Whether this instance offloads the tail of its analysis queue to

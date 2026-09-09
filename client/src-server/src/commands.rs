@@ -4,7 +4,7 @@ use app_core::{
     save_lyrics_and_realign, search_lrclib_for_hash, shift_key_done_payload,
     shift_tempo_done_payload, AnalysisQueue, AppConfig, CacheStats, FailureKind,
     LibraryMenuFilters, LibraryMenuItems, LibrarySource, LoadSongsParams, PixabayVideoDownloaded,
-    ProfileStore, SongsStore, VideoProcessingQueue, VideoQueueKind,
+    PlaybackSession, ProfileStore, SongTarget, SongsStore, VideoProcessingQueue, VideoQueueKind,
 };
 use axum::{
     extract::{Path as AxumPath, State},
@@ -19,7 +19,7 @@ use crate::events::EventBus;
 use crate::state::AppState;
 
 /// HTTP error wrapper. JSON body matches what `webInvoke` reads on non-2xx.
-pub struct ApiError(pub StatusCode, pub String);
+pub(crate) struct ApiError(pub StatusCode, pub String);
 
 impl ApiError {
     fn bad_request(msg: impl Into<String>) -> Self {
@@ -37,20 +37,22 @@ impl IntoResponse for ApiError {
     }
 }
 
-pub type CmdResult = Result<Value, ApiError>;
+pub(crate) type CmdResult = Result<Value, ApiError>;
 
 /// Generic dispatcher that mirrors Tauri's `generate_handler!` table.
-pub async fn handle_cmd(
+pub(crate) async fn handle_cmd(
     State(state): State<AppState>,
     AxumPath(name): AxumPath<String>,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     let payload = body.map(|Json(v)| v).unwrap_or(Value::Null);
-    let value = dispatch(state.events.clone(), &name, payload).await?;
+    let value = dispatch(state, &name, payload).await?;
     Ok(Json(value))
 }
 
-async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) -> CmdResult {
+async fn dispatch(state: AppState, name: &str, payload: Value) -> CmdResult {
+    let events = state.events.clone();
+
     match name {
         // ── Init/window stubs ────────────────────────────────────────────
         "frontend_ready" | "window_immersive" | "minimize_window" => Ok(Value::Null),
@@ -108,6 +110,65 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             let mut store = ProfileStore::load();
             store.add_score(&args.song_hash, args.score);
             Ok(Value::Null)
+        }
+
+        // ── Playback queue ───────────────────────────────────────────────
+        "load_playback_queue" => {
+            let entries = state.playback_queue.entries().map_err(ApiError::internal)?;
+            Ok(serde_json::to_value(entries).map_err(serde_err)?)
+        }
+        "add_playback_queue_entry" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                file_hash: String,
+                tempo: f64,
+                key_offset: i32,
+            }
+            let args: Args = deserialize(payload)?;
+            let entries = state
+                .playback_queue
+                .add(&args.file_hash, args.tempo, args.key_offset)
+                .map_err(ApiError::bad_request)?;
+            events.emit("playback-queue-changed", &entries);
+            Ok(serde_json::to_value(entries).map_err(serde_err)?)
+        }
+        "remove_playback_queue_entry" => {
+            #[derive(Deserialize)]
+            struct Args {
+                id: String,
+            }
+            let args: Args = deserialize(payload)?;
+            let entries = state
+                .playback_queue
+                .remove(&args.id)
+                .map_err(ApiError::internal)?;
+            events.emit("playback-queue-changed", &entries);
+            Ok(serde_json::to_value(entries).map_err(serde_err)?)
+        }
+        "clear_playback_queue" => {
+            let entries = state.playback_queue.clear().map_err(ApiError::internal)?;
+            events.emit("playback-queue-changed", &entries);
+            Ok(serde_json::to_value(entries).map_err(serde_err)?)
+        }
+
+        // ── Playback session ─────────────────────────────────────────────
+        "load_playback_session" => {
+            let session = state.playback_sessions.load().map_err(ApiError::internal)?;
+            Ok(serde_json::to_value(session).map_err(serde_err)?)
+        }
+        "save_playback_session" => {
+            #[derive(Deserialize)]
+            struct Args {
+                session: PlaybackSession,
+            }
+            let args: Args = deserialize(payload)?;
+            let session = state
+                .playback_sessions
+                .save(args.session)
+                .map_err(ApiError::internal)?;
+            events.emit("playback-session-changed", &session);
+            Ok(serde_json::to_value(session).map_err(serde_err)?)
         }
 
         // ── Scanner ──────────────────────────────────────────────────────
@@ -298,6 +359,18 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
             let args: Args = deserialize(payload)?;
             app_core::enqueue_all(&args.filters);
             Ok(Value::Null)
+        }
+        "enqueue" => {
+            let args: SongTargetArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::enqueue(args.target).map_err(ApiError::internal)?,
+            ))
+        }
+        "cancel_analysis" => {
+            let args: SongTargetArgs = deserialize(payload)?;
+            Ok(Value::from(
+                app_core::cancel_analysis(args.target).map_err(ApiError::internal)?,
+            ))
         }
         "delete_song_cache" => {
             let args: FileHashArgs = deserialize(payload)?;
@@ -589,7 +662,7 @@ async fn dispatch(events: std::sync::Arc<EventBus>, name: &str, payload: Value) 
 
         // ── Vendor ───────────────────────────────────────────────────────
         "is_ready" => Ok(Value::Bool(app_core::is_ready())),
-        "trigger_setup" => crate::commands::vendor::trigger_setup(events, payload),
+        "trigger_setup" => vendor::trigger_setup(events, payload),
 
         // ── Mic (browser-side; no server-side state) ────────────────────
         "list_microphones" => Ok(Value::Array(vec![])),
@@ -627,6 +700,11 @@ struct FileHashArgs {
 }
 
 #[derive(Deserialize)]
+struct SongTargetArgs {
+    target: SongTarget,
+}
+
+#[derive(Deserialize)]
 struct SaveConfigArgs {
     config: AppConfig,
 }
@@ -639,7 +717,9 @@ fn save_config_cmd(payload: Value) -> CmdResult {
     let was_parallel_only = previous.parallel_analysis_only();
     config.save();
     if config.auto_analyze() && !was_auto_analyze {
-        app_core::enqueue_all(&app_core::LibraryMenuFilters::default());
+        let _ = app_core::enqueue(SongTarget::Filter {
+            filters: LibraryMenuFilters::default(),
+        });
     }
     // Kick the dispatcher immediately on enable (or a URL change while
     // already enabled) rather than waiting for the next `enqueue_one` --
@@ -653,7 +733,7 @@ fn save_config_cmd(payload: Value) -> CmdResult {
     // same `enqueue_all` re-sweep the other transitions above use, rather
     // than waiting for the next song to be queued.
     if was_parallel_only && !config.parallel_analysis_only() {
-        app_core::enqueue_all(&app_core::LibraryMenuFilters::default());
+        app_core::enqueue_all(&LibraryMenuFilters::default());
     }
     // Turning it *on* mid-run: the local worker finishes whatever song it's
     // already on, then stops draining the queue rather than being killed
@@ -895,4 +975,4 @@ fn force_best_karaoke_video_cmd(events: std::sync::Arc<EventBus>, payload: Value
     Ok(Value::Null)
 }
 
-pub mod vendor;
+pub(crate) mod vendor;

@@ -14,7 +14,7 @@ struct StaticAssets;
 
 /// SPA-aware static handler: tries the requested path first, then falls back
 /// to `index.html` so client-side routing keeps working under arbitrary URLs.
-pub async fn handle(request: Request<Body>) -> Response<Body> {
+pub(crate) async fn handle(request: Request<Body>) -> Response<Body> {
     if request.method() != Method::GET && request.method() != Method::HEAD {
         return method_not_allowed();
     }
@@ -34,35 +34,38 @@ fn serve_path(uri: &Uri) -> Option<Response<Body>> {
 fn serve_index() -> Response<Body> {
     match StaticAssets::get("index.html") {
         Some(asset) => asset_to_response("index.html", asset),
-        None => Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from(
-                "Frontend bundle missing. Did you run `pnpm build`?",
-            ))
-            .unwrap(),
+        None => response(
+            StatusCode::NOT_FOUND,
+            Body::from("Frontend bundle missing. Did you run `pnpm build`?"),
+        ),
     }
 }
 
 fn asset_to_response(path: &str, asset: rust_embed::EmbeddedFile) -> Response<Body> {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
-    let body = Body::from(asset.data.to_vec());
-    let mut builder = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, mime.as_ref());
+    let mut response = response(StatusCode::OK, Body::from(asset.data.to_vec()));
+    if let Ok(content_type) = HeaderValue::from_bytes(mime.as_ref().as_bytes()) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type);
+    }
     if path.starts_with("assets/") {
         // Vite emits content-hashed filenames under /assets, so they are safe
         // to cache aggressively. Everything else stays short-lived.
-        builder = builder.header(
+        response.headers_mut().insert(
             header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=31536000, immutable"),
         );
     }
-    builder.body(body).unwrap()
+    response
+}
+
+fn response(status: StatusCode, body: Body) -> Response<Body> {
+    let mut response = Response::new(body);
+    *response.status_mut() = status;
+    response
 }
 
 fn method_not_allowed() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::METHOD_NOT_ALLOWED)
-        .body(Body::empty())
-        .unwrap()
+    response(StatusCode::METHOD_NOT_ALLOWED, Body::empty())
 }

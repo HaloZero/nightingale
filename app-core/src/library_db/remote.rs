@@ -26,7 +26,7 @@ use super::songs::update_song_fields;
 /// of each remote source's scan loop to figure out which upstream items we
 /// already have rows for (so we only build/insert new ones and skip
 /// re-fetching covers for known items).
-pub fn load_remote_item_ids(kind: &str) -> rusqlite::Result<HashSet<String>> {
+pub(crate) fn load_remote_item_ids(kind: &str) -> rusqlite::Result<HashSet<String>> {
     with_conn(|c| {
         let mut stmt = c.prepare(
             "SELECT json_extract(payload, '$.origin.item_id')
@@ -41,7 +41,9 @@ pub fn load_remote_item_ids(kind: &str) -> rusqlite::Result<HashSet<String>> {
 
 /// `item_id -> cover_tag` for every row of the given `kind`. A `None` value
 /// means the row exists but we never recorded a cover tag for it.
-pub fn load_remote_cover_tags(kind: &str) -> rusqlite::Result<HashMap<String, Option<String>>> {
+pub(crate) fn load_remote_cover_tags(
+    kind: &str,
+) -> rusqlite::Result<HashMap<String, Option<String>>> {
     with_conn(|c| {
         let mut stmt = c.prepare(
             "SELECT json_extract(payload, '$.origin.item_id'),
@@ -70,7 +72,11 @@ pub fn load_remote_cover_tags(kind: &str) -> rusqlite::Result<HashMap<String, Op
 /// update the row's `album_art_path` + payload accordingly. When `fetch`
 /// returns `None` we also clear the stored `cover_tag` so the next scan
 /// will retry (instead of skipping the item because the tag still matches).
-pub fn refresh_remote_cover_for_item<F>(kind: &str, item_id: &str, fetch: F) -> rusqlite::Result<()>
+pub(crate) fn refresh_remote_cover_for_item<F>(
+    kind: &str,
+    item_id: &str,
+    fetch: F,
+) -> rusqlite::Result<()>
 where
     F: FnOnce(&str) -> Option<PathBuf>,
 {
@@ -105,7 +111,7 @@ where
 
 /// Prune rows of the given `kind` whose item id is no longer present
 /// upstream. Other origins (folder, other remote kinds) are untouched.
-pub fn delete_remote_songs_not_in_item_ids(
+pub(crate) fn delete_remote_songs_not_in_item_ids(
     kind: &str,
     item_ids: &[String],
 ) -> rusqlite::Result<()> {

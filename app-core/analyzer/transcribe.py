@@ -130,6 +130,10 @@ def _build_result_from_raw_segments(
     raw_segments = _filter_hallucinations(raw_segments, duration_secs)
 
     progress(75, f"Language: {language}")
+    if not raw_segments:
+        progress(90, f"No speech found, lang={language}")
+        return {"language": language, "segments": [], "source": "generated"}
+
     result = _align_and_build(raw_segments, full_audio, language, device, pre_align_cleanup)
     result["source"] = "generated"
     return result

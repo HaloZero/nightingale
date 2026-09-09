@@ -10,7 +10,7 @@ use rusqlite::params;
 
 use super::connection::with_conn_mut;
 
-pub struct ParallelAnalysisTimingRow<'a> {
+pub(crate) struct ParallelAnalysisTimingRow<'a> {
     pub file_hash: &'a str,
     pub peer_url: &'a str,
     /// Whether the peer already had this song analyzed when we checked (a
@@ -23,7 +23,7 @@ pub struct ParallelAnalysisTimingRow<'a> {
     pub total_ms: u64,
 }
 
-pub fn insert_parallel_analysis_timing(row: &ParallelAnalysisTimingRow) -> rusqlite::Result<()> {
+pub(crate) fn insert_parallel_analysis_timing(row: &ParallelAnalysisTimingRow<'_>) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "INSERT INTO parallel_analysis_timings (

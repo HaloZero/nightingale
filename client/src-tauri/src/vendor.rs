@@ -2,7 +2,11 @@ use app_core::{is_ready as is_vendor_ready, run_vendor_setup, CachePaths, SetupF
 use tauri::{AppHandle, Emitter, Manager};
 
 #[tauri::command]
-pub fn trigger_setup(app: AppHandle, data_path: Option<String>, cache_paths: Option<CachePaths>) {
+pub(crate) fn trigger_setup(
+    app: AppHandle,
+    data_path: Option<String>,
+    cache_paths: Option<CachePaths>,
+) {
     std::thread::spawn(move || {
         if let Some(paths) = cache_paths.as_ref() {
             for path in [&paths.songs, &paths.videos, &paths.models, &paths.vendor]
@@ -41,6 +45,6 @@ pub fn trigger_setup(app: AppHandle, data_path: Option<String>, cache_paths: Opt
 }
 
 #[tauri::command]
-pub fn is_ready() -> bool {
+pub(crate) fn is_ready() -> bool {
     is_vendor_ready()
 }

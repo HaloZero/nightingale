@@ -9,19 +9,25 @@ use std::sync::{Arc, Mutex};
 struct LogFileWriter(Arc<Mutex<std::fs::File>>);
 
 #[cfg(not(debug_assertions))]
-impl std::io::Write for LogFileWriter {
+impl Write for LogFileWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut f = self.0.lock().unwrap();
-        f.write(buf)
+        let mut file = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        file.write(buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut f = self.0.lock().unwrap();
-        f.flush()
+        let mut file = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        file.flush()
     }
 }
 
-pub fn init() {
+pub(crate) fn init() {
     #[cfg(debug_assertions)]
     {
         let filter = EnvFilter::try_from_default_env()
@@ -59,36 +65,11 @@ pub fn init() {
             )
             .try_init();
 
-        redirect_stderr(&log_path);
-
-        let _ = writeln!(shared.lock().unwrap(), "--- Nightingale log started ---");
-    }
-}
-
-#[cfg(not(debug_assertions))]
-fn redirect_stderr(log_path: &std::path::Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::IntoRawFd;
-        if let Ok(file) = std::fs::OpenOptions::new().append(true).open(log_path) {
-            let fd = file.into_raw_fd();
-            unsafe {
-                libc::dup2(fd, 2);
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::IntoRawHandle;
-        if let Ok(file) = std::fs::OpenOptions::new().append(true).open(log_path) {
-            let handle = file.into_raw_handle();
-            unsafe {
-                windows_sys::Win32::System::Console::SetStdHandle(
-                    windows_sys::Win32::System::Console::STD_ERROR_HANDLE,
-                    handle as _,
-                );
-            }
-        }
+        let _ = writeln!(
+            shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            "--- Nightingale log started ---"
+        );
     }
 }

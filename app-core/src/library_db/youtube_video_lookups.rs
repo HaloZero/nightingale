@@ -9,7 +9,7 @@ use super::connection::{with_conn, with_conn_mut};
 /// A cached lookup outcome. `youtube_url: None` means TheAudioDB was
 /// checked and had nothing for this song -- distinct from no row existing
 /// at all, which means it's never been looked up.
-pub struct YoutubeVideoLookupRow {
+pub(crate) struct YoutubeVideoLookupRow {
     pub youtube_url: Option<String>,
     pub track_name: Option<String>,
     pub artist_name: Option<String>,
@@ -18,7 +18,7 @@ pub struct YoutubeVideoLookupRow {
 /// `Ok(None)` means never looked up -- caller should call TheAudioDB and
 /// `record_youtube_video_lookup` the result. `Ok(Some(row))` means it was,
 /// whether or not a video was actually found (`row.youtube_url`).
-pub fn get_youtube_video_lookup(file_hash: &str) -> rusqlite::Result<Option<YoutubeVideoLookupRow>> {
+pub(crate) fn get_youtube_video_lookup(file_hash: &str) -> rusqlite::Result<Option<YoutubeVideoLookupRow>> {
     with_conn(|c| {
         c.query_row(
             "SELECT youtube_url, track_name, artist_name FROM youtube_video_lookups WHERE file_hash = ?1",
@@ -35,7 +35,7 @@ pub fn get_youtube_video_lookup(file_hash: &str) -> rusqlite::Result<Option<Yout
     })
 }
 
-pub fn record_youtube_video_lookup(
+pub(crate) fn record_youtube_video_lookup(
     file_hash: &str,
     youtube_url: Option<&str>,
     track_name: Option<&str>,

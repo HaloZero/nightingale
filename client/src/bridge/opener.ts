@@ -1,5 +1,6 @@
-import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
-import { isTauri } from "./runtime";
+import { openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener';
+
+import { isTauri } from './runtime';
 
 export const openUrl = async (url: string): Promise<void> => {
   if (isTauri) {
@@ -7,5 +8,5 @@ export const openUrl = async (url: string): Promise<void> => {
     return;
   }
 
-  window.open(url, "_blank", "noopener,noreferrer");
+  window.open(url, '_blank', 'noopener,noreferrer');
 };

@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
 
-use crate::cache::{CachePaths, config_path};
 use crate::secret;
+use crate::{
+    cache::{CachePaths, config_path},
+    library_model::SongSort,
+};
 
 /// Where the user wants Nightingale to source songs from. Persisted in
 /// `config.json` and consumed by both the scanner and the analyzer.
@@ -219,6 +222,7 @@ pub struct AppConfig {
     pub last_theme: Option<usize>,
     pub guide_volume: Option<f64>,
     pub fullscreen: Option<bool>,
+    pub playback_mode: Option<String>,
     pub dark_mode: Option<bool>,
     pub mic_active: Option<bool>,
     /// `serde(alias = "mic_mirroring")` keeps configs written by builds that
@@ -242,6 +246,8 @@ pub struct AppConfig {
     pub pixabay_video_rotation: Option<bool>,
     pub lyrics_vertical_position: Option<String>,
     pub lyrics_horizontal_position: Option<String>,
+    pub lyrics_scale: Option<f64>,
+    pub pitch_graph_scale: Option<f64>,
     pub separator: Option<String>,
     pub asr_engine: Option<String>,
     pub align_backend: Option<String>,
@@ -277,6 +283,8 @@ pub struct AppConfig {
     /// silently changing rescan behavior/performance for every install.
     pub refresh_lyrics_on_scan: Option<bool>,
     pub song_list_view: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_song_list_sort")]
+    pub song_list_sort: Option<Vec<SongSort>>,
     pub language_overrides: Option<HashMap<String, String>>,
     /// Whether this instance offloads the tail of its analysis queue to
     /// another Nightingale instance (see `parallel_analysis_url`) instead of
@@ -304,6 +312,25 @@ fn default_data_path_option() -> Option<PathBuf> {
     Some(AppConfig::default_data_path())
 }
 
+fn deserialize_song_list_sort<'de, D>(deserializer: D) -> Result<Option<Vec<SongSort>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PersistedSongSort {
+        One(SongSort),
+        Many(Vec<SongSort>),
+    }
+
+    Ok(
+        Option::<PersistedSongSort>::deserialize(deserializer)?.map(|sort| match sort {
+            PersistedSongSort::One(sort) => vec![sort],
+            PersistedSongSort::Many(sorts) => sorts,
+        }),
+    )
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -314,6 +341,7 @@ impl Default for AppConfig {
             last_theme: None,
             guide_volume: None,
             fullscreen: None,
+            playback_mode: None,
             dark_mode: None,
             mic_active: None,
             mic_monitoring: None,
@@ -327,6 +355,8 @@ impl Default for AppConfig {
             pixabay_video_rotation: None,
             lyrics_vertical_position: None,
             lyrics_horizontal_position: None,
+            lyrics_scale: None,
+            pitch_graph_scale: None,
             separator: None,
             asr_engine: None,
             align_backend: None,
@@ -338,6 +368,7 @@ impl Default for AppConfig {
             track_analysis_timings: None,
             refresh_lyrics_on_scan: None,
             song_list_view: None,
+            song_list_sort: None,
             language_overrides: None,
             parallel_analysis_enabled: None,
             parallel_analysis_url: None,
@@ -364,10 +395,10 @@ impl AppConfig {
         }
         // One-shot promotion of the legacy `last_folder` field into the new
         // `library_source` enum so old installs keep scanning the same folder.
-        if self.library_source.is_none() {
-            if let Some(path) = self.last_folder.take() {
-                self.library_source = Some(LibrarySource::Folder { path });
-            }
+        if self.library_source.is_none()
+            && let Some(path) = self.last_folder.take()
+        {
+            self.library_source = Some(LibrarySource::Folder { path });
         }
         self
     }

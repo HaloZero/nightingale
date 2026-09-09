@@ -1,0 +1,16 @@
+export const CONFIG = ['config'];
+export const CACHE_STATS = ['cache-stats'];
+export const PROFILES = ['profiles'];
+export const PLAYBACK_QUEUE = ['playback-queue'];
+export const SONGS = ['songs'];
+export const SONGS_META = ['songs-meta'];
+export const ANALYSIS_QUEUE = ['analysis-queue'];
+export const MENU = ['menu'];
+export const UPDATER = ['updater'];
+export const LYRICS = ['lyrics'];
+export const LRCLIB = ['lrclib'];
+export const JELLYFIN_HEALTH = ['jellyfin-health'];
+export const NAVIDROME_HEALTH = ['navidrome-health'];
+export const PLEX_HEALTH = ['plex-health'];
+export const MIC_DEVICES = ['mic-devices'];
+export const VIDEO_QUEUE = ['video-queue'];

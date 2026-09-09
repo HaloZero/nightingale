@@ -166,10 +166,8 @@ fn parse_usdx_str(content: &str) -> Result<UsdxFile, NightingaleError> {
                 if !current.is_empty() {
                     phrases.push(std::mem::take(&mut current));
                 }
-                if relative {
-                    if let Some(delta) = leading_int(&trimmed[1..]) {
-                        line_offset += delta;
-                    }
+                if relative && let Some(delta) = leading_int(&trimmed[1..]) {
+                    line_offset += delta;
                 }
             }
             'E' => break,
@@ -349,14 +347,14 @@ fn resolve_bundle(file: &UsdxFile, txt_path: &Path) -> Result<UsdxBundle, Nighti
 
 /// Sibling media filenames a USDX descriptor "claims" — used by the scanner so we
 /// don't end up with a duplicate raw audio/video song row alongside the USDX one.
-pub struct UsdxSiblings {
+pub(crate) struct UsdxSiblings {
     pub audio: PathBuf,
     pub vocals: Option<PathBuf>,
     pub instrumental: Option<PathBuf>,
     pub video: Option<PathBuf>,
 }
 
-pub fn read_siblings(path: &Path) -> Option<UsdxSiblings> {
+pub(crate) fn read_siblings(path: &Path) -> Option<UsdxSiblings> {
     let file = parse_usdx_path(path).ok()?;
     let parent = path.parent()?.to_path_buf();
     Some(UsdxSiblings {
@@ -380,7 +378,7 @@ pub fn read_siblings(path: &Path) -> Option<UsdxSiblings> {
 
 /// Cheap content sniff: is this `.txt` actually a USDX song descriptor?
 /// Reads the first ~2 KB of the file and looks for the minimum required tags.
-pub fn looks_like_usdx(path: &Path) -> bool {
+pub(crate) fn looks_like_usdx(path: &Path) -> bool {
     let Ok(mut f) = std::fs::File::open(path) else {
         return false;
     };
@@ -492,7 +490,7 @@ fn cache_album_art(cache: &CacheDir, bytes: &[u8]) -> Option<PathBuf> {
 /// Scan-time entry point. Parses the .txt, resolves sibling media, writes the
 /// synthesized transcript JSON to the cache, and returns a fully-formed Song row
 /// with `is_analyzed = true` so the analyzer queue never sees it.
-pub fn build_usdx_song(path: &Path, cache: &CacheDir) -> Result<Song, NightingaleError> {
+pub(crate) fn build_usdx_song(path: &Path, cache: &CacheDir) -> Result<Song, NightingaleError> {
     let file = parse_usdx_path(path)?;
     let bundle = resolve_bundle(&file, path)?;
 

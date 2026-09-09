@@ -647,7 +647,7 @@ pub(super) fn maybe_start_songs_json_migration() {
     std::thread::spawn(move || {
         const BATCH: usize = 50;
         let _ = update_library_meta(&folder, scan_count);
-        let success = migrate_song_batches(&processed, BATCH, |chunk| append_songs(chunk));
+        let success = migrate_song_batches(&processed, BATCH, append_songs);
         MIGRATING.store(false, Ordering::Release);
         if success {
             let _ = std::fs::rename(&json_path, json_path.with_extension("json.bak"));
@@ -672,7 +672,7 @@ where
 /// Jellyfin row's `path` as `jellyfin://item/<id>`. The new code expects every
 /// row to carry the future cache-file path so the `path.is_file()` check in
 /// `ensure_local_media` works naturally. Rewrites legacy rows in-place.
-pub fn rewrite_legacy_jellyfin_paths(cache_dir: &Path) -> rusqlite::Result<()> {
+pub(crate) fn rewrite_legacy_jellyfin_paths(cache_dir: &Path) -> rusqlite::Result<()> {
     let candidates = with_conn(|c| {
         let mut stmt = c.prepare(
             "SELECT file_hash, payload FROM songs

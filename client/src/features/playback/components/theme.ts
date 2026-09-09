@@ -1,0 +1,86 @@
+import { FLAVORS, type VideoFlavor } from '@/features/playback/lib/video-flavor';
+
+import { shaders } from './shaders';
+
+export type ThemeMode = 'shader' | 'pixabay' | 'source' | 'youtube';
+
+export const SHADER_COUNT = shaders.length;
+const PIXABAY_INDEX = SHADER_COUNT;
+export const SOURCE_VIDEO_INDEX = SHADER_COUNT + 1;
+export const YOUTUBE_INDEX = SHADER_COUNT + 2;
+
+export function themeMode(index: number): ThemeMode {
+  if (index === PIXABAY_INDEX) {
+    return 'pixabay';
+  }
+
+  if (index === SOURCE_VIDEO_INDEX) {
+    return 'source';
+  }
+
+  if (index === YOUTUBE_INDEX) {
+    return 'youtube';
+  }
+
+  return 'shader';
+}
+
+export function themeName(index: number, videoFlavor: VideoFlavor): string {
+  const mode = themeMode(index);
+
+  if (mode === 'source') {
+    return 'Source Video';
+  }
+
+  if (mode === 'youtube') {
+    return 'YouTube Video';
+  }
+
+  if (mode === 'pixabay') {
+    const name = videoFlavor.charAt(0).toUpperCase() + videoFlavor.slice(1);
+
+    return `Video — ${name}`;
+  }
+
+  return shaders[index % SHADER_COUNT].name;
+}
+
+/** Shaders + Pixabay are always available; source-video and YouTube-video
+ * are appended in this fixed relative order only when available, so
+ * `SOURCE_VIDEO_INDEX`/`YOUTUBE_INDEX` stay meaningful fixed constants
+ * (importable/comparable elsewhere) regardless of which combination of the
+ * two is present for a given song -- cycling walks this list rather than
+ * doing index arithmetic that would otherwise need to reshuffle when only
+ * one of the two extra slots is available. */
+function availableThemeIndices(hasSourceVideo: boolean, hasYoutubeBackground: boolean): number[] {
+  const base = Array.from({ length: PIXABAY_INDEX + 1 }, (_, i) => i);
+  if (hasSourceVideo) {
+    base.push(SOURCE_VIDEO_INDEX);
+  }
+  if (hasYoutubeBackground) {
+    base.push(YOUTUBE_INDEX);
+  }
+  return base;
+}
+
+export function themeCount(hasSourceVideo: boolean, hasYoutubeBackground: boolean): number {
+  return availableThemeIndices(hasSourceVideo, hasYoutubeBackground).length;
+}
+
+export function nextThemeIndex(
+  current: number,
+  hasSourceVideo: boolean,
+  hasYoutubeBackground: boolean,
+): number {
+  const list = availableThemeIndices(hasSourceVideo, hasYoutubeBackground);
+  const pos = list.indexOf(current);
+  return list[pos === -1 ? 0 : (pos + 1) % list.length];
+}
+
+export function nextFlavorIndex(current: number): number {
+  return (current + 1) % FLAVORS.length;
+}
+
+export function isPixabayTheme(index: number): boolean {
+  return index === PIXABAY_INDEX;
+}

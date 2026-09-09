@@ -27,12 +27,12 @@ enum MediaKind {
     Usdx,
 }
 
-pub struct FolderSource {
+pub(crate) struct FolderSource {
     root: PathBuf,
 }
 
 impl FolderSource {
-    pub fn new(root: PathBuf) -> Self {
+    pub(crate) fn new(root: PathBuf) -> Self {
         Self { root }
     }
 }
@@ -133,6 +133,15 @@ impl MediaSource for FolderSource {
         Ok(())
     }
 
+    fn refresh_metadata(&self, song: &mut Song, cache: &CacheDir) -> Result<(), NightingaleError> {
+        if !matches!(song.origin, SongOrigin::LocalFile) {
+            return Err(NightingaleError::Other(
+                "folder source asked to refresh a remote song".into(),
+            ));
+        }
+        Ok(song.refresh_metadata(cache))
+    }
+
     fn ensure_local_media(
         &self,
         song: &Song,
@@ -154,9 +163,7 @@ fn classify_media_file(path: &Path) -> Option<MediaKind> {
         Some(MediaKind::Audio)
     } else if VIDEO_EXTENSIONS.contains(&ext_str) {
         Some(MediaKind::Video)
-    } else if ext_str == "usdx" {
-        Some(MediaKind::Usdx)
-    } else if ext_str == "txt" && usdx::looks_like_usdx(path) {
+    } else if ext_str == "usdx" || ext_str == "txt" && usdx::looks_like_usdx(path) {
         Some(MediaKind::Usdx)
     } else {
         None
@@ -338,7 +345,8 @@ fn collect_media_paths(folder: &Path) -> Vec<(PathBuf, MediaKind)> {
 
     let claimed: HashSet<PathBuf> = paths
         .iter()
-        .filter_map(|(p, kind)| matches!(kind, MediaKind::Usdx).then(|| p.clone()))
+        .filter(|&(_p, kind)| matches!(kind, MediaKind::Usdx))
+        .map(|(p, _kind)| p.clone())
         .filter_map(|usdx_path| usdx::read_siblings(&usdx_path))
         .flat_map(|s| {
             [Some(s.audio), s.vocals, s.instrumental, s.video]

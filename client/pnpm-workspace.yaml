@@ -1,5 +1,5 @@
 packages:
-  - "."
+  - '.'
 
 # pnpm 11+ build-script approvals. The old `onlyBuiltDependencies` /
 # `ignoredBuiltDependencies` lists are gone; everything goes through this
@@ -7,3 +7,7 @@ packages:
 allowBuilds:
   esbuild: true
   msw: false
+  tldjs: true
+
+minimumReleaseAgeExclude:
+  - rulesync@16.17.0

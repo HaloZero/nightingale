@@ -5,18 +5,20 @@ mod logging;
 mod lyrics;
 mod microphones;
 mod playback;
+mod playback_queue;
+mod playback_session;
 mod profile;
 mod scanner;
 mod vendor;
 
 use analyzer::{
-    acknowledge_analysis_failures, delete_song_cache, enqueue_all, enqueue_one, realign,
-    realign_all, realign_alt, reanalyze_all_force_transcribe, reanalyze_all_full, reanalyze_all_transcript,
-    reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript, refresh_metadata,
-    refresh_metadata_all, remove_from_queue_all, remove_from_queue_one, set_song_language,
-    shift_key, shift_tempo,
+    acknowledge_analysis_failures, cancel_analysis, delete_song_cache, enqueue, enqueue_all,
+    enqueue_one, realign, realign_all, realign_alt, reanalyze_all_force_transcribe,
+    reanalyze_all_full, reanalyze_all_transcript, reanalyze_force_transcribe, reanalyze_full,
+    reanalyze_transcript, refresh_metadata, refresh_metadata_all, remove_from_queue_all,
+    remove_from_queue_one, set_song_language, shift_key, shift_tempo,
 };
-use app_core::{AppConfig, SongsStore};
+use app_core::{AppConfig, PlaybackQueue, PlaybackSessionStore, SongsStore};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use cache::{calculate_cache_stats, clear_all, clear_models_command, clear_videos_command};
 use config::{load_config, save_config};
@@ -26,6 +28,11 @@ use playback::{
     ensure_mp3_stems, ensure_playable_source_video, fetch_pixabay_videos, get_audio_paths,
     get_best_karaoke_video_path, load_transcript, load_youtube_background,
 };
+use playback_queue::{
+    add_playback_queue_entry, clear_playback_queue, load_playback_queue,
+    remove_playback_queue_entry,
+};
+use playback_session::{load_playback_session, save_playback_session};
 use profile::{add_score, create_profile, delete_profile, load_profiles, switch_profile};
 use scanner::{
     clear_library_source, jellyfin_login, jellyfin_ping, load_analysis_queue,
@@ -42,8 +49,8 @@ fn get_media_endpoint() -> app_core::MediaEndpoint {
 }
 
 #[tauri::command]
-fn frontend_ready(window: tauri::Window) {
-    window.show().unwrap();
+fn frontend_ready(window: tauri::Window) -> Result<(), String> {
+    window.show().map_err(|error| error.to_string())
 }
 
 /// True for native fullscreen or macOS "simple" fullscreen (`set_simple_fullscreen`), where
@@ -83,6 +90,8 @@ pub fn run() {
     logging::init();
 
     tauri::Builder::default()
+        .manage(PlaybackQueue::default())
+        .manage(PlaybackSessionStore::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
@@ -106,6 +115,14 @@ pub fn run() {
             create_profile,
             delete_profile,
             add_score,
+            // Playback queue
+            load_playback_queue,
+            add_playback_queue_entry,
+            remove_playback_queue_entry,
+            clear_playback_queue,
+            // Playback session
+            load_playback_session,
+            save_playback_session,
             // Scanner
             trigger_scan,
             set_library_source,
@@ -126,6 +143,8 @@ pub fn run() {
             // Analyzer
             enqueue_one,
             enqueue_all,
+            enqueue,
+            cancel_analysis,
             delete_song_cache,
             reanalyze_transcript,
             reanalyze_full,
@@ -171,7 +190,7 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
             app_core::startup()?;
-            app_core::media_server::start();
+            app_core::media_server::start()?;
             let media_endpoint = app_core::media_server::endpoint();
 
             let config = AppConfig::load();

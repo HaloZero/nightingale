@@ -6,7 +6,7 @@ use crate::state::AppState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Bootstrap {
+pub(crate) struct Bootstrap {
     config: AppConfig,
     songs_meta: app_core::SongsMeta,
     /// The data folder is fixed by the operator (via `NIGHTINGALE_DATA_PATH`),
@@ -20,18 +20,13 @@ pub struct Bootstrap {
 /// Replaces the `initialization_script` Tauri injects on window creation:
 /// the web client awaits this once and seeds `window.__NIGHTINGALE_*` from
 /// the response before mounting React.
-pub async fn handle(State(_state): State<AppState>) -> Json<Bootstrap> {
+pub(crate) async fn handle(State(state): State<AppState>) -> Json<Bootstrap> {
     let config = AppConfig::load();
     let songs_meta = SongsStore::load_meta();
     Json(Bootstrap {
         config,
         songs_meta,
-        data_path_pinned: env_pinned("NIGHTINGALE_DATA_PATH"),
-        library_pinned: env_pinned("NIGHTINGALE_LIBRARY_PATH"),
+        data_path_pinned: state.data_path_pinned,
+        library_pinned: state.library_pinned,
     })
-}
-
-/// True when `key` is set to a non-empty value in the process environment.
-fn env_pinned(key: &str) -> bool {
-    std::env::var_os(key).is_some_and(|v| !v.is_empty())
 }

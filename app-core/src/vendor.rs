@@ -56,7 +56,7 @@ pub fn clear_vendor_dir() -> Result<(), String> {
     Ok(())
 }
 
-pub fn ffmpeg_path() -> PathBuf {
+pub(crate) fn ffmpeg_path() -> PathBuf {
     let name = if cfg!(windows) {
         "ffmpeg.exe"
     } else {
@@ -71,7 +71,7 @@ pub fn ffmpeg_path() -> PathBuf {
 /// lyrics is an opt-in, niche feature (`ChromecastConfig.karaoke_video`),
 /// not core setup, so it's downloaded lazily on first use instead
 /// (`ensure_font_downloaded`).
-pub fn font_path() -> PathBuf {
+pub(crate) fn font_path() -> PathBuf {
     vendor_dir().join("DejaVuSans.ttf")
 }
 
@@ -79,12 +79,12 @@ pub fn font_path() -> PathBuf {
 /// official-music-video download path. Same lazy-on-first-use treatment as
 /// `font_path`/`ensure_font_downloaded` -- niche, opt-in feature, not part
 /// of core setup.
-pub fn ytdlp_path() -> PathBuf {
+pub(crate) fn ytdlp_path() -> PathBuf {
     let name = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
     vendor_dir().join(name)
 }
 
-pub fn python_path() -> PathBuf {
+pub(crate) fn python_path() -> PathBuf {
     if cfg!(windows) {
         vendor_dir().join("venv").join("Scripts").join("python.exe")
     } else {
@@ -92,7 +92,7 @@ pub fn python_path() -> PathBuf {
     }
 }
 
-pub fn analyzer_dir() -> PathBuf {
+pub(crate) fn analyzer_dir() -> PathBuf {
     vendor_dir().join("analyzer")
 }
 
@@ -283,7 +283,7 @@ pub fn run_vendor_setup(
 
 // ─── Download helpers ───────────────────────────────────────────────
 
-fn download_to_file(url: &str, dest: &std::path::Path) -> Result<(), String> {
+fn download_to_file(url: &str, dest: &Path) -> Result<(), String> {
     let resp = ureq::get(url).call().map_err(|e| e.to_string())?;
     let mut body = resp.into_body();
     let mut reader = body.as_reader();
@@ -292,7 +292,7 @@ fn download_to_file(url: &str, dest: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-fn extract_archive(archive: &std::path::Path, dest_dir: &std::path::Path) -> Result<(), String> {
+fn extract_archive(archive: &Path, dest_dir: &Path) -> Result<(), String> {
     let name = archive.to_string_lossy();
 
     let output = if name.ends_with(".tar.xz") {
@@ -340,7 +340,7 @@ fn extract_archive(archive: &std::path::Path, dest_dir: &std::path::Path) -> Res
     Ok(())
 }
 
-fn find_file_in(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+fn find_file_in(dir: &Path, name: &str) -> Option<PathBuf> {
     walkdir::WalkDir::new(dir)
         .into_iter()
         .flatten()
@@ -348,7 +348,7 @@ fn find_file_in(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
         .map(|e| e.into_path())
 }
 
-fn mark_executable(_path: &std::path::Path) -> Result<(), String> {
+fn mark_executable(_path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -360,7 +360,7 @@ fn mark_executable(_path: &std::path::Path) -> Result<(), String> {
 
 // ─── Other Helpers ───────────────────────────────────────────────────
 
-pub fn silent_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+pub(crate) fn silent_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     #[allow(unused_mut)]
     let mut cmd = Command::new(program);
     #[cfg(windows)]
@@ -444,7 +444,7 @@ const FONT_DOWNLOAD_URL: &str = "https://github.com/dejavu-fonts/dejavu-fonts/re
 /// Bitstream-Vera-derived license explicitly permits embedding/
 /// redistribution, and it's the de facto default across the ffmpeg/
 /// subtitle tooling ecosystem. Latin-script only -- no CJK/RTL coverage.
-pub fn ensure_font_downloaded() -> Result<PathBuf, String> {
+pub(crate) fn ensure_font_downloaded() -> Result<PathBuf, String> {
     let dest = font_path();
     if dest.is_file() {
         return Ok(dest);
@@ -491,7 +491,7 @@ fn ytdlp_download_url() -> Result<&'static str, String> {
 /// Downloads the standalone `yt-dlp` binary on first use. A raw single-file
 /// release asset (unlike ffmpeg/the font), so no archive extraction step --
 /// just fetch and `chmod +x`.
-pub fn ensure_ytdlp_downloaded() -> Result<PathBuf, String> {
+pub(crate) fn ensure_ytdlp_downloaded() -> Result<PathBuf, String> {
     let dest = ytdlp_path();
     if dest.is_file() {
         return Ok(dest);
@@ -690,18 +690,18 @@ fn detect_gpu() -> GpuInfo {
                 legacy_torch: true,
             };
         }
-        return GpuInfo {
+        GpuInfo {
             device: "mps",
             torch_index: "https://download.pytorch.org/whl/cpu",
             legacy_torch: false,
-        };
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         match nvidia_smi_path() {
             Some(smi) => {
-                let cuda_index = query_cuda_index(&smi);
+                let cuda_index = query_cuda_index(smi);
                 info!("[vendor] GPU detection: CUDA (index {cuda_index})");
                 GpuInfo {
                     device: "cuda",
@@ -771,9 +771,9 @@ pub fn step_install_packages() -> Result<(), String> {
     let (audio_sep_pkg, whisperx_pkg) = if gpu.legacy_torch {
         ("audio-separator>=0.24,<0.25", "whisperx>=3.3.0,<3.3.4")
     } else if gpu.device == "cuda" {
-        ("audio-separator[gpu]>=0.25", "whisperx>=3.3.0")
+        ("audio-separator[gpu]>=0.25", "whisperx>=3.8.7rc1")
     } else {
-        ("audio-separator>=0.25", "whisperx>=3.3.0")
+        ("audio-separator>=0.25", "whisperx>=3.8.7rc1")
     };
 
     let cython_out = silent_command(&uv)
@@ -793,6 +793,7 @@ pub fn step_install_packages() -> Result<(), String> {
         whisperx_pkg,
         "soundfile",
         "huggingface_hub>=0.27.0",
+        "transformers>=5.13.0",
         audio_sep_pkg,
         "onnx-asr>=0.5.0",
         "onnxruntime>=1.17",
@@ -885,39 +886,6 @@ pub fn step_install_packages() -> Result<(), String> {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!("NeMo install failed: {stderr}"));
         }
-    }
-
-    // Qwen3-ForcedAligner (experimental align backend) needs the Qwen3-ASR
-    // integration, which landed in transformers main (PR #43838) but is not in
-    // any tagged release yet. Install it from the merge commit over whatever
-    // whisperx pulled in; this stays a no-upper-bound override so whisperx's
-    // own transformers usage keeps working. Pinned for reproducibility.
-    //
-    // This MUST run last: on CUDA, `nemo_toolkit[asr]` (installed above) pins
-    // transformers back to a tagged release that doesn't recognize the
-    // `qwen3_asr` model type, so it has to be re-applied after NeMo to win.
-    let transformers_git = concat!(
-        "transformers @ git+https://github.com/huggingface/transformers",
-        "@967203924487e8e9f64a2d825fc4e1bdbec3f518",
-    );
-    let transformers_args: Vec<&str> = vec![
-        "pip",
-        "install",
-        "--reinstall-package",
-        "transformers",
-        transformers_git,
-        "--python",
-        &py_str,
-    ];
-
-    let output = silent_command(&uv)
-        .args(&transformers_args)
-        .output()
-        .map_err(|e| format!("Failed to install Qwen-capable transformers: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("transformers (Qwen3-ASR) install failed: {stderr}"));
     }
 
     Ok(())

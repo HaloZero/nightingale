@@ -38,7 +38,7 @@ const FILES: &[(&str, &str)] = &[
     ("cjk.py", CJK_PY),
 ];
 
-pub fn write_scripts(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn write_scripts(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
 
     for (name, content) in FILES {

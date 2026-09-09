@@ -169,7 +169,7 @@ pub fn cast_song_to_configured_device(
 /// whatever's already running first forces a real relaunch -- and therefore
 /// a real CEC trigger -- every single cast, not just the first one after the
 /// device was idle. Shared by both receiver paths below.
-fn stop_running_apps(device: &CastDevice) {
+fn stop_running_apps(device: &CastDevice<'_>) {
     match device.receiver.get_status() {
         Ok(status) => {
             for existing in &status.applications {
@@ -190,7 +190,7 @@ fn stop_running_apps(device: &CastDevice) {
 /// hand it a URL via `/api/asset` (either the song's raw audio, or a
 /// pre-rendered karaoke-video MP4 when `config.karaoke_video`).
 fn cast_via_default_media_receiver(
-    device: &CastDevice,
+    device: &CastDevice<'_>,
     config: &ChromecastConfig,
     song: &Song,
 ) -> Result<(), NightingaleError> {
@@ -289,7 +289,7 @@ fn build_load_message(song: &Song, guide_volume: Option<f64>) -> CastReceiverMes
 /// so we disconnect right after broadcasting (same fire-and-forget shape as
 /// the DefaultMediaReceiver path above).
 fn cast_via_custom_receiver(
-    device: &CastDevice,
+    device: &CastDevice<'_>,
     app_id: &str,
     song: &Song,
     guide_volume: Option<f64>,

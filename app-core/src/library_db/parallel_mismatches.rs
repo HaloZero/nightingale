@@ -10,7 +10,7 @@ use rusqlite::params;
 
 use super::connection::with_conn_mut;
 
-pub fn record_parallel_analysis_mismatch(
+pub(crate) fn record_parallel_analysis_mismatch(
     file_hash: &str,
     path: &str,
     peer_url: &str,
@@ -33,7 +33,7 @@ pub fn record_parallel_analysis_mismatch(
     })
 }
 
-pub fn clear_parallel_analysis_mismatch(file_hash: &str) -> rusqlite::Result<()> {
+pub(crate) fn clear_parallel_analysis_mismatch(file_hash: &str) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "DELETE FROM parallel_analysis_mismatches WHERE file_hash = ?1",

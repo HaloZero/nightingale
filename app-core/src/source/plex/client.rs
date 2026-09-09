@@ -32,7 +32,7 @@ impl PlexClient {
         token: impl Into<String>,
         client_id: impl Into<String>,
     ) -> Self {
-        let config = ureq::Agent::config_builder()
+        let config = Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
             .build();
@@ -49,7 +49,7 @@ impl PlexClient {
         token: impl Into<String>,
         client_id: impl Into<String>,
     ) -> Self {
-        let config = ureq::Agent::config_builder()
+        let config = Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(10)))
             .build();
         Self {
@@ -68,7 +68,7 @@ impl PlexClient {
         token: impl Into<String>,
         client_id: impl Into<String>,
     ) -> Self {
-        let config = ureq::Agent::config_builder()
+        let config = Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(3)))
             .timeout_recv_response(Some(Duration::from_secs(8)))
             .build();
@@ -239,6 +239,6 @@ fn path_has_token(path: &str) -> bool {
         .any(|(key, _)| key.eq_ignore_ascii_case("X-Plex-Token"))
 }
 
-pub fn trim_base_url(url: &str) -> String {
+pub(crate) fn trim_base_url(url: &str) -> String {
     url.trim_end_matches('/').to_owned()
 }

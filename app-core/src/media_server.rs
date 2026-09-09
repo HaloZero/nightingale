@@ -69,10 +69,15 @@ fn generate_session_token() -> String {
     B64.encode(bytes)
 }
 
-pub fn start() -> u16 {
+pub fn start() -> Result<u16, String> {
     let session = session_token();
-    let server = Server::http("127.0.0.1:0").expect("failed to start media server");
-    let port = server.server_addr().to_ip().unwrap().port();
+    let server = Server::http("127.0.0.1:0")
+        .map_err(|error| format!("failed to start media server: {error}"))?;
+    let port = server
+        .server_addr()
+        .to_ip()
+        .map(|address| address.port())
+        .ok_or_else(|| "media server did not bind an IP socket".to_string())?;
     PORT.store(port, Ordering::SeqCst);
 
     thread::spawn(move || {
@@ -82,7 +87,7 @@ pub fn start() -> u16 {
         }
     });
 
-    port
+    Ok(port)
 }
 
 fn handle_request(request: Request, session: &str) {
@@ -126,18 +131,23 @@ fn request_header(request: &Request, name: &str) -> Option<String> {
 // self-hosted reverse proxy at an arbitrary origin) gets the response. No
 // credentials are used, so the wildcard is safe.
 
-fn with_cors<R: std::io::Read>(response: Response<R>) -> Response<R> {
-    response
-        .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
-        .with_header(Header::from_bytes("Access-Control-Allow-Methods", "GET, OPTIONS").unwrap())
-        .with_header(Header::from_bytes("Access-Control-Allow-Headers", "Range").unwrap())
-        .with_header(
-            Header::from_bytes(
-                "Access-Control-Expose-Headers",
-                "Content-Range, Accept-Ranges, Content-Length",
-            )
-            .unwrap(),
-        )
+fn header(name: &str, value: impl AsRef<[u8]>) -> Option<Header> {
+    Header::from_bytes(name.as_bytes(), value.as_ref().to_vec()).ok()
+}
+
+fn with_cors<R: Read>(response: Response<R>) -> Response<R> {
+    [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Methods", "GET, OPTIONS"),
+        ("Access-Control-Allow-Headers", "Range"),
+        (
+            "Access-Control-Expose-Headers",
+            "Content-Range, Accept-Ranges, Content-Length",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| header(name, value))
+    .fold(response, Response::with_header)
 }
 
 fn strip_session_prefix<'a>(url: &'a str, session: &str) -> Option<&'a str> {
@@ -223,9 +233,18 @@ fn serve_file(request: Request, file_path: &Path) {
     };
 
     let mime = mime_for_path(file_path);
-    let content_type = Header::from_bytes("Content-Type", mime).unwrap();
-    let accept_ranges = Header::from_bytes("Accept-Ranges", "bytes").unwrap();
-    let no_sniff = Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap();
+    let Some(content_type) = header("Content-Type", mime) else {
+        let _ = request.respond(with_cors(server_error("content type")));
+        return;
+    };
+    let Some(accept_ranges) = header("Accept-Ranges", "bytes") else {
+        let _ = request.respond(with_cors(server_error("accept ranges")));
+        return;
+    };
+    let Some(no_sniff) = header("X-Content-Type-Options", "nosniff") else {
+        let _ = request.respond(with_cors(server_error("content options")));
+        return;
+    };
 
     let range_val = request_header(&request, "Range");
 
@@ -244,8 +263,12 @@ fn serve_file(request: Request, file_path: &Path) {
             let _ = request.respond(with_cors(server_error("read range")));
             return;
         }
-        let content_range =
-            Header::from_bytes("Content-Range", format!("bytes {start}-{end}/{file_len}")).unwrap();
+        let Some(content_range) =
+            header("Content-Range", format!("bytes {start}-{end}/{file_len}"))
+        else {
+            let _ = request.respond(with_cors(server_error("content range")));
+            return;
+        };
         let resp = Response::from_data(buf)
             .with_status_code(StatusCode(206))
             .with_header(content_type)
@@ -417,7 +440,7 @@ fn write_stream_response<W: Write>(mut writer: W, stream: StreamResponse) -> std
     writer.write_all(b"\r\n")?;
 
     let mut body = stream.body;
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = vec![0u8; 64 * 1024];
     loop {
         let n = body.read(&mut buf)?;
         if n == 0 {

@@ -78,7 +78,7 @@ pub struct SyncResult {
 /// directly -- see that function's own module-level cost warning (a full
 /// ffmpeg decode of both files plus an O(n*m) correlation search), which is
 /// exactly what this wrapper exists to pay at most once for.
-pub fn ensure_synced_offset(file_hash: &str) -> Result<Option<SyncResult>, String> {
+pub(crate) fn ensure_synced_offset(file_hash: &str) -> Result<Option<SyncResult>, String> {
     if let Some(row) = library_db::get_youtube_video_sync(file_hash).map_err(|e| e.to_string())? {
         return Ok(row.video_offset_secs.map(|video_offset_secs| SyncResult {
             video_offset_secs,
@@ -123,7 +123,7 @@ pub fn detect_sync_offset_for_hash(
 
 /// Core detection: does `video_path`'s audio contain `song_audio`'s content,
 /// and if so, at what offset?
-pub fn detect_sync_offset(
+pub(crate) fn detect_sync_offset(
     song_audio: &Path,
     video_path: &Path,
 ) -> Result<Option<SyncResult>, String> {

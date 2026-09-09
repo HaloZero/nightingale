@@ -67,10 +67,8 @@ FROM ${RUNTIME_BASE} AS runtime
 
 # ca-certificates: TLS for the bootstrap downloads (ureq).
 # tar + xz-utils: extract the ffmpeg .tar.xz and uv .tar.gz archives.
-# git: the first-launch dependency install pulls `transformers` from a pinned
-#      GitHub commit (the Qwen forced-aligner), which uv clones with git.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tar xz-utils git \
+    && apt-get install -y --no-install-recommends ca-certificates tar xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root service user. /data is both the app data dir and $HOME so that

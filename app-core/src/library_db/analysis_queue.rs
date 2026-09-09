@@ -90,7 +90,7 @@ fn upsert_queue_in_tx(
     Ok(())
 }
 
-pub fn analysis_queue_upsert_row(
+pub(crate) fn analysis_queue_upsert_row(
     file_hash: &str,
     status: &str,
     analyzing_pct: Option<i64>,
@@ -114,7 +114,7 @@ pub fn analysis_queue_upsert_row(
     })
 }
 
-pub fn analysis_queue_delete(file_hash: &str) -> rusqlite::Result<()> {
+pub(crate) fn analysis_queue_delete(file_hash: &str) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "DELETE FROM analysis_queue WHERE file_hash = ?",
@@ -124,7 +124,7 @@ pub fn analysis_queue_delete(file_hash: &str) -> rusqlite::Result<()> {
     })
 }
 
-pub fn analysis_queue_clear() -> rusqlite::Result<()> {
+pub(crate) fn analysis_queue_clear() -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute("DELETE FROM analysis_queue", [])?;
         Ok(())
@@ -133,7 +133,7 @@ pub fn analysis_queue_clear() -> rusqlite::Result<()> {
 
 /// Acknowledges exactly `file_hashes`, gated on `failed_kind = kind` so a
 /// hash that's since failed differently isn't wrongly acknowledged.
-pub fn analysis_queue_acknowledge_failures(kind: &str, file_hashes: &[String]) -> rusqlite::Result<()> {
+pub(crate) fn analysis_queue_acknowledge_failures(kind: &str, file_hashes: &[String]) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         let tx = c.transaction()?;
         for file_hash in file_hashes {
@@ -148,7 +148,7 @@ pub fn analysis_queue_acknowledge_failures(kind: &str, file_hashes: &[String]) -
     })
 }
 
-pub fn analysis_queue_load_rows()
+pub(crate) fn analysis_queue_load_rows()
 -> rusqlite::Result<Vec<(String, String, Option<i64>, Option<String>, Option<String>, bool)>> {
     with_conn(|c| {
         let mut stmt = c.prepare(
@@ -168,7 +168,7 @@ pub fn analysis_queue_load_rows()
     })
 }
 
-pub fn analysis_queue_save_rows(
+pub(crate) fn analysis_queue_save_rows(
     rows: &[(String, String, Option<i64>, Option<String>, Option<String>, bool)],
 ) -> rusqlite::Result<()> {
     with_conn_mut(|c| {

@@ -16,7 +16,7 @@ struct TriggerSetupArgs {
     cache_paths: Option<CachePaths>,
 }
 
-pub fn trigger_setup(events: Arc<EventBus>, payload: Value) -> CmdResult {
+pub(crate) fn trigger_setup(events: Arc<EventBus>, payload: Value) -> CmdResult {
     let args: TriggerSetupArgs = if payload.is_null() {
         TriggerSetupArgs {
             data_path: None,
@@ -40,7 +40,7 @@ pub fn trigger_setup(events: Arc<EventBus>, payload: Value) -> CmdResult {
             },
             |_| Ok(()),
         ) {
-            events_clone.emit_value("setup-error", serde_json::Value::String(e));
+            events_clone.emit_value("setup-error", Value::String(e));
         }
     });
     Ok(Value::Null)

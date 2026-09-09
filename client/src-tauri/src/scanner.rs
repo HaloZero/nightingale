@@ -5,12 +5,12 @@ use app_core::{
 };
 
 #[tauri::command]
-pub fn trigger_scan() {
+pub(crate) fn trigger_scan() {
     app_core::start_scan();
 }
 
 #[tauri::command]
-pub fn set_library_source(source: LibrarySource) -> AppConfig {
+pub(crate) fn set_library_source(source: LibrarySource) -> AppConfig {
     let mut config = AppConfig::load();
     config.library_source = Some(source);
     config.last_folder = None;
@@ -20,7 +20,7 @@ pub fn set_library_source(source: LibrarySource) -> AppConfig {
 }
 
 #[tauri::command]
-pub fn clear_library_source() -> AppConfig {
+pub(crate) fn clear_library_source() -> AppConfig {
     let mut config = AppConfig::load();
     config.library_source = None;
     config.last_folder = None;
@@ -29,7 +29,7 @@ pub fn clear_library_source() -> AppConfig {
 }
 
 #[tauri::command]
-pub fn jellyfin_login(
+pub(crate) fn jellyfin_login(
     base_url: String,
     username: String,
     password: String,
@@ -38,12 +38,12 @@ pub fn jellyfin_login(
 }
 
 #[tauri::command]
-pub fn jellyfin_ping() -> JellyfinHealth {
+pub(crate) fn jellyfin_ping() -> JellyfinHealth {
     app_core::jellyfin_ping_current()
 }
 
 #[tauri::command]
-pub fn navidrome_login(
+pub(crate) fn navidrome_login(
     base_url: String,
     username: String,
     password: String,
@@ -52,22 +52,25 @@ pub fn navidrome_login(
 }
 
 #[tauri::command]
-pub fn navidrome_ping() -> NavidromeHealth {
+pub(crate) fn navidrome_ping() -> NavidromeHealth {
     app_core::navidrome_ping_current()
 }
 
 #[tauri::command]
-pub fn plex_begin_pin(client_id: Option<String>) -> Result<PlexPinStart, String> {
+pub(crate) fn plex_begin_pin(client_id: Option<String>) -> Result<PlexPinStart, String> {
     app_core::plex_begin_pin(client_id).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn plex_poll_pin(pin_id: String, client_id: String) -> Result<PlexPinPollResult, String> {
+pub(crate) fn plex_poll_pin(
+    pin_id: String,
+    client_id: String,
+) -> Result<PlexPinPollResult, String> {
     app_core::plex_poll_pin(&pin_id, &client_id).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn plex_manual_login(
+pub(crate) fn plex_manual_login(
     base_url: String,
     access_token: String,
     client_id: Option<String>,
@@ -77,31 +80,31 @@ pub fn plex_manual_login(
 }
 
 #[tauri::command]
-pub fn plex_ping() -> PlexHealth {
+pub(crate) fn plex_ping() -> PlexHealth {
     app_core::plex_ping_current()
 }
 
 #[tauri::command]
-pub fn load_songs(params: LoadSongsParams) -> SongsStore {
+pub(crate) fn load_songs(params: LoadSongsParams) -> SongsStore {
     SongsStore::load(&params)
 }
 
 #[tauri::command]
-pub fn load_songs_by_hashes(file_hashes: Vec<String>) -> Vec<Song> {
+pub(crate) fn load_songs_by_hashes(file_hashes: Vec<String>) -> Vec<Song> {
     SongsStore::load_by_hashes(&file_hashes)
 }
 
 #[tauri::command]
-pub fn load_songs_meta() -> SongsMeta {
+pub(crate) fn load_songs_meta() -> SongsMeta {
     SongsStore::load_meta()
 }
 
 #[tauri::command]
-pub fn load_analysis_queue() -> AnalysisQueue {
+pub(crate) fn load_analysis_queue() -> AnalysisQueue {
     AnalysisQueue::load()
 }
 
 #[tauri::command]
-pub fn load_library_menu_items() -> Result<LibraryMenuItems, String> {
+pub(crate) fn load_library_menu_items() -> Result<LibraryMenuItems, String> {
     app_core::load_library_menu_items().map_err(|e| e.to_string())
 }

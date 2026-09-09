@@ -9,7 +9,7 @@ use rusqlite::params;
 
 use super::connection::with_conn_mut;
 
-pub struct AnalysisTimingRow<'a> {
+pub(crate) struct AnalysisTimingRow<'a> {
     pub file_hash: &'a str,
     pub device: Option<&'a str>,
     pub whisper_model: &'a str,
@@ -57,7 +57,7 @@ pub struct AnalysisTimingRow<'a> {
     pub total_ms: u64,
 }
 
-pub fn insert_analysis_timing(row: &AnalysisTimingRow) -> rusqlite::Result<()> {
+pub(crate) fn insert_analysis_timing(row: &AnalysisTimingRow<'_>) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "INSERT INTO analysis_timings (

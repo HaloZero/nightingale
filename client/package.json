@@ -1,21 +1,37 @@
 {
   "name": "Nightingale",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Nightingale — Karaoke from your music library.",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "audit:rust": "cd .. && cargo deny check",
     "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri",
-    "icons": "tauri icon src/assets/images/logo_square.png",
+    "check": "pnpm quality",
+    "dev": "vite",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
+    "format:rust": "cd .. && cargo fmt --all",
+    "format:rust:check": "cd .. && cargo fmt --all --check",
     "format:staged": "oxfmt --no-error-on-unmatched-pattern",
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
-    "prepare": "cd .. && husky client/.husky"
+    "icons": "tauri icon src/assets/images/logo_square.png",
+    "lint": "pnpm lint:code && pnpm lint:css",
+    "lint:code": "oxlint",
+    "lint:code:fix": "oxlint --fix",
+    "lint:css": "stylelint \"src/**/*.css\"",
+    "lint:css:fix": "stylelint \"src/**/*.css\" --fix",
+    "lint:fix": "pnpm lint:code:fix && pnpm lint:css:fix",
+    "lint:rust": "cd .. && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+    "postinstall": "pnpm rules:generate",
+    "prepare": "cd .. && husky client/.husky",
+    "preview": "vite preview",
+    "quality": "pnpm quality:web && pnpm quality:rust && pnpm rules:check",
+    "quality:rust": "pnpm format:rust:check && cd .. && cargo check --workspace --all-targets --all-features --locked && cd client && pnpm lint:rust",
+    "quality:web": "pnpm format:check && pnpm lint && pnpm typecheck",
+    "rules:check": "cd .. && node client/node_modules/rulesync/dist/cli/index.js doctor --strict && node client/node_modules/rulesync/dist/cli/index.js generate --dry-run --silent",
+    "rules:generate": "cd .. && node client/node_modules/rulesync/dist/cli/index.js generate",
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
@@ -46,7 +62,8 @@
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
     "three": "^0.183.2",
-    "tw-animate-css": "^1.4.0"
+    "tw-animate-css": "^1.4.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
@@ -57,13 +74,22 @@
     "@vitejs/plugin-react": "^6.0.1",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
-    "oxfmt": "^0.42.0",
-    "oxlint": "^1.57.0",
+    "oxfmt": "^0.64.0",
+    "oxlint": "^1.79.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "rulesync": "^16.17.0",
+    "stylelint": "^17.14.1",
+    "stylelint-config-standard": "^40.0.0",
     "typescript": "~5.8.3",
     "vite": "^8.0.0"
   },
   "lint-staged": {
-    "*.{js,jsx,ts,tsx,mjs,cjs}": "pnpm run lint",
+    "*.{js,jsx,ts,tsx,mjs,cjs}": "pnpm run lint:code",
+    "*.css": "pnpm exec stylelint",
     "*": "pnpm run format:staged"
-  }
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "packageManager": "pnpm@11.2.2"
 }

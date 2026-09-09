@@ -44,7 +44,7 @@ Toggle between dark and light themes from the sidebar. The theme preference is s
 
 ## Notable Settings
 
-`config.json` is written by the app — you'll usually change these from **Settings** rather than by editing the file directly. In v0.8.0, settings moved from a modal into a dedicated page with **General** and **Analysis** tabs. A few keys worth knowing:
+`config.json` is written by the app — you'll usually change these from **Settings** rather than by editing the file directly. Settings are grouped into **General**, **Playback**, and **Analysis** tabs. A few keys worth knowing:
 
 | Key | Purpose |
 |---|---|
@@ -57,7 +57,9 @@ Toggle between dark and light themes from the sidebar. The theme preference is s
 | `mic_monitor_gain` | Live monitor gain when mic monitoring is on. Range `0.0`–`2.0` (slider shown as 0–200%). Configs from older builds that used `mic_mirror_gain` are read transparently and migrated on next save. |
 | `mic_latency_compensation_sec` | Speaker-to-mic latency compensation for pitch scoring. Tune manually or use the Settings latency test. |
 | `mic_active` / `mic_monitoring` / `preferred_mic` | Microphone state and the device chosen for scoring + monitoring. Older `mic_mirroring` configs are accepted and migrated on next save. |
+| `playback_mode` | `classic` replaces the menu with playback; `session` opens playback in a dedicated desktop window or browser tab so the menu can manage the queue. |
 | `lyrics_vertical_position` / `lyrics_horizontal_position` | Playback lyrics placement. Vertical: `top`, `center`, `bottom`; horizontal: `left`, `center`, `right`. |
+| `lyrics_scale` / `pitch_graph_scale` | Independent playback display scales from `0.5` to `2.5` (50–250%, default `1.0`). |
 | `auto_analyze` | When `true`, scans automatically queue every unanalyzed song after they finish. |
 | `cache_paths` | Optional per-folder overrides for `songs`, `videos`, `models`, and `vendor`. Use Settings to move them so existing contents migrate safely. |
 | `last_video_flavor` | Index of the last-used Pixabay video flavor (Nature, Underwater, Space, City, Countryside). |

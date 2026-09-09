@@ -17,7 +17,7 @@ use crate::events::EventBus;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
-pub struct CastQuery {
+pub(crate) struct CastQuery {
     /// Free-text query for the fuzzy matcher. Ignored when `file_hash` is
     /// present.
     #[serde(default)]
@@ -103,7 +103,7 @@ impl IntoResponse for CastError {
 /// configured; that silently broke every existing `/api/cast` URL/
 /// automation the moment the field was set, with no way to opt back out
 /// short of unsetting it again -- reverted in favor of this explicit split.)
-pub async fn handle_cast(
+pub(crate) async fn handle_cast(
     state: State<AppState>,
     query: Query<CastQuery>,
     headers: HeaderMap,
@@ -119,7 +119,7 @@ pub async fn handle_cast(
 /// receiver page independent of whatever `/api/cast`'s default behavior is
 /// -- see `force_custom_receiver` on
 /// `app_core::cast_song_to_configured_device`.
-pub async fn handle_customcast(
+pub(crate) async fn handle_customcast(
     state: State<AppState>,
     query: Query<CastQuery>,
     headers: HeaderMap,

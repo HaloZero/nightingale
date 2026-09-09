@@ -1,3 +1,31 @@
 [workspace]
 resolver = "3"
 members = ["app-core", "client/src-tauri", "client/src-server", "xtask"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+unreachable_pub = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+large_futures = "deny"
+large_stack_arrays = "deny"
+multiple_crate_versions = "allow"
+panic_in_result_fn = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+rc_buffer = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

@@ -7,7 +7,7 @@ use rusqlite::params;
 use super::connection::with_conn_mut;
 
 #[derive(Debug, Clone)]
-pub struct PlaylistDefinition {
+pub(crate) struct PlaylistDefinition {
     pub id: String,
     pub name: String,
     /// Local song paths or remote media item ids, depending on `key_kind`.
@@ -15,14 +15,14 @@ pub struct PlaylistDefinition {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum PlaylistSongKeyKind<'a> {
+pub(crate) enum PlaylistSongKeyKind<'a> {
     LocalPath,
     RemoteItemId { origin_kind: &'a str },
 }
 
 /// Atomically replace playlist navigation data for the active library source.
 /// Entries not present in the scanned song catalogue are ignored.
-pub fn replace_all_playlists(
+pub(crate) fn replace_all_playlists(
     playlists: &[PlaylistDefinition],
     key_kind: PlaylistSongKeyKind<'_>,
 ) -> rusqlite::Result<()> {

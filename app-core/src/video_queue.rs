@@ -77,7 +77,7 @@ impl VideoProcessingQueue {
     }
 }
 
-pub fn mark_queued_many(kind: VideoQueueKind, file_hashes: &[String]) {
+pub(crate) fn mark_queued_many(kind: VideoQueueKind, file_hashes: &[String]) {
     if let Err(e) = library_db::video_queue_mark_queued_many(kind.as_db_str(), file_hashes) {
         tracing::warn!("[video_queue] failed to mark {} hash(es) queued: {e}", file_hashes.len());
     }
@@ -100,7 +100,7 @@ pub fn clear(file_hash: &str, kind: VideoQueueKind, started_at: &str) {
     }
 }
 
-pub fn clear_all() {
+pub(crate) fn clear_all() {
     if let Err(e) = library_db::video_queue_clear_all() {
         tracing::warn!("[video_queue] failed to clear table on startup: {e}");
     }

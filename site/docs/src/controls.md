@@ -30,7 +30,7 @@ Nightingale supports keyboard, gamepad, and touch input. The UI adapts to your i
 
 Touch devices show on-screen playback controls for core actions instead of relying on keyboard shortcuts.
 
-Key and tempo are adjusted from the song details sidebar after a song has been analyzed. Lyrics placement, preferred microphone, mic latency compensation, and analysis defaults live in **Settings**.
+Key and tempo are adjusted from the song details sidebar after a song has been analyzed. Playback mode, lyric placement and scale, pitch-graph scale, preferred microphone, mic latency compensation, and analysis defaults live in **Settings**.
 
 ## Gamepad Notes
 
@@ -40,4 +40,4 @@ Key and tempo are adjusted from the song details sidebar after a song has been a
 
 ## Settings Navigation
 
-Settings now open as a dedicated page instead of a modal. Use the same navigation model: move between General/Analysis tabs, change sliders/selects/buttons, and close or restore defaults without a mouse.
+Settings use the same navigation model: move between General, Playback, and Analysis tabs, change sliders/selects/buttons, and close or restore defaults without a mouse.

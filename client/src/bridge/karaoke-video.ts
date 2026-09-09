@@ -1,18 +1,19 @@
-import type { LibraryMenuFilters } from "@/types/LibraryMenuFilters";
-import { invoke, listen, type UnlistenFn } from "./runtime";
+import type { LibraryMenuFilters } from '@/types/LibraryMenuFilters';
+
+import { invoke, listen, type UnlistenFn } from './runtime';
 
 // Server-only: rendering shells out to a vendored ffmpeg against the
 // server's own data dir (same as casting itself), so there's nothing for
 // the Tauri desktop app to point at -- no Tauri-side commands exist for
 // either of these two names.
 
-export interface KaraokeVideoReady {
+export type KaraokeVideoReady = {
   file_hash: string;
   /** Whether TheAudioDB actually had a music video for this song at all --
    * `false` means the render fell back to a reel background instead. */
   music_video_found: boolean;
   error: string | null;
-}
+};
 
 /**
  * The single "get me a karaoke video" action: always tries a
@@ -23,7 +24,7 @@ export interface KaraokeVideoReady {
  * still tries a fresh reel render if only a stale/missing one is on hand.
  */
 export const bestKaraokeVideo = async (fileHash: string): Promise<void> => {
-  return await invoke<void>("best_karaoke_video", { fileHash });
+  return await invoke<void>('best_karaoke_video', { fileHash });
 };
 
 /**
@@ -32,13 +33,13 @@ export const bestKaraokeVideo = async (fileHash: string): Promise<void> => {
  * a bad download, a stale render, or picking a fresh random reel background.
  */
 export const forceBestKaraokeVideo = async (fileHash: string): Promise<void> => {
-  return await invoke<void>("force_best_karaoke_video", { fileHash });
+  return await invoke<void>('force_best_karaoke_video', { fileHash });
 };
 
 export const onKaraokeVideoReady = async (
   cb: (event: KaraokeVideoReady) => void,
 ): Promise<UnlistenFn> => {
-  return await listen<KaraokeVideoReady>("karaoke-video-ready", ({ payload }) => cb(payload));
+  return await listen<KaraokeVideoReady>('karaoke-video-ready', ({ payload }) => cb(payload));
 };
 
 // ─── Bulk (filtered-library) counterparts ──────────────────────────────────
@@ -52,10 +53,10 @@ export const onKaraokeVideoReady = async (
 
 /** No-ops per-song for anything already fresh, same as the single-song action. */
 export const bestKaraokeVideoAll = async (filters: LibraryMenuFilters): Promise<number> => {
-  return await invoke<number>("best_karaoke_video_all", { filters });
+  return await invoke<number>('best_karaoke_video_all', { filters });
 };
 
 /** Clears and regenerates both flavors unconditionally, same as the single-song action. */
 export const forceBestKaraokeVideoAll = async (filters: LibraryMenuFilters): Promise<number> => {
-  return await invoke<number>("force_best_karaoke_video_all", { filters });
+  return await invoke<number>('force_best_karaoke_video_all', { filters });
 };

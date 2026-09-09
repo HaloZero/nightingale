@@ -13,7 +13,7 @@ use super::connection::{with_conn, with_conn_mut};
 /// A cached detection outcome. `video_offset_secs: None` means detection
 /// ran and found no confident match -- distinct from no row existing at
 /// all, which means detection has never run for this song.
-pub struct YoutubeVideoSyncRow {
+pub(crate) struct YoutubeVideoSyncRow {
     pub video_offset_secs: Option<f64>,
     pub confidence: Option<f32>,
 }
@@ -21,7 +21,7 @@ pub struct YoutubeVideoSyncRow {
 /// `Ok(None)` means detection has never run -- caller should run it and
 /// call `record_youtube_video_sync`. `Ok(Some(row))` means it has, whether
 /// or not a confident match was found (`row.video_offset_secs`).
-pub fn get_youtube_video_sync(file_hash: &str) -> rusqlite::Result<Option<YoutubeVideoSyncRow>> {
+pub(crate) fn get_youtube_video_sync(file_hash: &str) -> rusqlite::Result<Option<YoutubeVideoSyncRow>> {
     with_conn(|c| {
         c.query_row(
             "SELECT video_offset_secs, confidence FROM youtube_video_sync WHERE file_hash = ?1",
@@ -37,7 +37,7 @@ pub fn get_youtube_video_sync(file_hash: &str) -> rusqlite::Result<Option<Youtub
     })
 }
 
-pub fn record_youtube_video_sync(
+pub(crate) fn record_youtube_video_sync(
     file_hash: &str,
     video_offset_secs: Option<f64>,
     confidence: Option<f32>,

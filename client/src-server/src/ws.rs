@@ -12,7 +12,7 @@ use crate::events::EventEnvelope;
 use crate::jukebox::{next_client_id, ClientId, JukeboxState};
 use crate::state::AppState;
 
-pub async fn handle_upgrade(
+pub(crate) async fn handle_upgrade(
     State(state): State<AppState>,
     upgrade: WebSocketUpgrade,
 ) -> impl IntoResponse {
@@ -122,7 +122,7 @@ enum ClientFrame {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct JukeboxPatch {
+pub(crate) struct JukeboxPatch {
     #[serde(default)]
     current_song: Option<Option<String>>,
     #[serde(default)]

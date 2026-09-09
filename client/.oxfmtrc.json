@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": true,
+  "singleQuote": true,
+  "jsxSingleQuote": false,
+  "trailingComma": "all",
+  "proseWrap": "preserve",
+  "ignorePatterns": [
+    "dist/**",
+    "node_modules/**",
+    "src/types/**",
+    "src-tauri/gen/**",
+    "pnpm-lock.yaml",
+    "**/*.tar.gz"
+  ],
+  "sortImports": {
+    "groups": [
+      ["side_effect_style", "side_effect"],
+      ["value-builtin", "type-builtin"],
+      ["value-external", "type-external"],
+      ["value-internal", "type-internal", "value-subpath", "type-subpath"],
+      ["value-parent", "type-parent", "value-sibling", "type-sibling", "value-index", "type-index"],
+      "style",
+      "unknown"
+    ],
+    "internalPattern": ["@/", "~/", "#"],
+    "newlinesBetween": true,
+    "sortSideEffects": false,
+    "ignoreCase": true,
+    "order": "asc"
+  },
+  "sortPackageJson": {
+    "sortScripts": true
+  }
+}

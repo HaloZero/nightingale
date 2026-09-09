@@ -8,14 +8,17 @@
 use rusqlite::params;
 
 use crate::library_menu::{LibraryMenuItem, LibraryMenuItems};
-use crate::library_model::{LibraryMenuFilters, LoadSongsParams, SongsMeta, SongsStore};
+use crate::library_model::{
+    LibraryMenuFilters, LoadSongsParams, SongSort, SongSortColumn, SongsMeta, SongsStore,
+    SortDirection,
+};
 use crate::song::Song;
 
 use super::connection::with_conn;
 use super::migrations::{is_song_migration_in_progress, song_migration_done, song_migration_total};
 use super::songs::load_song_from_payload_column;
 
-pub fn load_meta_sql() -> rusqlite::Result<SongsMeta> {
+pub(crate) fn load_meta_sql() -> rusqlite::Result<SongsMeta> {
     if is_song_migration_in_progress() {
         return with_conn(|c| {
             let (folder, _scan_count): (String, i64) = c.query_row(
@@ -284,7 +287,51 @@ fn build_song_where_clause(
     }
 }
 
-pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore> {
+fn sort_direction(direction: SortDirection) -> &'static str {
+    match direction {
+        SortDirection::Ascending => "ASC",
+        SortDirection::Descending => "DESC",
+    }
+}
+
+fn sort_expression(column: SongSortColumn) -> &'static str {
+    match column {
+        SongSortColumn::Title => "s.title COLLATE NOCASE",
+        SongSortColumn::Artist => "s.artist COLLATE NOCASE",
+        SongSortColumn::Album => "s.album COLLATE NOCASE",
+        SongSortColumn::Duration => "CAST(s.duration_secs AS INTEGER)",
+        SongSortColumn::Status => {
+            "CASE WHEN EXISTS (SELECT 1 FROM analysis_queue aq WHERE aq.file_hash = s.file_hash AND aq.status = 'analyzing') THEN 0 \
+             WHEN EXISTS (SELECT 1 FROM analysis_queue aq WHERE aq.file_hash = s.file_hash AND aq.status = 'failed') THEN 10 \
+             WHEN s.is_analyzed = 0 AND NOT EXISTS (SELECT 1 FROM analysis_queue aq WHERE aq.file_hash = s.file_hash) THEN 20 \
+             WHEN EXISTS (SELECT 1 FROM analysis_queue aq WHERE aq.file_hash = s.file_hash AND aq.status = 'queued') THEN 30 \
+             WHEN s.transcript_source = 'lyrics' THEN 40 \
+             WHEN s.transcript_source = 'generated' OR s.transcript_source IS NULL THEN 41 \
+             WHEN s.transcript_source = 'lrc' THEN 42 \
+             WHEN s.transcript_source = 'usdx' THEN 43 \
+             ELSE 44 END"
+        }
+    }
+}
+
+fn song_order(sorts: &[SongSort]) -> Option<String> {
+    let last_sort = sorts.last()?;
+    let mut clauses = sorts
+        .iter()
+        .map(|sort| {
+            format!(
+                "{} {}",
+                sort_expression(sort.column),
+                sort_direction(sort.direction)
+            )
+        })
+        .collect::<Vec<_>>();
+    clauses.push(format!("s.id {}", sort_direction(last_sort.direction)));
+
+    Some(clauses.join(", "))
+}
+
+pub(crate) fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore> {
     let (folder, scan_count) = with_conn(|c| {
         c.query_row(
             "SELECT folder, scan_count FROM library_meta WHERE id = 1",
@@ -312,12 +359,21 @@ pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore>
     } else {
         ""
     };
+    let requested_order = params.sort.as_deref().and_then(song_order);
+    let default_filtered_order =
+        format!("{queue_order}{playlist_order}s.artist COLLATE NOCASE, s.title COLLATE NOCASE");
+    let filtered_order = requested_order
+        .as_deref()
+        .unwrap_or(&default_filtered_order);
+    let unfiltered_order = requested_order
+        .as_deref()
+        .unwrap_or("s.artist COLLATE NOCASE, s.title COLLATE NOCASE");
 
     let processed = if let Some(ref where_sql) = where_sql {
         let sql = format!(
             "SELECT payload FROM songs s
              WHERE {where_sql}
-             ORDER BY {queue_order}{playlist_order}s.artist COLLATE NOCASE, s.title COLLATE NOCASE
+             ORDER BY {filtered_order}
              LIMIT {} OFFSET {}",
             params.take as i64, params.skip as i64
         );
@@ -331,11 +387,12 @@ pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore>
         })?
     } else {
         with_conn(|c| {
-            let mut stmt = c.prepare(
-                "SELECT payload FROM songs
-                 ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE
-                 LIMIT ?1 OFFSET ?2",
-            )?;
+            let sql = format!(
+                "SELECT payload FROM songs s
+                 ORDER BY {unfiltered_order}
+                 LIMIT ?1 OFFSET ?2"
+            );
+            let mut stmt = c.prepare(&sql)?;
             let rows = stmt.query_map(
                 params![params.take as i64, params.skip as i64],
                 load_song_from_payload_column,
@@ -344,28 +401,51 @@ pub fn load_songs_page(params: &LoadSongsParams) -> rusqlite::Result<SongsStore>
         })?
     };
 
-    let processed_count = if let Some(ref where_sql) = where_sql {
-        let sql = format!("SELECT COUNT(*) FROM songs s WHERE {where_sql}");
-        with_conn(|c| {
-            let n: i64 = c.query_row(
-                &sql,
-                rusqlite::params_from_iter(bind_strings.iter().map(|s| s.as_str())),
-                |r| r.get(0),
-            )?;
-            Ok(n as usize)
-        })?
-    } else {
-        with_conn(|c| {
-            let n: i64 = c.query_row("SELECT COUNT(*) FROM songs", [], |r| r.get(0))?;
-            Ok(n as usize)
-        })?
-    };
+    let (processed_count, analyzed_count, analysis_busy_count) =
+        if let Some(ref where_sql) = where_sql {
+            let sql = format!(
+                "SELECT COUNT(*),
+                        COALESCE(SUM(CASE WHEN s.is_analyzed = 1 THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN EXISTS (
+                            SELECT 1 FROM analysis_queue aq
+                            WHERE aq.file_hash = s.file_hash
+                              AND aq.status IN ('queued', 'analyzing')
+                        ) THEN 1 ELSE 0 END), 0)
+                 FROM songs s WHERE {where_sql}"
+            );
+            with_conn(|c| {
+                let (count, analyzed, analysis_busy): (i64, i64, i64) = c.query_row(
+                    &sql,
+                    rusqlite::params_from_iter(bind_strings.iter().map(|s| s.as_str())),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )?;
+                Ok((count as usize, analyzed as usize, analysis_busy as usize))
+            })?
+        } else {
+            with_conn(|c| {
+                let (count, analyzed, analysis_busy): (i64, i64, i64) = c.query_row(
+                    "SELECT COUNT(*),
+                            COALESCE(SUM(CASE WHEN s.is_analyzed = 1 THEN 1 ELSE 0 END), 0),
+                            COALESCE(SUM(CASE WHEN EXISTS (
+                                SELECT 1 FROM analysis_queue aq
+                                WHERE aq.file_hash = s.file_hash
+                                  AND aq.status IN ('queued', 'analyzing')
+                            ) THEN 1 ELSE 0 END), 0)
+                     FROM songs s",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )?;
+                Ok((count as usize, analyzed as usize, analysis_busy as usize))
+            })?
+        };
 
     Ok(SongsStore {
         count: scan_count as usize,
         folder,
         processed,
         processed_count,
+        analyzed_count,
+        analysis_busy_count,
     })
 }
 
@@ -401,17 +481,30 @@ fn iter_file_hashes_filtered(
         })
     } else {
         with_conn(|c| {
-            let mut stmt = c.prepare("SELECT file_hash FROM songs ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE")?;
+            let mut stmt = c.prepare(
+                "SELECT file_hash FROM songs ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE",
+            )?;
             let rows = stmt.query_map([], |r| r.get(0))?;
             rows.collect()
         })
     }
 }
 
-pub fn iter_file_hashes_filtered_not_analyzed(
+pub(crate) fn iter_file_hashes_filtered_not_analyzed(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
     iter_file_hashes_filtered(filters, &["s.is_analyzed = 0"])
+}
+
+pub(crate) fn iter_file_hashes_filtered_analysis_busy(
+    filters: &LibraryMenuFilters,
+) -> rusqlite::Result<Vec<String>> {
+    iter_file_hashes_filtered(
+        filters,
+        &[
+            "EXISTS (SELECT 1 FROM analysis_queue aq WHERE aq.file_hash = s.file_hash AND aq.status IN ('queued', 'analyzing'))",
+        ],
+    )
 }
 
 /// Songs eligible for the "restart the transcribe/align stage" bulk actions
@@ -419,7 +512,7 @@ pub fn iter_file_hashes_filtered_not_analyzed(
 /// already analyzed, and not USDX or user-provided LRC -- mirrors
 /// song-actions.ts's `supportsAnalysisActions` + `transcript_source` checks
 /// that gate the equivalent per-song menu items.
-pub fn iter_file_hashes_filtered_realignable(
+pub(crate) fn iter_file_hashes_filtered_realignable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
     iter_file_hashes_filtered(
@@ -436,7 +529,7 @@ pub fn iter_file_hashes_filtered_realignable(
 /// rows are excluded -- the worker's next progress update
 /// (`update_queue_status`) would just re-insert a row deleted out from under
 /// it, so an in-progress analysis can't be safely dequeued this way.
-pub fn iter_file_hashes_filtered_queued(
+pub(crate) fn iter_file_hashes_filtered_queued(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
     iter_file_hashes_filtered(
@@ -449,7 +542,7 @@ pub fn iter_file_hashes_filtered_queued(
 /// LRC-provided songs ARE included here (matching the per-song menu's
 /// "Analyze with AI" item, which replaces the LRC with a full AI pass) even
 /// though they're excluded from `iter_file_hashes_filtered_realignable`.
-pub fn iter_file_hashes_filtered_full_reanalyzable(
+pub(crate) fn iter_file_hashes_filtered_full_reanalyzable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
     iter_file_hashes_filtered(
@@ -465,7 +558,7 @@ pub fn iter_file_hashes_filtered_full_reanalyzable(
 /// through this pipeline), kept as its own query rather than reused so the
 /// two eligibility sets can diverge independently later without one
 /// action's tweak silently changing the other's.
-pub fn iter_file_hashes_filtered_karaoke_renderable(
+pub(crate) fn iter_file_hashes_filtered_karaoke_renderable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
     iter_file_hashes_filtered(
@@ -482,7 +575,7 @@ pub fn iter_file_hashes_filtered_karaoke_renderable(
 /// independent of the analysis pipeline. `origin`/`usdx` live only in the
 /// JSON `payload` column (not indexed), same pattern already used in
 /// migrations.rs/playlists.rs/remote.rs for filtering on those fields.
-pub fn iter_file_hashes_filtered_refreshable(
+pub(crate) fn iter_file_hashes_filtered_refreshable(
     filters: &LibraryMenuFilters,
 ) -> rusqlite::Result<Vec<String>> {
     iter_file_hashes_filtered(
@@ -498,7 +591,7 @@ pub fn iter_file_hashes_filtered_refreshable(
 /// `crate::search::find_best_matching_local_song`). Local-file only because
 /// remote-source songs' `path` is a cache placeholder, not real audio --
 /// same filter as `iter_file_hashes_filtered_refreshable`.
-pub fn load_all_local_songs() -> rusqlite::Result<Vec<Song>> {
+pub(crate) fn load_all_local_songs() -> rusqlite::Result<Vec<Song>> {
     with_conn(|c| {
         let mut stmt = c.prepare(
             "SELECT payload FROM songs WHERE json_extract(payload, '$.origin.kind') = 'local_file'",
@@ -508,7 +601,7 @@ pub fn load_all_local_songs() -> rusqlite::Result<Vec<Song>> {
     })
 }
 
-pub fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
+pub(crate) fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
     with_conn(|c| {
         let (
             total,

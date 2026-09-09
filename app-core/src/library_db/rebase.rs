@@ -49,25 +49,23 @@ fn rebase_song_album_art_paths_in_db(
 
         let mut changed = false;
         let mut new_album_art = album_art_path.clone();
-        if let Some(current) = album_art_path.as_deref() {
-            if let Some(rebased) = maybe_rebase_string_path(current, old_root, new_root) {
-                new_album_art = Some(rebased);
-                changed = true;
-            }
+        if let Some(current) = album_art_path.as_deref()
+            && let Some(rebased) = maybe_rebase_string_path(current, old_root, new_root)
+        {
+            new_album_art = Some(rebased);
+            changed = true;
         }
 
         let mut new_payload = payload.clone();
-        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&payload) {
-            if let Some(album_art_value) = value.get_mut("album_art_path") {
-                if let Some(current) = album_art_value.as_str() {
-                    if let Some(rebased) = maybe_rebase_string_path(current, old_root, new_root) {
-                        *album_art_value = serde_json::Value::String(rebased);
-                        if let Ok(serialized) = serde_json::to_string(&value) {
-                            new_payload = serialized;
-                            changed = true;
-                        }
-                    }
-                }
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&payload)
+            && let Some(album_art_value) = value.get_mut("album_art_path")
+            && let Some(current) = album_art_value.as_str()
+            && let Some(rebased) = maybe_rebase_string_path(current, old_root, new_root)
+        {
+            *album_art_value = serde_json::Value::String(rebased);
+            if let Ok(serialized) = serde_json::to_string(&value) {
+                new_payload = serialized;
+                changed = true;
             }
         }
 
@@ -90,10 +88,13 @@ fn rebase_song_album_art_paths_in_db(
     Ok(())
 }
 
-pub fn rebase_song_album_art_paths(old_root: &Path, new_root: &Path) -> Result<(), String> {
+pub(crate) fn rebase_song_album_art_paths(old_root: &Path, new_root: &Path) -> Result<(), String> {
     rebase_song_album_art_paths_in_db(&new_root.join("songs.db"), old_root, new_root)
 }
 
-pub fn rebase_song_album_art_cache_paths(old_cache: &Path, new_cache: &Path) -> Result<(), String> {
+pub(crate) fn rebase_song_album_art_cache_paths(
+    old_cache: &Path,
+    new_cache: &Path,
+) -> Result<(), String> {
     rebase_song_album_art_paths_in_db(&super::library_db_path(), old_cache, new_cache)
 }

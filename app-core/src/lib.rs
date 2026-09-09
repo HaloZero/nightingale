@@ -14,6 +14,8 @@ mod lyrics;
 pub mod media_server;
 mod parallel_analysis;
 mod playback;
+mod playback_queue;
+mod playback_session;
 mod profile;
 mod scanner;
 mod search;
@@ -28,18 +30,18 @@ mod video_sync;
 mod youtube_video;
 
 pub use analyzer::{
-    AnalysisQueue, FailureKind, acknowledge_failures, delete_cache, enqueue_all, enqueue_one,
-    realign, realign_all, realign_with_alt_backend, realign_with_backend,
-    reanalyze_all_force_transcribe,
-    reanalyze_all_full, reanalyze_all_transcript, reanalyze_force_transcribe, reanalyze_full,
-    reanalyze_transcript, refresh_metadata, refresh_metadata_all, remove_from_queue_all,
-    remove_from_queue_one, set_song_language, shutdown_server,
+    AnalysisQueue, FailureKind, acknowledge_failures, cancel_analysis, delete_cache, enqueue,
+    enqueue_all, enqueue_one, realign, realign_all, realign_with_alt_backend,
+    realign_with_backend, reanalyze_all_force_transcribe, reanalyze_all_full,
+    reanalyze_all_transcript, reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript,
+    refresh_metadata, refresh_metadata_all, remove_from_queue_all, remove_from_queue_one,
+    set_song_language, shutdown_server,
 };
 pub use audiodb::{MusicVideoResult, find_music_video_for_hash};
 pub use cache::{
     CacheDir, CachePaths, CacheStats, cache_roots, change_app_data_path, clear_models,
-    clear_videos, default_nightingale_dir, nightingale_dir,
-    normalized_target_path, reels_dir, same_path,
+    clear_videos, default_nightingale_dir, nightingale_dir, normalized_target_path, reels_dir,
+    same_path, set_default_data_path,
 };
 pub use cast_protocol::{CAST_NAMESPACE, CastReceiverMessage};
 pub use chromecast::cast_song_to_configured_device;
@@ -52,7 +54,10 @@ pub use karaoke_video::{
 };
 pub use library_db::{init_library, library_db_path};
 pub use library_menu::{LibraryMenuItem, LibraryMenuItems, load_library_menu_items};
-pub use library_model::{LibraryMenuFilters, LoadSongsParams, SongsMeta, SongsStore};
+pub use library_model::{
+    LibraryMenuFilters, LoadSongsParams, SongSort, SongSortColumn, SongTarget, SongsMeta,
+    SongsStore, SortDirection,
+};
 pub use lyrics::{
     LrclibCandidate, LyricsFile, apply_timed_lyrics, load_lyrics_file, provide_lrc,
     save_lyrics_and_realign, search_lrclib_for_hash,
@@ -70,6 +75,8 @@ pub use playback::{
     get_cached_pixabay_videos, load_transcript, prefetch_one_per_flavor, shift_key,
     shift_key_done_payload, shift_tempo, shift_tempo_done_payload,
 };
+pub use playback_queue::{PlaybackQueue, PlaybackQueueEntry};
+pub use playback_session::{PlaybackSession, PlaybackSessionStore};
 pub use profile::ProfileStore;
 pub use scanner::start_scan;
 pub use search::{
@@ -146,7 +153,7 @@ pub fn startup() -> Result<(), String> {
     }
 
     if config.auto_analyze() {
-        analyzer::enqueue_all(&LibraryMenuFilters::default());
+        enqueue_all(&LibraryMenuFilters::default());
     }
 
     Ok(())

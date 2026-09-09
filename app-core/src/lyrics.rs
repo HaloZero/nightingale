@@ -59,7 +59,7 @@ fn normalize(s: &str) -> String {
 /// cleanly in the gap between those two clusters.
 const ALBUM_MATCH_THRESHOLD: f64 = 0.8;
 
-pub fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
+pub(crate) fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
     let title = &song.title;
     let artist = &song.artist;
 
@@ -281,7 +281,8 @@ fn write_transcript_json(
     value: &serde_json::Value,
 ) -> std::io::Result<()> {
     let out = cache.transcript_path(file_hash);
-    std::fs::write(&out, serde_json::to_string_pretty(value).unwrap())
+    let json = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
+    std::fs::write(&out, json)
 }
 
 /// Provide LRC / Enhanced LRC for a not-yet-analyzed song, building the
@@ -382,7 +383,8 @@ pub(crate) fn write_lyrics_file(
 ) -> std::io::Result<PathBuf> {
     let out = cache.lyrics_path(file_hash);
     let lyrics_json = serde_json::json!({ "lines": lines });
-    std::fs::write(&out, serde_json::to_string_pretty(&lyrics_json).unwrap())?;
+    let json = serde_json::to_vec_pretty(&lyrics_json).map_err(std::io::Error::other)?;
+    std::fs::write(&out, json)?;
     Ok(out)
 }
 

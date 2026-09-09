@@ -13,7 +13,7 @@ use rusqlite::params;
 
 use super::connection::with_conn_mut;
 
-pub struct KaraokeVideoRunRow<'a> {
+pub(crate) struct KaraokeVideoRunRow<'a> {
     pub file_hash: &'a str,
     /// `"reel"` | `"youtube"`.
     pub kind: &'a str,
@@ -31,7 +31,7 @@ pub struct KaraokeVideoRunRow<'a> {
     pub total_ms: u64,
 }
 
-pub fn insert_karaoke_video_run(row: &KaraokeVideoRunRow) -> rusqlite::Result<()> {
+pub(crate) fn insert_karaoke_video_run(row: &KaraokeVideoRunRow<'_>) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "INSERT INTO karaoke_video_runs (

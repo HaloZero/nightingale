@@ -21,7 +21,7 @@ use rusqlite::params;
 
 use super::connection::{with_conn, with_conn_mut};
 
-pub fn set_karaoke_video_version(file_hash: &str, version: u32) -> rusqlite::Result<()> {
+pub(crate) fn set_karaoke_video_version(file_hash: &str, version: u32) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "INSERT INTO karaoke_video_status (file_hash, karaoke_video_version, youtube_karaoke_video_version)
@@ -33,7 +33,7 @@ pub fn set_karaoke_video_version(file_hash: &str, version: u32) -> rusqlite::Res
     })
 }
 
-pub fn set_youtube_karaoke_video_version(file_hash: &str, version: u32) -> rusqlite::Result<()> {
+pub(crate) fn set_youtube_karaoke_video_version(file_hash: &str, version: u32) -> rusqlite::Result<()> {
     with_conn_mut(|c| {
         c.execute(
             "INSERT INTO karaoke_video_status (file_hash, karaoke_video_version, youtube_karaoke_video_version)
@@ -47,7 +47,7 @@ pub fn set_youtube_karaoke_video_version(file_hash: &str, version: u32) -> rusql
 
 /// `(karaoke_video_version, youtube_karaoke_video_version)`, both `0` if no
 /// row exists yet (never rendered).
-pub fn get_karaoke_video_versions(file_hash: &str) -> rusqlite::Result<(u32, u32)> {
+pub(crate) fn get_karaoke_video_versions(file_hash: &str) -> rusqlite::Result<(u32, u32)> {
     with_conn(|c| {
         c.query_row(
             "SELECT karaoke_video_version, youtube_karaoke_video_version FROM karaoke_video_status WHERE file_hash = ?1",

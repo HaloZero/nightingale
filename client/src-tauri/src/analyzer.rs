@@ -1,7 +1,8 @@
 use app_core::{
-    acknowledge_failures as core_acknowledge_failures, delete_cache as core_delete_cache,
-    enqueue_all as core_enqueue_all, enqueue_one as core_enqueue_one, realign as core_realign,
-    realign_all as core_realign_all, realign_with_alt_backend as core_realign_with_alt_backend,
+    acknowledge_failures as core_acknowledge_failures, cancel_analysis as core_cancel_analysis,
+    delete_cache as core_delete_cache, enqueue as core_enqueue, enqueue_all as core_enqueue_all,
+    enqueue_one as core_enqueue_one, realign as core_realign, realign_all as core_realign_all,
+    realign_with_alt_backend as core_realign_with_alt_backend,
     reanalyze_all_force_transcribe as core_reanalyze_all_force_transcribe,
     reanalyze_all_full as core_reanalyze_all_full,
     reanalyze_all_transcript as core_reanalyze_all_transcript,
@@ -11,102 +12,112 @@ use app_core::{
     remove_from_queue_all as core_remove_from_queue_all,
     remove_from_queue_one as core_remove_from_queue_one,
     set_song_language as core_set_song_language, shift_key_done_payload,
-    shift_tempo_done_payload, FailureKind, LibraryMenuFilters,
+    shift_tempo_done_payload, FailureKind, LibraryMenuFilters, SongTarget,
 };
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
-pub fn enqueue_one(file_hash: String) {
+pub(crate) fn enqueue_one(file_hash: String) {
     core_enqueue_one(&file_hash);
 }
 
 #[tauri::command]
-pub fn acknowledge_analysis_failures(kind: FailureKind, file_hashes: Vec<String>) {
+pub(crate) fn enqueue(target: SongTarget) -> Result<usize, String> {
+    core_enqueue(target)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_analysis(target: SongTarget) -> Result<usize, String> {
+    core_cancel_analysis(target)
+}
+
+#[tauri::command]
+pub(crate) fn acknowledge_analysis_failures(kind: FailureKind, file_hashes: Vec<String>) {
     core_acknowledge_failures(kind, file_hashes);
 }
 
 #[tauri::command]
-pub fn enqueue_all(filters: LibraryMenuFilters) {
+pub(crate) fn enqueue_all(filters: LibraryMenuFilters) {
     core_enqueue_all(&filters);
 }
 
 #[tauri::command]
-pub fn delete_song_cache(file_hash: String) {
+pub(crate) fn delete_song_cache(file_hash: String) {
     core_delete_cache(&file_hash);
 }
 
 #[tauri::command]
-pub fn reanalyze_transcript(file_hash: String, language: Option<String>) {
+pub(crate) fn reanalyze_transcript(file_hash: String, language: Option<String>) {
     core_reanalyze_transcript(&file_hash, language);
 }
 
 #[tauri::command]
-pub fn reanalyze_full(file_hash: String) {
+pub(crate) fn reanalyze_full(file_hash: String) {
     core_reanalyze_full(&file_hash);
 }
 
 #[tauri::command]
-pub fn realign(file_hash: String, language: Option<String>) {
+pub(crate) fn realign(file_hash: String, language: Option<String>) {
     core_realign(&file_hash, language);
 }
 
 #[tauri::command]
-pub fn realign_alt(file_hash: String, language: Option<String>) {
+pub(crate) fn realign_alt(file_hash: String, language: Option<String>) {
     core_realign_with_alt_backend(&file_hash, language);
 }
 
 #[tauri::command]
-pub fn set_song_language(file_hash: String, language: Option<String>) {
+pub(crate) fn set_song_language(file_hash: String, language: Option<String>) {
     core_set_song_language(&file_hash, language);
 }
 
 #[tauri::command]
-pub fn reanalyze_force_transcribe(file_hash: String) {
+pub(crate) fn reanalyze_force_transcribe(file_hash: String) {
     core_reanalyze_force_transcribe(&file_hash);
 }
 
 #[tauri::command]
-pub fn reanalyze_all_full(filters: LibraryMenuFilters) -> usize {
+pub(crate) fn reanalyze_all_full(filters: LibraryMenuFilters) -> usize {
     core_reanalyze_all_full(&filters)
 }
 
 #[tauri::command]
-pub fn reanalyze_all_transcript(filters: LibraryMenuFilters, language: Option<String>) -> usize {
+pub(crate) fn reanalyze_all_transcript(filters: LibraryMenuFilters, language: Option<String>) -> usize {
     core_reanalyze_all_transcript(&filters, language)
 }
 
 #[tauri::command]
-pub fn reanalyze_all_force_transcribe(filters: LibraryMenuFilters) -> usize {
+pub(crate) fn reanalyze_all_force_transcribe(filters: LibraryMenuFilters) -> usize {
     core_reanalyze_all_force_transcribe(&filters)
 }
 
 #[tauri::command]
-pub fn realign_all(filters: LibraryMenuFilters, language: Option<String>) -> usize {
+pub(crate) fn realign_all(filters: LibraryMenuFilters, language: Option<String>) -> usize {
     core_realign_all(&filters, language)
 }
 
 #[tauri::command]
-pub fn refresh_metadata(file_hash: String) {
+pub(crate) fn refresh_metadata(file_hash: String) {
     core_refresh_metadata(&file_hash);
 }
 
 #[tauri::command]
-pub fn refresh_metadata_all(filters: LibraryMenuFilters) -> usize {
+pub(crate) fn refresh_metadata_all(filters: LibraryMenuFilters) -> usize {
     core_refresh_metadata_all(&filters)
 }
 
 #[tauri::command]
-pub fn remove_from_queue_one(file_hash: String) {
+pub(crate) fn remove_from_queue_one(file_hash: String) {
     core_remove_from_queue_one(&file_hash);
 }
 
 #[tauri::command]
-pub fn remove_from_queue_all(filters: LibraryMenuFilters) -> usize {
+pub(crate) fn remove_from_queue_all(filters: LibraryMenuFilters) -> usize {
     core_remove_from_queue_all(&filters)
 }
 
 #[tauri::command]
-pub fn shift_key(
+pub(crate) fn shift_key(
     app: AppHandle,
     file_hash: String,
     key: String,
@@ -120,7 +131,7 @@ pub fn shift_key(
 }
 
 #[tauri::command]
-pub fn shift_tempo(app: AppHandle, file_hash: String, tempo: f64) {
+pub(crate) fn shift_tempo(app: AppHandle, file_hash: String, tempo: f64) {
     std::thread::spawn(move || {
         let payload = shift_tempo_done_payload(file_hash, tempo);
         let _ = app.emit("shift-tempo-done", payload);

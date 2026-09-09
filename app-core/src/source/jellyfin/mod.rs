@@ -30,11 +30,14 @@ use crate::error::NightingaleError;
 use crate::library_db::{self, PlaylistDefinition, PlaylistSongKeyKind};
 use crate::song::{Song, SongOrigin};
 
-use super::{MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, StreamResponse, flush_batch};
+use super::{
+    MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, StreamResponse,
+    apply_refreshed_metadata, flush_batch, retained_cover,
+};
 
-pub mod client;
+pub(crate) mod client;
 
-pub use client::{AuthHeaders, JellyfinClient, trim_base_url};
+pub(crate) use client::{AuthHeaders, JellyfinClient, trim_base_url};
 
 const PAGE_SIZE: usize = 200;
 const COVER_FILL_WIDTH: u32 = 300;
@@ -152,6 +155,16 @@ impl JellyfinSource {
         self.client.get_json("list items", &path, &query)
     }
 
+    fn fetch_item(&self, item_id: &str) -> Result<JellyfinItem, NightingaleError> {
+        let path = format!(
+            "/Users/{}/Items/{}",
+            urlencoding::encode(&self.auth.user_id),
+            urlencoding::encode(item_id)
+        );
+        self.client
+            .get_json("get item", &path, &[("Fields", ITEM_FIELDS)])
+    }
+
     /// Paginate one recursive item query — either the whole server
     /// (`parent_id == None`) or a single library — flushing songs into
     /// `state` as they arrive.
@@ -215,7 +228,7 @@ impl JellyfinSource {
                     continue;
                 }
 
-                if let Some(song) = self.build_song(&item, ctx.cache) {
+                if let Some(song) = self.build_song(&item, ctx.cache, None) {
                     state.batch.push(song);
                 }
 
@@ -276,7 +289,12 @@ impl JellyfinSource {
         Ok(playlists)
     }
 
-    fn build_song(&self, item: &JellyfinItem, cache: &CacheDir) -> Option<Song> {
+    fn build_song(
+        &self,
+        item: &JellyfinItem,
+        cache: &CacheDir,
+        retained_cover: Option<PathBuf>,
+    ) -> Option<Song> {
         if item.id.is_empty() {
             return None;
         }
@@ -326,9 +344,11 @@ impl JellyfinSource {
             .as_ref()
             .and_then(|t| t.primary.clone())
             .filter(|s| !s.is_empty());
-        let album_art_path = cover_tag
-            .as_deref()
-            .and_then(|tag| self.fetch_cover(cache, &item_id, tag));
+        let album_art_path = retained_cover.or_else(|| {
+            cover_tag
+                .as_deref()
+                .and_then(|tag| self.fetch_cover(cache, &item_id, tag))
+        });
 
         Some(Song {
             path: placeholder_path,
@@ -492,6 +512,36 @@ impl MediaSource for JellyfinSource {
         Ok(())
     }
 
+    fn refresh_metadata(&self, song: &mut Song, cache: &CacheDir) -> Result<(), NightingaleError> {
+        let (item_id, current_tag) = match &song.origin {
+            SongOrigin::Jellyfin {
+                item_id, cover_tag, ..
+            } => (item_id.clone(), cover_tag.clone()),
+            _ => {
+                return Err(NightingaleError::Other(
+                    "Jellyfin source asked to refresh a non-Jellyfin song".into(),
+                ));
+            }
+        };
+        let item = self.fetch_item(&item_id)?;
+        let next_tag = item
+            .image_tags
+            .as_ref()
+            .and_then(|tags| tags.primary.clone())
+            .filter(|tag| !tag.is_empty());
+        let retained = retained_cover(song, next_tag == current_tag);
+        let refreshed = self.build_song(&item, cache, retained).ok_or_else(|| {
+            NightingaleError::Other(format!("Jellyfin item {item_id} has no usable metadata"))
+        })?;
+        if next_tag.is_some() && refreshed.album_art_path.is_none() {
+            return Err(NightingaleError::Other(format!(
+                "failed fetching Jellyfin cover for {item_id}"
+            )));
+        }
+        apply_refreshed_metadata(song, refreshed);
+        Ok(())
+    }
+
     fn ensure_local_media(
         &self,
         song: &Song,
@@ -530,7 +580,11 @@ fn pick_string(value: Option<&str>, fallback: &str) -> String {
 /// Path of the on-disk cache file we materialise sources into. Also used as
 /// the placeholder `Song.path` for unmaterialised Jellyfin rows — there is
 /// only ever one representation.
-pub fn source_cache_path(cache: &CacheDir, file_hash: &str, container: Option<&str>) -> PathBuf {
+pub(crate) fn source_cache_path(
+    cache: &CacheDir,
+    file_hash: &str,
+    container: Option<&str>,
+) -> PathBuf {
     let dir = cache.path.join("sources");
     let _ = std::fs::create_dir_all(&dir);
     let ext = container.unwrap_or("bin");

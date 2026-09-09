@@ -1,7 +1,9 @@
-import type { MicCaptureOptions } from "@/types/MicCaptureOptions";
-import type { MicrophoneInfo } from "@/types/MicrophoneInfo";
-import type { MicSampleFrame } from "@/types/MicSampleFrame";
-import { dispatchMicFrame, type MicrophoneAdapter, subscribeMicSamples } from "./microphone";
+import type { MicCaptureOptions } from '@/types/MicCaptureOptions';
+import type { MicrophoneInfo } from '@/types/MicrophoneInfo';
+import type { MicSampleFrame } from '@/types/MicSampleFrame';
+
+import type { MicrophoneAdapter } from './microphone';
+import { dispatchMicFrame, subscribeMicSamples } from './microphone-samples';
 
 /**
  * Matches `SAMPLE_CHUNK` in `client/src-tauri/src/microphones.rs` (=512) so JS
@@ -41,31 +43,45 @@ class MicProcessor extends AudioWorkletProcessor {
 registerProcessor("nightingale-mic-processor", MicProcessor);
 `;
 
-interface ActiveCapture {
+type ActiveCapture = {
   context: AudioContext;
   source: MediaStreamAudioSourceNode;
   node: AudioWorkletNode;
+  onMessage: (event: MessageEvent<Float32Array>) => void;
   stream: MediaStream;
   monitorGain: GainNode | null;
   emitAudio: boolean;
-}
+};
 
 let active: ActiveCapture | null = null;
 let workletUrl: string | null = null;
 let liveMonitorGain = DEFAULT_MONITOR_GAIN;
+let captureOpChain: Promise<unknown> = Promise.resolve();
+
+const enqueueCaptureOperation = <T>(operation: () => Promise<T>): Promise<T> => {
+  const next = captureOpChain.catch(() => undefined).then(operation);
+  captureOpChain = next;
+  return next;
+};
 
 const ensureWorkletUrl = (): string => {
-  if (workletUrl !== null) return workletUrl;
-  const blob = new Blob([WORKLET_SRC], { type: "application/javascript" });
+  if (workletUrl !== null) {
+    return workletUrl;
+  }
+  const blob = new Blob([WORKLET_SRC], { type: 'application/javascript' });
   workletUrl = URL.createObjectURL(blob);
   return workletUrl;
 };
 
 const initialMonitorGain = (): number => {
-  if (typeof window === "undefined") return DEFAULT_MONITOR_GAIN;
+  if (typeof window === 'undefined') {
+    return DEFAULT_MONITOR_GAIN;
+  }
   const cfg = window.__NIGHTINGALE_APP_CONFIG__;
   const raw = cfg?.mic_monitor_gain;
-  if (raw == null) return DEFAULT_MONITOR_GAIN;
+  if (raw === null || raw === undefined) {
+    return DEFAULT_MONITOR_GAIN;
+  }
   return Math.min(Math.max(raw, 0), MAX_MONITOR_GAIN);
 };
 
@@ -83,20 +99,24 @@ export const setWebMicMonitorGain = (value: number): void => {
 };
 
 const teardown = (): void => {
-  if (!active) return;
-  const { context, stream, source, node, monitorGain } = active;
+  if (!active) {
+    return;
+  }
+  const { context, stream, source, node, onMessage, monitorGain } = active;
   try {
     source.disconnect();
   } catch {
     // already detached
   }
   try {
-    if (monitorGain) monitorGain.disconnect();
+    if (monitorGain) {
+      monitorGain.disconnect();
+    }
   } catch {
     // already detached
   }
   try {
-    node.port.onmessage = null;
+    node.port.removeEventListener('message', onMessage);
     node.disconnect();
   } catch {
     // already detached
@@ -112,27 +132,45 @@ const teardown = (): void => {
   active = null;
 };
 
-const listDevices = async (): Promise<MicrophoneInfo[]> => {
-  if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
-    return [];
+const browserMediaDevices = (): MediaDevices | undefined => {
+  if (typeof navigator === 'undefined') {
+    return undefined;
   }
-  /**
-   * Without prior `getUserMedia` permission, browsers return devices with
-   * empty `label` strings; the deviceId is still stable enough for the
-   * preferred-mic selection logic, so we synthesise a label fallback.
-   */
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices
-    .filter((d) => d.kind === "audioinput")
-    .map((d, idx) => ({ name: d.label?.trim() || d.deviceId || `Microphone ${idx + 1}` }));
+  return navigator.mediaDevices;
+};
+
+const listDevices = async (): Promise<MicrophoneInfo[]> => {
+  const mediaDevices = browserMediaDevices();
+  if (!mediaDevices) {
+    throw new Error(
+      'Microphone discovery is unavailable. Open Nightingale over HTTPS or localhost.',
+    );
+  }
+
+  const devices = await mediaDevices.enumerateDevices();
+  const inputs = devices.filter(
+    (device) =>
+      device.kind === 'audioinput' && device.deviceId !== '' && device.deviceId !== 'default',
+  );
+
+  return inputs.map((device, index) => {
+    const name = device.label.trim() || `Microphone ${index + 1}`;
+    return {
+      id: device.deviceId || name,
+      name,
+      host: 'Browser',
+    };
+  });
 };
 
 const findDeviceId = async (preferred: string | null): Promise<string | undefined> => {
-  if (!preferred || typeof navigator === "undefined") return undefined;
+  if (typeof preferred !== 'string' || preferred === '' || typeof navigator === 'undefined') {
+    return undefined;
+  }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const match = devices.find(
-      (d) => d.kind === "audioinput" && (d.label === preferred || d.deviceId === preferred),
+      (d) => d.kind === 'audioinput' && (d.label === preferred || d.deviceId === preferred),
     );
     return match?.deviceId;
   } catch {
@@ -140,7 +178,7 @@ const findDeviceId = async (preferred: string | null): Promise<string | undefine
   }
 };
 
-const startCapture = async (
+const startCaptureInternal = async (
   preferred: string | null,
   options: MicCaptureOptions,
 ): Promise<string> => {
@@ -149,7 +187,7 @@ const startCapture = async (
   const deviceId = await findDeviceId(preferred);
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
+      deviceId: typeof deviceId === 'string' && deviceId !== '' ? { exact: deviceId } : undefined,
       echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false,
@@ -160,23 +198,25 @@ const startCapture = async (
   await context.audioWorklet.addModule(ensureWorkletUrl());
 
   const source = context.createMediaStreamSource(stream);
-  const node = new AudioWorkletNode(context, "nightingale-mic-processor", {
+  const node = new AudioWorkletNode(context, 'nightingale-mic-processor', {
     numberOfInputs: 1,
     numberOfOutputs: 0,
     processorOptions: { chunkSize: SAMPLE_CHUNK },
   });
 
-  node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+  const onMessage = (event: MessageEvent<Float32Array>): void => {
     const samples = event.data;
     const frame: MicSampleFrame = {
       sample_rate: context.sampleRate,
       // `MicSampleFrame.samples` is generated as `Array<number>` (ts-rs);
       // copy into a real Array so consumers reading `.length` / `[i]` don't
       // depend on Float32Array's surface.
-      samples: Array.from(samples) as unknown as number[],
+      samples: Array.from(samples),
     };
     dispatchMicFrame(frame);
   };
+  node.port.addEventListener('message', onMessage);
+  node.port.start();
 
   source.connect(node);
 
@@ -192,22 +232,30 @@ const startCapture = async (
     context,
     source,
     node,
+    onMessage,
     stream,
     monitorGain,
     emitAudio: options.emit_audio,
   };
 
   const track = stream.getAudioTracks()[0];
-  return track?.label || preferred || "default";
+  return (
+    [track.label, preferred].find((label) => typeof label === 'string' && label !== '') ?? 'default'
+  );
 };
 
-const stopCapture = async (): Promise<void> => {
+const stopCaptureInternal = async (): Promise<void> => {
   teardown();
 };
+
+const startCapture = (preferred: string | null, options: MicCaptureOptions): Promise<string> =>
+  enqueueCaptureOperation(() => startCaptureInternal(preferred, options));
+
+const stopCapture = (): Promise<void> => enqueueCaptureOperation(stopCaptureInternal);
 
 export const webMicrophoneAdapter: MicrophoneAdapter = {
   listDevices,
   startCapture,
   stopCapture,
-  onSamples: async (cb) => subscribeMicSamples(cb),
+  subscribe: async (callback) => subscribeMicSamples(callback),
 };

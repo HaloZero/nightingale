@@ -36,53 +36,56 @@ mod parallel_timings;
 mod playlists;
 mod queries;
 mod rebase;
-pub mod remote;
+pub(crate) mod remote;
 mod songs;
 mod video_processing_queue;
 mod youtube_video_lookups;
 mod youtube_video_sync;
 
-pub use analysis_queue::{
+pub(crate) use analysis_queue::{
     analysis_queue_acknowledge_failures, analysis_queue_clear, analysis_queue_delete,
     analysis_queue_load_rows, analysis_queue_save_rows, analysis_queue_upsert_row,
 };
-pub use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
-pub use karaoke_video_runs::{KaraokeVideoRunRow, insert_karaoke_video_run};
-pub use karaoke_video_status::{
+pub(crate) use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
+pub(crate) use karaoke_video_runs::{KaraokeVideoRunRow, insert_karaoke_video_run};
+pub(crate) use karaoke_video_status::{
     get_karaoke_video_versions, set_karaoke_video_version, set_youtube_karaoke_video_version,
 };
-pub use migrations::rewrite_legacy_jellyfin_paths;
-pub use parallel_mismatches::{clear_parallel_analysis_mismatch, record_parallel_analysis_mismatch};
-pub use parallel_timings::{ParallelAnalysisTimingRow, insert_parallel_analysis_timing};
-pub use playlists::{PlaylistDefinition, PlaylistSongKeyKind, replace_all_playlists};
-pub use video_processing_queue::{
+pub(crate) use migrations::rewrite_legacy_jellyfin_paths;
+pub(crate) use parallel_mismatches::{
+    clear_parallel_analysis_mismatch, record_parallel_analysis_mismatch,
+};
+pub(crate) use parallel_timings::{ParallelAnalysisTimingRow, insert_parallel_analysis_timing};
+pub(crate) use playlists::{PlaylistDefinition, PlaylistSongKeyKind, replace_all_playlists};
+pub(crate) use video_processing_queue::{
     video_queue_clear, video_queue_clear_all, video_queue_load_rows,
     video_queue_mark_processing, video_queue_mark_queued_many,
 };
-pub use queries::{
-    iter_file_hashes_filtered_full_reanalyzable, iter_file_hashes_filtered_karaoke_renderable,
-    iter_file_hashes_filtered_not_analyzed, iter_file_hashes_filtered_queued,
-    iter_file_hashes_filtered_realignable, iter_file_hashes_filtered_refreshable,
-    load_all_local_songs, load_meta_sql, load_songs_page, query_library_menu_items,
+pub(crate) use queries::{
+    iter_file_hashes_filtered_analysis_busy, iter_file_hashes_filtered_full_reanalyzable,
+    iter_file_hashes_filtered_karaoke_renderable, iter_file_hashes_filtered_not_analyzed,
+    iter_file_hashes_filtered_queued, iter_file_hashes_filtered_realignable,
+    iter_file_hashes_filtered_refreshable, load_all_local_songs, load_meta_sql, load_songs_page,
+    query_library_menu_items,
 };
-pub use rebase::{rebase_song_album_art_cache_paths, rebase_song_album_art_paths};
-pub use songs::{
+pub(crate) use rebase::{rebase_song_album_art_cache_paths, rebase_song_album_art_paths};
+pub(crate) use songs::{
     append_songs_for_scan, delete_songs_not_in_paths, load_all_songs, load_song_by_hash,
     load_song_by_path, load_song_path_strings, load_songs_by_hashes, read_library_meta,
     rekey_song, replace_all_songs_sorted, update_library_meta, update_song_fields,
 };
-pub use youtube_video_lookups::{get_youtube_video_lookup, record_youtube_video_lookup};
-pub use youtube_video_sync::{get_youtube_video_sync, record_youtube_video_sync};
+pub(crate) use youtube_video_lookups::{get_youtube_video_lookup, record_youtube_video_lookup};
+pub(crate) use youtube_video_sync::{get_youtube_video_sync, record_youtube_video_sync};
 
 /// Incremented at the start of each `start_scan` so in-flight scan threads stop writing
 /// after the library is cleared or replaced (folder change / new scan).
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-pub fn bump_scan_generation() -> u64 {
+pub(crate) fn bump_scan_generation() -> u64 {
     SCAN_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
 }
 
-pub fn scan_generation_is_current(generation: u64) -> bool {
+pub(crate) fn scan_generation_is_current(generation: u64) -> bool {
     SCAN_GENERATION.load(Ordering::SeqCst) == generation
 }
 
@@ -101,7 +104,7 @@ pub fn init_library() -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub fn reconnect_library_at_root(root: &Path) -> Result<(), String> {
+pub(crate) fn reconnect_library_at_root(root: &Path) -> Result<(), String> {
     let db_path = root.join("songs.db");
     let conn = connection::open_connection(&db_path)
         .map_err(|e| format!("failed opening migrated songs db: {e}"))?;

@@ -1,5 +1,6 @@
-import { platform } from "@tauri-apps/plugin-os";
-import { isTauri } from "./runtime";
+import { platform } from '@tauri-apps/plugin-os';
+
+import { isTauri } from './runtime';
 
 /**
  * Update delivery channel for the running build.
@@ -17,12 +18,15 @@ import { isTauri } from "./runtime";
  * so the `!isTauri` short-circuit MUST come first; otherwise the web build
  * would crash at module-eval.
  */
-export type UpdateChannel = "auto" | "linux-tauri" | "self-hosted-web";
+export type UpdateChannel = 'auto' | 'linux-tauri' | 'self-hosted-web';
 
-export const UPDATE_CHANNEL: UpdateChannel = !isTauri
-  ? "self-hosted-web"
-  : platform() === "linux"
-    ? "linux-tauri"
-    : "auto";
+const updateChannel = (): UpdateChannel => {
+  if (!isTauri) {
+    return 'self-hosted-web';
+  }
+  return platform() === 'linux' ? 'linux-tauri' : 'auto';
+};
 
-export const UPDATES_SUPPORTED: boolean = UPDATE_CHANNEL === "auto";
+export const UPDATE_CHANNEL = updateChannel();
+
+export const UPDATES_SUPPORTED: boolean = UPDATE_CHANNEL === 'auto';

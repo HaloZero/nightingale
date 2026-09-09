@@ -1,0 +1,191 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "react", "unicorn", "oxc", "import", "jsx-a11y", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "off",
+    "perf": "error",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "options": {
+    "typeAware": true,
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error"
+  },
+  "env": {
+    "builtin": true,
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "settings": {
+    "react": {
+      "version": "19.1.0"
+    }
+  },
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/target/**",
+    "src/types/**",
+    "src-tauri/gen/**",
+    "*.config.*"
+  ],
+  "rules": {
+    "eslint/complexity": ["error", 10],
+    "eslint/curly": ["error", "all"],
+    "eslint/eqeqeq": ["error", "always"],
+    "eslint/max-depth": ["error", 3],
+    "eslint/max-params": ["error", 4],
+    "eslint/no-console": "error",
+    "eslint/no-debugger": "error",
+    "eslint/no-else-return": "error",
+    "eslint/no-eval": "error",
+    "eslint/no-implied-eval": "error",
+    "eslint/no-nested-ternary": "error",
+    "eslint/no-new-wrappers": "error",
+    "eslint/no-param-reassign": "error",
+    "eslint/no-underscore-dangle": [
+      "error",
+      {
+        "allow": [
+          "__NIGHTINGALE_APP_CONFIG__",
+          "__NIGHTINGALE_MEDIA_ENDPOINT__",
+          "__NIGHTINGALE_SERVER_FLAGS__",
+          "__NIGHTINGALE_SONGS_META__"
+        ]
+      }
+    ],
+    "eslint/no-return-assign": "error",
+    "eslint/no-shadow": "error",
+    "eslint/no-var": "error",
+    "eslint/prefer-const": "error",
+    "typescript/await-thenable": "error",
+    "typescript/consistent-type-assertions": ["error", { "assertionStyle": "never" }],
+    "typescript/consistent-type-definitions": ["error", "type"],
+    "typescript/consistent-type-exports": "error",
+    "typescript/consistent-type-imports": [
+      "error",
+      { "prefer": "type-imports", "fixStyle": "separate-type-imports" }
+    ],
+    "typescript/no-explicit-any": "error",
+    "typescript/no-extra-non-null-assertion": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-unnecessary-condition": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/no-unsafe-argument": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-return": "error",
+    "typescript/no-unsafe-type-assertion": "error",
+    "typescript/prefer-readonly": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/strict-boolean-expressions": "error",
+    "typescript/switch-exhaustiveness-check": "error",
+    "typescript/use-unknown-in-catch-callback-variable": "error",
+    "react/button-has-type": "error",
+    "react/exhaustive-deps": "error",
+    "react/iframe-missing-sandbox": "error",
+    "react/jsx-key": "error",
+    "react/jsx-no-constructed-context-values": "error",
+    "react/jsx-no-target-blank": "error",
+    "react/jsx-no-useless-fragment": "error",
+    "react/no-array-index-key": "error",
+    "react/no-danger": "error",
+    "react/no-direct-mutation-state": "error",
+    "react/no-unstable-nested-components": "error",
+    "react/no-unknown-property": "error",
+    "react/only-export-components": [
+      "error",
+      {
+        "allowConstantExport": true,
+        "allowExportNames": [
+          "NavInputContext",
+          "badgeVariants",
+          "buttonGroupVariants",
+          "buttonVariants",
+          "isDisplayableLanguage",
+          "isEditLyricsDialogMode",
+          "isLanguageDialogMode",
+          "isPixabayTheme",
+          "nextFlavorIndex",
+          "nextThemeIndex",
+          "ringFor",
+          "tabsListVariants",
+          "themeCount",
+          "themeMode",
+          "themeName",
+          "useMenuFocus",
+          "usePlaybackMicActions",
+          "usePlaybackMicState",
+          "usePlaybackThemeActions",
+          "usePlaybackThemeState",
+          "usePlaybackTranscriptActions",
+          "usePlaybackTranscriptState",
+          "usePlaybackTransportActions",
+          "usePlaybackTransportState",
+          "useSidebar",
+          "useSidebarRowFocus",
+          "useTheme"
+        ]
+      }
+    ],
+    "react/react-in-jsx-scope": "off",
+    "react/rules-of-hooks": "error",
+    "react/self-closing-comp": "error",
+    "jsx-a11y/alt-text": "error",
+    "jsx-a11y/anchor-has-content": "error",
+    "jsx-a11y/anchor-is-valid": "error",
+    "jsx-a11y/click-events-have-key-events": "error",
+    "jsx-a11y/control-has-associated-label": "error",
+    "jsx-a11y/interactive-supports-focus": "error",
+    "jsx-a11y/no-autofocus": "error",
+    "jsx-a11y/no-static-element-interactions": "error",
+    "import/first": "error",
+    "import/newline-after-import": "error",
+    "import/no-absolute-path": "error",
+    "import/no-cycle": "error",
+    "import/no-duplicates": "error",
+    "import/no-mutable-exports": "error",
+    "import/no-self-import": "error",
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }],
+    "promise/always-return": "error",
+    "promise/catch-or-return": "error",
+    "promise/no-return-wrap": "error",
+    "unicorn/error-message": "error",
+    "unicorn/no-abusive-eslint-disable": "error",
+    "unicorn/prefer-node-protocol": "error",
+    "unicorn/prefer-type-error": "error"
+  },
+  "overrides": [
+    {
+      "files": ["vite.config.ts", "*.config.{ts,mts,js,mjs}"],
+      "rules": { "import/no-unassigned-import": "off" }
+    },
+    {
+      "files": ["**/*.d.ts"],
+      "rules": {
+        "import/no-unassigned-import": "off",
+        "typescript/consistent-type-definitions": "off"
+      }
+    },
+    {
+      "files": ["src/bridge/microphone.tauri.ts"],
+      "rules": {
+        "unicorn/prefer-add-event-listener": "off"
+      }
+    },
+    {
+      "files": ["src/features/playback/components/shader-visualizer.tsx"],
+      "rules": {
+        "react/no-unknown-property": "off"
+      }
+    }
+  ]
+}

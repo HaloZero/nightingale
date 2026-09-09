@@ -13,6 +13,41 @@ below.
 
 ## [Unreleased]
 
+### Fixes
+
+- Analysis status sorting now orders ready songs by the transcript source shown in their status badge.
+
+## [1.2.0] - 2026-09-02
+
+### Features
+
+- Added a playback queue to the song browser with a queue count, compact next-up sidebar, per-song removal, confirmed queue clearing, and keyboard and gamepad navigation.
+- Added Session playback mode, which opens playback in a dedicated desktop window or browser tab while the menu remains available for live queue management.
+- Playback settings now have a dedicated tab with a proportional live preview, lyric placement controls, and 50–250% lyric and pitch-graph scaling (100% by default).
+- Added bulk song actions and a Refresh Metadata action for reloading metadata from the library source.
+- Queued or in-progress song analysis can now be cancelled per song or in bulk across filtered songs.
+- Added compact sortable song-table headers with persisted multi-level priorities, immediate list reordering, displayed-duration tie-breaking, and stable duplicate-file rendering.
+
+### Improvements
+
+- Source setup now warns that changing the data source clears the current library and its analysis state, with confirmation before choosing a replacement folder.
+- Leaderboard entries now show when each score was achieved beneath the profile name.
+- Long gaps between lyric lines now show a compact countdown beneath the song details, while the circular three-second countdown bubble stays beside the lyric line as the next line approaches. The next lyric block is no longer previewed across an instrumental break.
+- Changed "AI generated" to "AI transcribed" in the song list.
+- Added Windows ASIO microphone support and a microphone recording/playback test in Settings.
+- Analyzer setup now installs the released `transformers` 5.13+ package instead of cloning a pinned Git commit.
+
+### Fixes
+
+- Analyzer setup now keeps WhisperX on a release compatible with `transformers` 5, preventing Windows lyrics analysis failures in pyannote.
+- Video files now use audio-stream title metadata, preventing subtitle titles from replacing song names.
+- The lyrics editor now allows re-aligning analyzed songs without requiring a lyrics change.
+- Empty transcription results now finish without attempting forced alignment.
+
+### Documentation
+
+- Updated the website and user guide for the v1.2.0 queue, Session mode, playback customization, bulk library actions, and multi-level sorting.
+
 ## [1.1.0] - 2026-08-14
 
 ### Features
