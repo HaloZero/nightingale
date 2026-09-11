@@ -152,7 +152,21 @@ pub fn cast_song_to_configured_device(
 
     stop_running_apps(&device);
 
-    match config.receiver_app_id.as_deref().filter(|_| force_custom_receiver) {
+    let selected_app_id = config
+        .receiver_app_id
+        .as_deref()
+        .filter(|_| force_custom_receiver);
+    info!(
+        "[chromecast] receiver path decision: force_custom_receiver={force_custom_receiver} \
+         configured receiver_app_id={:?} -> {}",
+        config.receiver_app_id,
+        match selected_app_id {
+            Some(app_id) => format!("custom receiver app_id={app_id}"),
+            None => "DefaultMediaReceiver".to_string(),
+        }
+    );
+
+    match selected_app_id {
         Some(app_id) => cast_via_custom_receiver(&device, app_id, song, guide_volume),
         None => cast_via_default_media_receiver(&device, config, song),
     }
@@ -215,13 +229,16 @@ fn cast_via_default_media_receiver(
     );
     info!("[chromecast] content_id={content_id} content_type={content_type}");
 
-    let app = device
-        .receiver
-        .launch_app(&CastDeviceApp::DefaultMediaReceiver)
-        .map_err(|e| NightingaleError::Other(format!("chromecast app launch failed: {e:?}")))?;
+    let requested_app = CastDeviceApp::DefaultMediaReceiver;
+    info!("[chromecast] requesting launch of app_id={requested_app}");
+    let app = device.receiver.launch_app(&requested_app).map_err(|e| {
+        NightingaleError::Other(format!(
+            "chromecast app launch failed for app_id={requested_app}: {e:?}"
+        ))
+    })?;
     info!(
-        "[chromecast] launched app transport_id={} session_id={}",
-        app.transport_id, app.session_id
+        "[chromecast] launched app_id={} display_name={:?} transport_id={} session_id={}",
+        app.app_id, app.display_name, app.transport_id, app.session_id
     );
 
     device
@@ -294,13 +311,18 @@ fn cast_via_custom_receiver(
     song: &Song,
     guide_volume: Option<f64>,
 ) -> Result<(), NightingaleError> {
+    info!("[chromecast] requesting launch of custom receiver app_id={app_id}");
     let app = device
         .receiver
         .launch_app(&CastDeviceApp::Custom(app_id.to_string()))
-        .map_err(|e| NightingaleError::Other(format!("custom receiver launch failed: {e:?}")))?;
+        .map_err(|e| {
+            NightingaleError::Other(format!(
+                "custom receiver launch failed for app_id={app_id}: {e:?}"
+            ))
+        })?;
     info!(
-        "[chromecast] launched custom receiver app_id={app_id} transport_id={} session_id={}",
-        app.transport_id, app.session_id
+        "[chromecast] launched custom receiver app_id={} display_name={:?} transport_id={} session_id={}",
+        app.app_id, app.display_name, app.transport_id, app.session_id
     );
 
     device
