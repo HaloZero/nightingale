@@ -40,6 +40,19 @@ pub struct LrclibCandidate {
 #[ts(export)]
 pub struct LyricsFile {
     pub lines: Vec<String>,
+    /// Best-effort per-line timing anchors sourced from LRCLIB's
+    /// `syncedLyrics`, fuzzy-matched against `lines` in the same order (see
+    /// `match_synced_anchors`). Same length as `lines` when present; `None`
+    /// entries mark lines with no confident match. Absent entirely when no
+    /// LRCLIB synced source was found/available.
+    ///
+    /// Consumed only by the Python analyzer (`align.py`) as alignment-window
+    /// hints to shrink each forced-alignment segment from "the whole song"
+    /// to "around this one line" -- never as the displayed lyric text or
+    /// wording, which remains `lines`, sourced independently and possibly
+    /// from a different provider than these anchors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_anchors: Option<Vec<Option<f64>>>,
 }
 
 fn normalize(s: &str) -> String {
@@ -58,6 +71,80 @@ fn normalize(s: &str) -> String {
 /// Anthems", "The Singles Collection") scored 0.32-0.58 -- 0.8 sits
 /// cleanly in the gap between those two clusters.
 const ALBUM_MATCH_THRESHOLD: f64 = 0.8;
+
+/// Minimum `jaro_winkler` similarity between an LRCLIB synced-line's text and
+/// a display line to accept it as that line's timing anchor in
+/// `match_synced_anchors`. Looser than `ALBUM_MATCH_THRESHOLD` because line
+/// wording drifts more between sources than album naming (e.g. this song's
+/// own "Everytime" vs "Every time we're down").
+const LINE_MATCH_THRESHOLD: f64 = 0.75;
+
+/// How many upcoming LRCLIB synced segments `match_synced_anchors` scans for
+/// each display line. Mirrors `align.py`'s `_map_words_to_lines`
+/// `LOOKAHEAD = 6`, widened slightly because a line-level source can
+/// insert/omit whole lines (ad-libs, repeated hooks) more often than a
+/// single word gets dropped mid-line.
+const ANCHOR_LOOKAHEAD: usize = 8;
+
+/// Below this fraction of matched lines, treat the whole anchor set as noise
+/// (most likely a wrong LRCLIB pick that only coincidentally shares a couple
+/// of common lines) rather than a genuine partial match, and attach no
+/// anchors at all -- degrades to today's whole-song alignment behavior
+/// instead of risking a few confidently-wrong anchors corrupting alignment
+/// across large stretches of the song.
+const MIN_ANCHOR_COVERAGE: f64 = 0.25;
+
+/// Fuzzy-match `display_lines` (the lyric text already chosen for display,
+/// from whichever source won -- local file, embedded tag, or LRCLIB plain
+/// text) against `parsed`'s LRCLIB-derived synced segments, in order, to
+/// produce one optional timing anchor (that segment's start, in seconds) per
+/// display line.
+///
+/// Sequential two-pointer walk, best-of-window rather than first-hit: for
+/// each display line, scan up to `ANCHOR_LOOKAHEAD` synced segments starting
+/// at the cursor, keep the highest-scoring match at or above
+/// `LINE_MATCH_THRESHOLD`, and advance the cursor just past it. The cursor
+/// never advances on a miss, so a display line with no match doesn't block a
+/// later line from matching further down the synced stream. `parsed.segments`
+/// is already start-time sorted (`lrc::parse_lrc` sorts its entries), and the
+/// cursor only moves forward, so the returned anchors come out non-decreasing
+/// in order automatically -- no extra sort/clamp needed downstream.
+fn match_synced_anchors(display_lines: &[String], parsed: &ParsedLrc) -> Vec<Option<f64>> {
+    let mut cursor = 0usize;
+    let mut anchors = Vec::with_capacity(display_lines.len());
+    for line in display_lines {
+        let norm_line = normalize(line);
+        let limit = (cursor + ANCHOR_LOOKAHEAD).min(parsed.segments.len());
+        let mut best: Option<(usize, f64)> = None;
+        for idx in cursor..limit {
+            let score = strsim::jaro_winkler(&norm_line, &normalize(&parsed.segments[idx].text));
+            if score >= LINE_MATCH_THRESHOLD && best.is_none_or(|(_, b)| score > b) {
+                best = Some((idx, score));
+            }
+        }
+        match best {
+            Some((idx, _)) => {
+                anchors.push(Some(parsed.segments[idx].start));
+                cursor = idx + 1;
+            }
+            None => anchors.push(None),
+        }
+    }
+    anchors
+}
+
+/// `None` if `anchors` is empty or has too few matched lines
+/// (`MIN_ANCHOR_COVERAGE`) to trust, otherwise `Some(anchors)` unchanged.
+fn anchors_if_sufficient(anchors: Vec<Option<f64>>) -> Option<Vec<Option<f64>>> {
+    if anchors.is_empty() {
+        return None;
+    }
+    let matched = anchors.iter().filter(|a| a.is_some()).count();
+    if (matched as f64 / anchors.len() as f64) < MIN_ANCHOR_COVERAGE {
+        return None;
+    }
+    Some(anchors)
+}
 
 pub(crate) fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
     let title = &song.title;
@@ -244,7 +331,9 @@ pub fn save_lyrics_and_realign(file_hash: &str, lines: Vec<String>) -> Result<()
         .ok()
         .flatten()
         .and_then(|song| song.language);
-    write_lyrics_file(&cache, file_hash, &normalized)
+    // `None`: the user hand-edited these lyrics, so any prior LRCLIB timing
+    // anchors no longer correspond to this text and must not carry forward.
+    write_lyrics_file(&cache, file_hash, &normalized, None)
         .map_err(|e| format!("Failed to write lyrics file: {e}"))?;
 
     let _ = std::fs::remove_file(cache.transcript_path(file_hash));
@@ -380,10 +469,14 @@ pub(crate) fn write_lyrics_file(
     cache: &CacheDir,
     file_hash: &str,
     lines: &[String],
+    line_anchors: Option<Vec<Option<f64>>>,
 ) -> std::io::Result<PathBuf> {
     let out = cache.lyrics_path(file_hash);
-    let lyrics_json = serde_json::json!({ "lines": lines });
-    let json = serde_json::to_vec_pretty(&lyrics_json).map_err(std::io::Error::other)?;
+    let file = LyricsFile {
+        lines: lines.to_vec(),
+        line_anchors,
+    };
+    let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
     std::fs::write(&out, json)?;
     Ok(out)
 }
@@ -410,7 +503,21 @@ pub(crate) fn fetch_lrclib_lyrics(song: &Song, cache: &CacheDir) -> Option<PathB
     );
     info!("[lrclib] Extracted {} lines", pick.lines.len());
 
-    match write_lyrics_file(cache, &song.file_hash, &pick.lines) {
+    let anchors = pick
+        .synced_lyrics
+        .as_deref()
+        .and_then(|synced| lrc::parse_lrc(synced).ok())
+        .map(|parsed| match_synced_anchors(&pick.lines, &parsed))
+        .and_then(anchors_if_sufficient);
+    if let Some(ref a) = anchors {
+        let matched = a.iter().filter(|x| x.is_some()).count();
+        info!(
+            "[lrclib] Timing anchors: {matched}/{} lines matched",
+            a.len()
+        );
+    }
+
+    match write_lyrics_file(cache, &song.file_hash, &pick.lines, anchors) {
         Ok(out) => {
             info!("[lrclib] Lyrics saved to {}", out.display());
             Some(out)
@@ -436,6 +543,23 @@ pub(crate) fn fetch_lrclib_lyrics(song: &Song, cache: &CacheDir) -> Option<PathB
 /// without extra bookkeeping: `process_song` calls this before
 /// `fetch_lrclib_lyrics`, so whichever source is found first is the one
 /// that gets cached, and the other call just sees the cache already there.
+/// Separate LRCLIB lookup used only for timing anchors when a *local* source
+/// (sidecar `.lrc` / embedded tag) has already won for display text, so
+/// LRCLIB's synced timing isn't lost just because it lost the text race --
+/// `process_song`'s `local_lyrics_path(...).or_else(|| fetch_lrclib_lyrics(...))`
+/// short-circuits the display fetch in exactly this case, meaning
+/// `fetch_lrclib_lyrics` (and its own anchor computation) never runs at all
+/// when a local source exists. Silent `None` on any network failure or
+/// no-match -- must never fail the analysis; `lrclib_candidates` already
+/// degrades to an empty `Vec` on request failure.
+fn fetch_lrclib_anchor_times(song: &Song, display_lines: &[String]) -> Option<Vec<Option<f64>>> {
+    let pick = lrclib_candidates(song)
+        .into_iter()
+        .find(|c| c.synced_lyrics.is_some())?;
+    let parsed = lrc::parse_lrc(pick.synced_lyrics.as_deref()?).ok()?;
+    anchors_if_sufficient(match_synced_anchors(display_lines, &parsed))
+}
+
 pub(crate) fn local_lyrics_path(song: &Song, cache: &CacheDir) -> Option<PathBuf> {
     let existing = cache.lyrics_path(&song.file_hash);
     if existing.is_file() {
@@ -457,7 +581,16 @@ pub(crate) fn local_lyrics_path(song: &Song, cache: &CacheDir) -> Option<PathBuf
         song.path.display()
     );
 
-    match write_lyrics_file(cache, &song.file_hash, &lines) {
+    let anchors = fetch_lrclib_anchor_times(song, &lines);
+    if let Some(ref a) = anchors {
+        let matched = a.iter().filter(|x| x.is_some()).count();
+        info!(
+            "[local-lyrics] LRCLIB timing anchors: {matched}/{} lines matched",
+            a.len()
+        );
+    }
+
+    match write_lyrics_file(cache, &song.file_hash, &lines, anchors) {
         Ok(out) => {
             info!("[local-lyrics] Lyrics saved to {}", out.display());
             Some(out)

@@ -1227,7 +1227,7 @@ fn materialize_lyrics_from_transcript(cache: &CacheDir, file_hash: &str) {
         return;
     }
 
-    if let Err(e) = write_lyrics_file(cache, file_hash, &lines) {
+    if let Err(e) = write_lyrics_file(cache, file_hash, &lines, None) {
         warn!("[analyzer] Failed to materialize lyrics from transcript for {file_hash}: {e}");
     }
 }

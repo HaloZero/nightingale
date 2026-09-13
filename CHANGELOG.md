@@ -16,6 +16,7 @@ below.
 ### Fixes
 
 - Analysis status sorting now orders ready songs by the transcript source shown in their status badge.
+- Forced lyric alignment now uses LRCLIB's synced-lyrics timestamps as per-line anchors when available, instead of aligning the whole song as a single block. This fixes lines landing several seconds early after a musical pause (e.g. a pre-chorus build) that the aligner previously collapsed.
 
 ## [1.2.0] - 2026-09-02
 

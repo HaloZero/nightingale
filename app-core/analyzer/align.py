@@ -41,11 +41,30 @@ def align_lyrics(
     lines = lyrics_data.get("lines", [])
     print(f"[nightingale:LOG] Lyrics loaded: {len(lines)} lines", flush=True)
 
+    raw_anchors = lyrics_data.get("line_anchors")
+    if raw_anchors is not None and len(raw_anchors) != len(lines):
+        print(
+            f"[nightingale:LOG] line_anchors length {len(raw_anchors)} != "
+            f"lines length {len(lines)}, ignoring",
+            flush=True,
+        )
+        raw_anchors = None
+
     clean_lines: list[str] = []
-    for line in lines:
+    clean_anchors: list[float | None] = []
+    for i, line in enumerate(lines):
         text = line.strip() if isinstance(line, str) else str(line).strip()
         if text:
             clean_lines.append(text)
+            clean_anchors.append(raw_anchors[i] if raw_anchors is not None else None)
+
+    have_anchors = raw_anchors is not None and any(a is not None for a in clean_anchors)
+    if have_anchors:
+        matched = sum(1 for a in clean_anchors if a is not None)
+        print(
+            f"[nightingale:LOG] Using LRCLIB timing anchors: {matched}/{len(clean_anchors)} lines matched",
+            flush=True,
+        )
 
     audio = whisperx.load_audio(vocals_path)
     duration_secs = len(audio) / 16000
@@ -78,6 +97,7 @@ def align_lyrics(
     if get_align_backend() == "qwen" and qwen_align.is_supported(language):
         qwen_segments = _align_lyrics_qwen(
             clean_lines, audio, language, vocal_start, vocal_end, pre_align_cleanup,
+            line_anchors=clean_anchors if have_anchors else None,
         )
         if qwen_segments is not None:
             progress(90, f"Alignment complete: {len(qwen_segments)} segments, lang={language}")
@@ -107,7 +127,20 @@ def align_lyrics(
     else:
         full_text = " ".join(clean_lines)
 
-    raw_segments = [{"text": full_text, "start": vocal_start, "end": vocal_end}]
+    line_groups: list[int] | None = None
+    if have_anchors:
+        joiner = "" if cjk.is_cjk(language) else " "
+        raw_segments, line_groups = _build_anchor_segments(
+            cleaned_lines if cjk.is_cjk(language) else clean_lines,
+            clean_anchors, vocal_start, vocal_end, joiner=joiner,
+        )
+        print(
+            f"[nightingale:LOG] Anchor-bounded alignment: {len(raw_segments)} segments "
+            f"for {len(clean_lines)} lines",
+            flush=True,
+        )
+    else:
+        raw_segments = [{"text": full_text, "start": vocal_start, "end": vocal_end}]
 
     align_result = align_with_fallback(
         raw_segments, audio, cjk.align_lang_code(language), a_device, pre_align_cleanup,
@@ -115,9 +148,11 @@ def align_lyrics(
     )
 
     if cjk.is_cjk(language):
-        segments = _map_chars_to_lines_cjk(align_result, clean_lines, line_token_pairs, language)
+        segments = _map_chars_to_lines_cjk(
+            align_result, clean_lines, line_token_pairs, language, line_groups=line_groups,
+        )
     else:
-        segments = _map_words_to_lines(align_result, clean_lines)
+        segments = _map_words_to_lines(align_result, clean_lines, line_groups=line_groups)
         if cjk.is_korean(language):
             for seg in segments:
                 cjk.attach_reading(seg["words"], language)
@@ -132,8 +167,89 @@ def align_lyrics(
         "align_backend": get_effective_align_backend(),
     }
 
+
+# Slop margin around each anchor window for LRCLIB timestamp rounding. This
+# only needs to absorb that rounding, not the multi-second instrumental gap
+# this whole mechanism exists to eliminate -- the anchor itself already pins
+# the true window.
+ANCHOR_PAD_SECONDS = 0.3
+
+
+def _build_anchor_segments(
+    texts: list[str],
+    anchors: list[float | None],
+    vocal_start: float,
+    vocal_end: float,
+    joiner: str = " ",
+) -> tuple[list[dict], list[int]]:
+    """Build one raw_segment per run of lines between two known anchors.
+
+    A line with its own anchor starts a new run; any immediately-following
+    unanchored lines join that same run rather than getting split out, since
+    there's no anchor to tell us where the first line's singing actually
+    ends -- an anchored line followed by a gap shares one (still small)
+    window with that gap instead of being given an artificially wide window
+    of its own. A leading run with no anchor at all (only possible before the
+    first matched line) is bounded by `vocal_start` on the left.
+
+    Returns ``(raw_segments, line_counts)`` where ``line_counts[i]`` is how
+    many of ``texts`` (in order) segment ``i`` covers -- 1 for a normal
+    anchored line with an anchored line, more for a merged run.
+    ``sum(line_counts) == len(texts)``.
+    """
+    n = len(texts)
+    segments: list[dict] = []
+    line_counts: list[int] = []
+    i = 0
+    while i < n:
+        run_start_anchor = anchors[i]
+        j = i + 1 if run_start_anchor is not None else i
+        while j < n and anchors[j] is None:
+            j += 1
+        # j now points at the next anchored line (or n).
+        end_anchor = anchors[j] if j < n else None
+
+        start = (
+            max(vocal_start, run_start_anchor - ANCHOR_PAD_SECONDS)
+            if run_start_anchor is not None
+            else vocal_start
+        )
+        end = (
+            min(vocal_end, end_anchor + ANCHOR_PAD_SECONDS)
+            if end_anchor is not None
+            else vocal_end
+        )
+        end = max(start, end)
+
+        segments.append({"text": joiner.join(texts[i:j]), "start": start, "end": end})
+        line_counts.append(j - i)
+        i = j
+
+    return segments, line_counts
+
+
 def _normalize(word: str) -> str:
     return re.sub(r"[^\w]", "", word).lower()
+
+
+def _collect_words(words: list[dict]) -> list[dict]:
+    """Normalize one segment's raw aligned ``words`` list (see
+    `_collect_aligned`'s docstring for the NaN-timestamp handling this
+    preserves), keeping NaN-timestamp entries in-stream rather than dropping
+    them."""
+    out: list[dict] = []
+    for w in words:
+        text = w.get("word", "").strip()
+        if not text:
+            continue
+        out.append({
+            "word": text,
+            "norm": _normalize(text),
+            "start": w.get("start"),
+            "end": w.get("end"),
+            "score": w.get("score"),
+        })
+    return out
 
 
 def _collect_aligned(align_result: dict) -> list[dict]:
@@ -148,44 +264,22 @@ def _collect_aligned(align_result: dict) -> list[dict]:
     """
     out: list[dict] = []
     for seg in align_result.get("segments", []):
-        for w in seg.get("words", []):
-            text = w.get("word", "").strip()
-            if not text:
-                continue
-            out.append({
-                "word": text,
-                "norm": _normalize(text),
-                "start": w.get("start"),
-                "end": w.get("end"),
-                "score": w.get("score"),
-            })
+        out.extend(_collect_words(seg.get("words", [])))
     return out
 
 
-def _map_chars_to_lines_cjk(
-    align_result: dict,
+def _slice_chars_to_lines(
+    aligned: list[dict],
     original_lines: list[str],
     line_token_pairs: list[list[tuple[str, str]]],
     language: str,
-) -> list[dict]:
-    """Map per-character whisperx timestamps onto fugashi/jieba tokens.
-
-    ``line_token_pairs[i]`` is the per-token (display_surface,
-    alignment_text) decomposition of ``original_lines[i]``. The aligner saw
-    the concatenation of every alignment_text and emitted one timed entry
-    per char in input order; we slice that stream per line by the line's
-    total alignment-char count, then reattribute char timings onto tokens
-    using each token's alignment-text length (which may differ from the
-    surface length, e.g. when surface=kanji and alignment=hiragana).
-    """
-    aligned = _collect_aligned(align_result)
-    timed_count = sum(1 for a in aligned if a["start"] is not None and a["end"] is not None)
-    print(
-        f"[nightingale:LOG] CJK alignment: {len(aligned)} chars emitted "
-        f"({timed_count} timed, {len(aligned) - timed_count} NaN)",
-        flush=True,
-    )
-
+) -> tuple[list[dict], int]:
+    """Attribute one flat char-timing stream (`aligned`) onto `original_lines`
+    by cumulative alignment-char count. Shared by the legacy whole-song call
+    (one call across every line) and the per-anchor-group call (one call per
+    segment's own char stream against just its lines, scoped to that group so
+    a single misaligned char there can no longer shift any other group's
+    slice boundary)."""
     segments: list[dict] = []
     cursor = 0
     skipped_empty = 0
@@ -241,6 +335,52 @@ def _map_chars_to_lines_cjk(
             "words": valid,
         })
 
+    return segments, skipped_empty
+
+
+def _map_chars_to_lines_cjk(
+    align_result: dict,
+    original_lines: list[str],
+    line_token_pairs: list[list[tuple[str, str]]],
+    language: str,
+    line_groups: list[int] | None = None,
+) -> list[dict]:
+    """Map per-character whisperx timestamps onto fugashi/jieba tokens.
+
+    ``line_token_pairs[i]`` is the per-token (display_surface,
+    alignment_text) decomposition of ``original_lines[i]``. Without anchors
+    (``line_groups=None``), the aligner saw the concatenation of every
+    alignment_text as a single segment and emitted one timed entry per char
+    in input order; `_slice_chars_to_lines` slices that one stream per line
+    by the line's total alignment-char count. With per-line anchors,
+    ``align_result["segments"]`` already has one entry per ``line_groups``
+    run (see `_build_anchor_segments`), so each run's own char stream is
+    sliced against just its own lines instead of the whole song's.
+    """
+    if line_groups is None:
+        aligned = _collect_aligned(align_result)
+        timed_count = sum(1 for a in aligned if a["start"] is not None and a["end"] is not None)
+        print(
+            f"[nightingale:LOG] CJK alignment: {len(aligned)} chars emitted "
+            f"({timed_count} timed, {len(aligned) - timed_count} NaN)",
+            flush=True,
+        )
+        segments, skipped_empty = _slice_chars_to_lines(
+            aligned, original_lines, line_token_pairs, language,
+        )
+    else:
+        segments = []
+        skipped_empty = 0
+        cursor = 0
+        for seg, count in zip(align_result.get("segments", []), line_groups):
+            group_originals = original_lines[cursor:cursor + count]
+            group_tokens = line_token_pairs[cursor:cursor + count]
+            cursor += count
+            aligned = _collect_words(seg.get("words", []))
+            seg_segments, se = _slice_chars_to_lines(aligned, group_originals, group_tokens, language)
+            segments.extend(seg_segments)
+            skipped_empty += se
+
     for i in range(1, len(segments)):
         prev = segments[i - 1]
         cur = segments[i]
@@ -284,19 +424,33 @@ def _align_lyrics_qwen(
     vocal_start: float,
     vocal_end: float,
     pre_align_cleanup=None,
+    line_anchors: list[float | None] | None = None,
 ) -> list[dict] | None:
     """Align lyrics with Qwen3-ForcedAligner and map tokens back to lines.
 
-    The whole vocal region is aligned in one pass against the newline-joined
-    lyrics (newlines make line boundaries token boundaries and are dropped by
-    Qwen's tokenizer). The flat timed-token stream is then sliced onto lines by
-    cumulative kept-char count. Returns ``None`` on any qwen failure so the
-    caller falls back to the wav2vec2 path.
+    Without anchors, the whole vocal region is aligned in one pass against
+    the newline-joined lyrics (newlines make line boundaries token boundaries
+    and are dropped by Qwen's tokenizer), and the flat timed-token stream is
+    sliced onto lines by cumulative kept-char count. With per-line anchors
+    (see `_build_anchor_segments`), one bounded segment per anchor-run is
+    aligned instead -- `qwen_align.qwen_align` already slices its own audio
+    independently per input segment, so this is squarely within its designed
+    usage (its own `MAX_SEGMENT_SECONDS` comment calls out "a single
+    over-long segment (e.g. a whole-song lyrics pass)" as the case to avoid).
+    Returns ``None`` on any qwen failure so the caller falls back to the
+    wav2vec2 path.
     """
     import qwen_align
 
-    full_text = "\n".join(clean_lines)
-    raw_segments = [{"text": full_text, "start": vocal_start, "end": vocal_end}]
+    line_groups: list[int] | None = None
+    if line_anchors is not None and any(a is not None for a in line_anchors):
+        raw_segments, line_groups = _build_anchor_segments(
+            clean_lines, line_anchors, vocal_start, vocal_end, joiner="\n",
+        )
+    else:
+        full_text = "\n".join(clean_lines)
+        raw_segments = [{"text": full_text, "start": vocal_start, "end": vocal_end}]
+
     try:
         result = qwen_align.qwen_align_with_cpu_fallback(
             raw_segments, audio, language, pre_align_cleanup,
@@ -308,7 +462,7 @@ def _align_lyrics_qwen(
         print(f"[nightingale:LOG] Qwen aligner failed: {e}", flush=True)
         return None
 
-    segments = _map_qwen_units_to_lines(result, clean_lines, language)
+    segments = _map_qwen_units_to_lines(result, clean_lines, language, line_groups=line_groups)
     if not segments:
         return None
 
@@ -320,19 +474,14 @@ def _align_lyrics_qwen(
     return segments
 
 
-def _map_qwen_units_to_lines(align_result: dict, clean_lines: list[str], language: str) -> list[dict]:
-    """Slice Qwen's flat timed-token stream onto lyric lines by kept-char count.
-
-    Every Qwen token carries a timestamp (the model never drops units), and token
-    surfaces concatenate to each line's kept content, so a running kept-char
-    counter attributes tokens to lines without normalized-text matching. Readings
-    are attached per line for CJK/Korean.
-    """
-    units = _collect_aligned(align_result)
+def _slice_qwen_units_to_lines(units: list[dict], lines: list[str], language: str) -> list[dict]:
+    """Slice one flat Qwen timed-token stream onto `lines` by kept-char
+    count. Shared by the legacy whole-song call and the per-anchor-group
+    call (one call per segment's own token stream against just its lines)."""
     segments: list[dict] = []
     cursor = 0
 
-    for line_text in clean_lines:
+    for line_text in lines:
         need = cjk.qwen_kept_len(line_text)
         if need == 0:
             continue
@@ -374,6 +523,38 @@ def _map_qwen_units_to_lines(align_result: dict, clean_lines: list[str], languag
             "words": words,
         })
 
+    return segments
+
+
+def _map_qwen_units_to_lines(
+    align_result: dict,
+    clean_lines: list[str],
+    language: str,
+    line_groups: list[int] | None = None,
+) -> list[dict]:
+    """Slice Qwen's timed-token stream(s) onto lyric lines by kept-char count.
+
+    Every Qwen token carries a timestamp (the model never drops units), and
+    token surfaces concatenate to each line's kept content, so a running
+    kept-char counter attributes tokens to lines without normalized-text
+    matching. Readings are attached per line for CJK/Korean. Without anchors
+    (``line_groups=None``), this slices one flat stream across every line;
+    with anchors, ``align_result["segments"]`` already has one entry per
+    ``line_groups`` run, so each run's own stream is sliced against just its
+    own lines.
+    """
+    if line_groups is None:
+        units = _collect_aligned(align_result)
+        segments = _slice_qwen_units_to_lines(units, clean_lines, language)
+    else:
+        segments = []
+        cursor = 0
+        for seg, count in zip(align_result.get("segments", []), line_groups):
+            group_lines = clean_lines[cursor:cursor + count]
+            cursor += count
+            units = _collect_words(seg.get("words", []))
+            segments.extend(_slice_qwen_units_to_lines(units, group_lines, language))
+
     for i in range(1, len(segments)):
         prev = segments[i - 1]
         cur = segments[i]
@@ -386,34 +567,31 @@ def _map_qwen_units_to_lines(align_result: dict, clean_lines: list[str], languag
     return _split_long_segments(segments, joiner=joiner)
 
 
-def _map_words_to_lines(align_result: dict, clean_lines: list[str]) -> list[dict]:
-    """Map aligned word timestamps back to original lyric lines.
+_WORD_MATCH_LOOKAHEAD = 6
 
-    Walks the aligned stream with a single forward cursor and bounded lookahead
-    so that a dropped word in a repeated phrase (e.g. the 2nd "love" of three)
-    no longer causes downstream occurrences to inherit each other's timestamps.
+
+def _match_lines_against_words(aligned: list[dict], lines: list[str]) -> tuple[list[dict], int, int]:
+    """Re-associate a flat aligned-word stream with `lines` by forward cursor
+    + bounded lookahead, so a dropped word in a repeated phrase (e.g. the 2nd
+    "love" of three) no longer causes downstream occurrences to inherit each
+    other's timestamps. Shared by the legacy whole-song call (one call across
+    every line) and the per-anchor-group call (one call per segment's own
+    words against just its lines, so a mismatch is bounded to that group
+    instead of the whole song). Returns
+    ``(segments, missed_lyric_words, interpolated_drops)``.
     """
-    aligned = _collect_aligned(align_result)
-    timed_count = sum(1 for a in aligned if a["start"] is not None and a["end"] is not None)
-    print(
-        f"[nightingale:LOG] Final alignment: {len(aligned)} words emitted "
-        f"({timed_count} timed, {len(aligned) - timed_count} NaN)",
-        flush=True,
-    )
-
-    LOOKAHEAD = 6
     ai = 0
     segments = []
     missed_lyric_words = 0
     interpolated_drops = 0
 
-    for line_text in clean_lines:
+    for line_text in lines:
         word_entries = []
         for word_text in line_text.split():
             target = _normalize(word_text)
             matched = -1
             if target:
-                limit = min(ai + LOOKAHEAD, len(aligned))
+                limit = min(ai + _WORD_MATCH_LOOKAHEAD, len(aligned))
                 for k in range(ai, limit):
                     if aligned[k]["norm"] == target:
                         matched = k
@@ -455,6 +633,45 @@ def _map_words_to_lines(align_result: dict, clean_lines: list[str]) -> list[dict
             "end": seg_end,
             "words": valid_words,
         })
+
+    return segments, missed_lyric_words, interpolated_drops
+
+
+def _map_words_to_lines(
+    align_result: dict, clean_lines: list[str], line_groups: list[int] | None = None,
+) -> list[dict]:
+    """Map aligned word timestamps back to original lyric lines.
+
+    Without anchors (``line_groups=None``), this text-matches one flat
+    aligned-word stream against every line (see `_match_lines_against_words`).
+    With per-line anchors, ``align_result["segments"]`` already has one entry
+    per ``line_groups`` run (see `_build_anchor_segments`), so each run's own
+    words are matched against just its own lines -- a line with its own
+    anchor needs no text-matching at all when its run covers exactly that one
+    line, since the segment's words already *are* that line's words.
+    """
+    if line_groups is None:
+        aligned = _collect_aligned(align_result)
+        timed_count = sum(1 for a in aligned if a["start"] is not None and a["end"] is not None)
+        print(
+            f"[nightingale:LOG] Final alignment: {len(aligned)} words emitted "
+            f"({timed_count} timed, {len(aligned) - timed_count} NaN)",
+            flush=True,
+        )
+        segments, missed_lyric_words, interpolated_drops = _match_lines_against_words(aligned, clean_lines)
+    else:
+        segments = []
+        missed_lyric_words = 0
+        interpolated_drops = 0
+        cursor = 0
+        for seg, count in zip(align_result.get("segments", []), line_groups):
+            group_lines = clean_lines[cursor:cursor + count]
+            cursor += count
+            aligned = _collect_words(seg.get("words", []))
+            seg_segments, m, d = _match_lines_against_words(aligned, group_lines)
+            segments.extend(seg_segments)
+            missed_lyric_words += m
+            interpolated_drops += d
 
     for i in range(1, len(segments)):
         prev = segments[i - 1]
