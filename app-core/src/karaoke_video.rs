@@ -428,63 +428,105 @@ fn clear_cached_karaoke_videos(file_hash: &str) {
 /// Shared bulk-dispatch shape for the karaoke video actions below:
 /// resolve `filters` to eligible hashes (`iter_file_hashes_filtered_
 /// karaoke_renderable`), hand the count back immediately, and run `action`
-/// over each hash sequentially on its own background thread. Backgrounded
-/// (like `analyzer::refresh_metadata_all`, unlike `reanalyze_all_full`)
-/// because each call here does real ffmpeg/network work directly and
-/// blocking -- there's no existing worker queue for karaoke video the way
-/// there is for analysis. Sequential *within* one call, not
-/// one-thread-per-song: N parallel ffmpeg encodes (or, for the YouTube
-/// variant, N concurrent yt-dlp downloads racing past `youtube_video`'s own
-/// throttle) would defeat the point of the throttling/single-flight care
-/// already taken per-song.
+/// over the hashes on a background thread pool. Backgrounded (like
+/// `analyzer::refresh_metadata_all`, unlike `reanalyze_all_full`) because
+/// each call here does real ffmpeg/network work directly and blocking --
+/// there's no existing worker queue for karaoke video the way there is for
+/// analysis.
+///
+/// `job_concurrency` worker threads pull hashes off a shared cursor instead
+/// of one thread walking the list start to finish. `1` reproduces the
+/// historical fully-sequential behavior exactly -- used for the YouTube
+/// variant, which must stay single-flight to respect
+/// `youtube_video`'s own download throttle (N concurrent yt-dlp downloads
+/// would defeat the point of that throttle). The reel sweep passes
+/// `full_core_budget()` to run one ffmpeg job per core instead: pure local
+/// ffmpeg/CPU work with no external service to overwhelm, so there's
+/// nothing stopping N-way parallelism there.
 ///
 /// `best_karaoke_video_all`/`force_best_karaoke_video_all` each call this
-/// twice, once per `kind`, deliberately -- two independent single-file
-/// walks on two independent threads, so a slow/throttled/failing YouTube
-/// walk never stalls the (much faster, purely local) reel walk. See their
-/// doc comments for why that split exists.
+/// twice, once per `kind`, deliberately -- two independent walks on two
+/// independent thread pools, so a slow/throttled/failing YouTube walk never
+/// stalls the (much faster, purely local) reel walk. See their doc comments
+/// for why that split exists.
 ///
 /// Logs a `(i/count)` position line before each song and a done/failed line
 /// with that song's elapsed time after, plus a total-elapsed line when the
 /// whole batch finishes -- `action` reports outcome via `Result` instead of
 /// being fire-and-forget so a per-song failure actually surfaces here rather
-/// than vanishing into a discarded `Result`.
+/// than vanishing into a discarded `Result`. Under concurrency, `position`
+/// reflects claim order across workers rather than strict list order, but
+/// stays monotonically assigned exactly once per song.
 fn bulk_karaoke_video(
     filters: &LibraryMenuFilters,
     kind: crate::video_queue::VideoQueueKind,
-    action: fn(&str) -> Result<(), String>,
+    job_concurrency: usize,
+    action: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static,
 ) -> usize {
     let hashes =
         library_db::iter_file_hashes_filtered_karaoke_renderable(filters).unwrap_or_default();
     let count = hashes.len();
-    info!("[karaoke_video] bulk action starting for {count} eligible song(s)");
+    let job_concurrency = job_concurrency.max(1);
+    info!(
+        "[karaoke_video] bulk action starting for {count} eligible song(s) ({job_concurrency} \
+         worker(s))"
+    );
     crate::video_queue::mark_queued_many(kind, &hashes);
     std::thread::spawn(move || {
         let batch_started = std::time::Instant::now();
-        for (i, hash) in hashes.iter().enumerate() {
-            let position = i + 1;
-            let label = song_label(hash);
-            let song_started = std::time::Instant::now();
-            info!("[karaoke_video] ({position}/{count}) starting {label}");
-            let token = crate::video_queue::mark_processing(hash, kind);
-            match action(hash) {
-                Ok(()) => info!(
-                    "[karaoke_video] ({position}/{count}) {label} done in {:.1}s",
-                    song_started.elapsed().as_secs_f64()
-                ),
-                Err(e) => warn!(
-                    "[karaoke_video] ({position}/{count}) {label} failed after {:.1}s: {e}",
-                    song_started.elapsed().as_secs_f64()
-                ),
+        let cursor = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..job_concurrency {
+                let hashes = &hashes;
+                let action = &action;
+                let cursor = &cursor;
+                scope.spawn(move || {
+                    loop {
+                        let idx = cursor.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let Some(hash) = hashes.get(idx) else {
+                            break;
+                        };
+                        let position = idx + 1;
+                        let label = song_label(hash);
+                        let song_started = std::time::Instant::now();
+                        info!("[karaoke_video] ({position}/{count}) starting {label}");
+                        let token = crate::video_queue::mark_processing(hash, kind);
+                        match action(hash) {
+                            Ok(()) => info!(
+                                "[karaoke_video] ({position}/{count}) {label} done in {:.1}s",
+                                song_started.elapsed().as_secs_f64()
+                            ),
+                            Err(e) => warn!(
+                                "[karaoke_video] ({position}/{count}) {label} failed after \
+                                 {:.1}s: {e}",
+                                song_started.elapsed().as_secs_f64()
+                            ),
+                        }
+                        crate::video_queue::clear(hash, kind, &token);
+                    }
+                });
             }
-            crate::video_queue::clear(hash, kind, &token);
-        }
+        });
         info!(
             "[karaoke_video] bulk action finished ({count} song(s)) in {:.1}s",
             batch_started.elapsed().as_secs_f64()
         );
     });
     count
+}
+
+/// Number of CPU threads a single karaoke-video render is allowed to use.
+/// The default for one-off renders (casting, "regenerate this song") --
+/// `ensure_karaoke_video`'s reel bulk sweep instead calls
+/// `ensure_karaoke_video_with_budget` directly with `1`, since it runs one
+/// job per core via `bulk_karaoke_video` and giving every concurrent job
+/// every core would oversubscribe the machine instead of speeding up the
+/// batch.
+fn full_core_budget() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .max(1)
 }
 
 /// `"{title} — {artist} ({file_hash})"` for bulk-progress logging, falling
@@ -523,19 +565,29 @@ fn song_label(file_hash: &str) -> String {
 /// superseded by YouTube shortly after are an accepted tradeoff of not
 /// blocking reel on YouTube's outcome.
 pub fn best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
-    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
-        if has_fresh_youtube_video(hash) {
-            return Ok(());
-        }
-        ensure_karaoke_video(hash, false)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    });
-    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Youtube, |hash| {
-        ensure_youtube_karaoke_video(hash, false)
-            .error
-            .map_or(Ok(()), Err)
-    })
+    bulk_karaoke_video(
+        filters,
+        crate::video_queue::VideoQueueKind::Reel,
+        full_core_budget(),
+        |hash| {
+            if has_fresh_youtube_video(hash) {
+                return Ok(());
+            }
+            ensure_karaoke_video_with_budget(hash, false, 1)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        },
+    );
+    bulk_karaoke_video(
+        filters,
+        crate::video_queue::VideoQueueKind::Youtube,
+        1,
+        |hash| {
+            ensure_youtube_karaoke_video(hash, false)
+                .error
+                .map_or(Ok(()), Err)
+        },
+    )
 }
 
 /// Bulk "Force" counterpart -- same two independent sweeps as
@@ -546,16 +598,26 @@ pub fn best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// library-wide shouldn't also wipe out already-good YouTube videos (or
 /// vice versa), so each sweep only ever touches its own cached flavor.
 pub fn force_best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
-    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Reel, |hash| {
-        ensure_karaoke_video(hash, true)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    });
-    bulk_karaoke_video(filters, crate::video_queue::VideoQueueKind::Youtube, |hash| {
-        ensure_youtube_karaoke_video(hash, true)
-            .error
-            .map_or(Ok(()), Err)
-    })
+    bulk_karaoke_video(
+        filters,
+        crate::video_queue::VideoQueueKind::Reel,
+        full_core_budget(),
+        |hash| {
+            ensure_karaoke_video_with_budget(hash, true, 1)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        },
+    );
+    bulk_karaoke_video(
+        filters,
+        crate::video_queue::VideoQueueKind::Youtube,
+        1,
+        |hash| {
+            ensure_youtube_karaoke_video(hash, true)
+                .error
+                .map_or(Ok(()), Err)
+        },
+    )
 }
 
 /// Renders (or returns the cached) reel-background karaoke video for
@@ -569,6 +631,20 @@ pub fn force_best_karaoke_video_all(filters: &LibraryMenuFilters) -> usize {
 /// -- that's a separate, independently-cached artifact, see
 /// `ensure_youtube_background_karaoke_video`/`best_karaoke_video_path`.
 pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::PathBuf, NightingaleError> {
+    ensure_karaoke_video_with_budget(file_hash, force, full_core_budget())
+}
+
+/// Same as `ensure_karaoke_video`, but lets a caller cap how many CPU
+/// threads this render (both the ffmpeg encoder and its `-threads` flag)
+/// is allowed to use -- the single-song path above always asks for
+/// `full_core_budget()`, but `best_karaoke_video_all`'s reel sweep calls
+/// this directly with a divided share so N concurrent renders don't each
+/// try to claim every core (see `bulk_karaoke_video`'s doc comment).
+pub(crate) fn ensure_karaoke_video_with_budget(
+    file_hash: &str,
+    force: bool,
+    core_budget: usize,
+) -> Result<std::path::PathBuf, NightingaleError> {
     let started = std::time::Instant::now();
     let video_path = CacheDir::new().karaoke_video_path(file_hash);
     let result = render_karaoke_video_to(
@@ -576,6 +652,7 @@ pub fn ensure_karaoke_video(file_hash: &str, force: bool) -> Result<std::path::P
         force,
         &video_path,
         KaraokeVideoKind::Reel,
+        core_budget,
         |duration_secs| {
         let background = select_background_video(duration_secs).map(|path| BackgroundSource {
             path,
@@ -674,6 +751,7 @@ pub fn ensure_youtube_background_karaoke_video(
         force,
         &video_path,
         KaraokeVideoKind::Youtube,
+        full_core_budget(),
         move |_duration_secs| Some(background),
     );
     if result.is_ok() {
@@ -955,6 +1033,7 @@ fn render_karaoke_video_to(
     force: bool,
     video_path: &std::path::Path,
     kind: KaraokeVideoKind,
+    core_budget: usize,
     select_background: impl FnOnce(f64) -> Option<BackgroundSource>,
 ) -> Result<RenderOutcome, NightingaleError> {
     let cache = CacheDir::new();
@@ -1032,6 +1111,7 @@ fn render_karaoke_video_to(
         &audio_paths.instrumental,
         audio_paths.vocals.as_deref(),
         &tmp_path,
+        core_budget,
     )?;
     std::fs::rename(&tmp_path, video_path)?;
     let render_ms = render_started.elapsed().as_millis() as u64;
@@ -1161,6 +1241,7 @@ fn render_and_encode(
     instrumental_path: &str,
     vocals_path: Option<&str>,
     output_path: &std::path::Path,
+    core_budget: usize,
 ) -> Result<(), NightingaleError> {
     let size = format!("{WIDTH}x{HEIGHT}");
     let frame_rate = FRAME_RATE.to_string();
@@ -1219,6 +1300,12 @@ fn render_and_encode(
     cmd.args(["-filter_complex", &filter_complex])
         .args(["-map", "[v]", "-map", audio_map])
         .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
+        // Caps libx264's own thread pool to `core_budget` -- without this,
+        // ffmpeg auto-detects and threads across every core regardless of
+        // how many other renders are running concurrently (see
+        // `bulk_karaoke_video`'s worker pool), which would oversubscribe
+        // the machine instead of speeding up the batch.
+        .args(["-threads", &core_budget.to_string()])
         .args(["-pix_fmt", "yuv420p"])
         .args(["-c:a", "aac", "-shortest"])
         // Without explicit metadata, players fall back to showing the raw
