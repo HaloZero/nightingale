@@ -440,28 +440,12 @@ pub fn step_download_ffmpeg() -> Result<(), String> {
 // ffmpeg's/uv's downloads, not a raw single-file fetch.
 const FONT_DOWNLOAD_URL: &str = "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-sans-ttf-2.37.zip";
 
-/// Serializes first-time font downloads -- `ensure_font_downloaded` can be
-/// called from several karaoke-video render threads at once (e.g.
-/// `best_karaoke_video_all`'s parallel reel sweep), and without this a
-/// fresh cache would have multiple threads racing to write/extract into
-/// the same shared tmp dir.
-static FONT_DOWNLOAD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// Downloads the bundled font on first use. DejaVu Sans specifically:
 /// Bitstream-Vera-derived license explicitly permits embedding/
 /// redistribution, and it's the de facto default across the ffmpeg/
 /// subtitle tooling ecosystem. Latin-script only -- no CJK/RTL coverage.
 pub(crate) fn ensure_font_downloaded() -> Result<PathBuf, String> {
     let dest = font_path();
-    if dest.is_file() {
-        return Ok(dest);
-    }
-
-    let _guard = FONT_DOWNLOAD_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // Re-check now that we hold the lock: if another thread won the race
-    // and already finished downloading, there's nothing left to do.
     if dest.is_file() {
         return Ok(dest);
     }

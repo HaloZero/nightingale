@@ -13,10 +13,6 @@ below.
 
 ## [Unreleased]
 
-### Improvements
-
-- Bulk reel karaoke-video rendering (`best_karaoke_video_all`/`force_best_karaoke_video_all`) now renders multiple songs concurrently, one ffmpeg job per CPU core, instead of one song at a time. The YouTube-background sweep is unchanged and still runs single-flight to respect its download throttle.
-
 ### Fixes
 
 - Analysis status sorting now orders ready songs by the transcript source shown in their status badge.
