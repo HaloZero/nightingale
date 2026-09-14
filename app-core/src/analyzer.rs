@@ -967,6 +967,31 @@ pub fn delete_cache(file_hash: &str) {
     update_song_analyzed(file_hash, false, None, None, None, None);
 }
 
+/// Cleans up every analysis artifact left behind by a song that has just
+/// been removed from `songs` (source file deleted then rescanned away, or a
+/// remote item pruned/library-source switch) -- cache files and every
+/// `file_hash`-keyed DB table. Unlike `delete_cache`, this always runs
+/// regardless of `is_usdx_song`: that guard exists to avoid stranding a
+/// *still-library* song in a permanently-unanalyzed state (USDX songs are
+/// never re-enqueued), which doesn't apply once the song itself is gone.
+///
+/// Deliberately leaves the append-only history/diagnostic logs
+/// (`analysis_timings`, `parallel_analysis_timings`, `karaoke_video_runs`)
+/// alone -- they're read by `scripts/analysis_progress.py` and friends for
+/// aggregate hardware/perf analysis, not as per-song state, so a past run's
+/// timing data outliving the song it measured is intentional, not a leak.
+pub(crate) fn purge_song_analysis_data(file_hash: &str) {
+    let cache = CacheDir::new();
+    cache.delete_all_song_files(file_hash);
+    let _ = library_db::analysis_queue_delete(file_hash);
+    let _ = library_db::delete_karaoke_video_status(file_hash);
+    let _ = library_db::video_queue_delete_for_hash(file_hash);
+    let _ = library_db::clear_parallel_analysis_mismatch(file_hash);
+    let _ = library_db::delete_youtube_video_lookup(file_hash);
+    let _ = library_db::delete_youtube_video_sync(file_hash);
+    info!("[analyzer] Purged analysis data for removed song (hash={file_hash})");
+}
+
 /// Sets a song's stored `language` directly, with no other side effect: no
 /// re-transcription, no re-alignment, no cache/queue changes, and no
 /// `language_override` write (that field only affects a *future* re-run's

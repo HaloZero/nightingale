@@ -95,7 +95,10 @@ pub fn start_scan() {
         info!(
             "[scanner] Source changed (\"{existing_label}\" -> \"{new_label}\") -- clearing library before rescanning"
         );
-        let _ = library_db::replace_all_songs_sorted(&[]);
+        let removed_hashes = library_db::replace_all_songs_sorted(&[]).unwrap_or_default();
+        for hash in &removed_hashes {
+            analyzer::purge_song_analysis_data(hash);
+        }
         let _ = library_db::analysis_queue_clear();
         let _ = library_db::update_library_meta(&new_label, 0);
     }

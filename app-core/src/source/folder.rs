@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
+use crate::analyzer::purge_song_analysis_data;
 use crate::cache::CacheDir;
 use crate::config::AppConfig;
 use crate::error::NightingaleError;
@@ -61,7 +62,10 @@ impl MediaSource for FolderSource {
             .iter()
             .map(|(p, _)| p.to_string_lossy().into_owned())
             .collect();
-        let _ = library_db::delete_songs_not_in_paths(&paths);
+        let removed_hashes = library_db::delete_songs_not_in_paths(&paths).unwrap_or_default();
+        for hash in &removed_hashes {
+            purge_song_analysis_data(hash);
+        }
         let _ = library_db::update_library_meta(&folder_label, media_files.len());
 
         // Loaded once and reused below for both "what's new" (the `pending`

@@ -55,3 +55,13 @@ pub(crate) fn record_youtube_video_lookup(
         Ok(())
     })
 }
+
+pub(crate) fn delete_youtube_video_lookup(file_hash: &str) -> rusqlite::Result<()> {
+    with_conn_mut(|c| {
+        c.execute(
+            "DELETE FROM youtube_video_lookups WHERE file_hash = ?1",
+            [file_hash],
+        )?;
+        Ok(())
+    })
+}

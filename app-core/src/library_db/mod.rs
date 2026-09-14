@@ -49,7 +49,8 @@ pub(crate) use analysis_queue::{
 pub(crate) use analysis_timings::{AnalysisTimingRow, insert_analysis_timing};
 pub(crate) use karaoke_video_runs::{KaraokeVideoRunRow, insert_karaoke_video_run};
 pub(crate) use karaoke_video_status::{
-    get_karaoke_video_versions, set_karaoke_video_version, set_youtube_karaoke_video_version,
+    delete_karaoke_video_status, get_karaoke_video_versions, set_karaoke_video_version,
+    set_youtube_karaoke_video_version,
 };
 pub(crate) use migrations::rewrite_legacy_jellyfin_paths;
 pub(crate) use parallel_mismatches::{
@@ -58,7 +59,7 @@ pub(crate) use parallel_mismatches::{
 pub(crate) use parallel_timings::{ParallelAnalysisTimingRow, insert_parallel_analysis_timing};
 pub(crate) use playlists::{PlaylistDefinition, PlaylistSongKeyKind, replace_all_playlists};
 pub(crate) use video_processing_queue::{
-    video_queue_clear, video_queue_clear_all, video_queue_load_rows,
+    video_queue_clear, video_queue_clear_all, video_queue_delete_for_hash, video_queue_load_rows,
     video_queue_mark_processing, video_queue_mark_queued_many,
 };
 pub(crate) use queries::{
@@ -74,8 +75,12 @@ pub(crate) use songs::{
     load_song_by_path, load_song_path_strings, load_songs_by_hashes, read_library_meta,
     rekey_song, replace_all_songs_sorted, update_library_meta, update_song_fields,
 };
-pub(crate) use youtube_video_lookups::{get_youtube_video_lookup, record_youtube_video_lookup};
-pub(crate) use youtube_video_sync::{get_youtube_video_sync, record_youtube_video_sync};
+pub(crate) use youtube_video_lookups::{
+    delete_youtube_video_lookup, get_youtube_video_lookup, record_youtube_video_lookup,
+};
+pub(crate) use youtube_video_sync::{
+    delete_youtube_video_sync, get_youtube_video_sync, record_youtube_video_sync,
+};
 
 /// Incremented at the start of each `start_scan` so in-flight scan threads stop writing
 /// after the library is cleared or replaced (folder change / new scan).

@@ -416,7 +416,12 @@ impl MediaSource for PlexSource {
         let seen_ids: Vec<String> = state.seen_ids.into_iter().collect();
         let _ = library_db::update_library_meta(&self.label(), seen_ids.len());
         if complete_catalogue {
-            let _ = library_db::remote::delete_remote_songs_not_in_item_ids(ORIGIN_KIND, &seen_ids);
+            let removed_hashes =
+                library_db::remote::delete_remote_songs_not_in_item_ids(ORIGIN_KIND, &seen_ids)
+                    .unwrap_or_default();
+            for hash in &removed_hashes {
+                crate::analyzer::purge_song_analysis_data(hash);
+            }
         }
         info!("[plex] Sync done — saw {} items", seen_ids.len());
 

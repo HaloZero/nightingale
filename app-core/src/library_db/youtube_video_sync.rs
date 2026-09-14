@@ -55,3 +55,13 @@ pub(crate) fn record_youtube_video_sync(
         Ok(())
     })
 }
+
+pub(crate) fn delete_youtube_video_sync(file_hash: &str) -> rusqlite::Result<()> {
+    with_conn_mut(|c| {
+        c.execute(
+            "DELETE FROM youtube_video_sync WHERE file_hash = ?1",
+            [file_hash],
+        )?;
+        Ok(())
+    })
+}

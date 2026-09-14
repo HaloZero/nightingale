@@ -73,6 +73,20 @@ pub(crate) fn video_queue_clear_all() -> rusqlite::Result<()> {
     })
 }
 
+/// Drops every in-flight row for `file_hash`, regardless of `kind` or
+/// `started_at` -- unlike `video_queue_clear`, this isn't guarded against a
+/// concurrent run because it's only called when the song itself is being
+/// removed from the library.
+pub(crate) fn video_queue_delete_for_hash(file_hash: &str) -> rusqlite::Result<()> {
+    with_conn_mut(|c| {
+        c.execute(
+            "DELETE FROM video_processing_queue WHERE file_hash = ?1",
+            [file_hash],
+        )?;
+        Ok(())
+    })
+}
+
 pub(crate) fn video_queue_load_rows() -> rusqlite::Result<Vec<(String, String, String)>> {
     with_conn(|c| {
         let mut stmt =

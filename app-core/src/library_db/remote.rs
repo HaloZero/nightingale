@@ -111,31 +111,55 @@ where
 
 /// Prune rows of the given `kind` whose item id is no longer present
 /// upstream. Other origins (folder, other remote kinds) are untouched.
+/// Returns the `file_hash` of every row deleted, so the caller can purge
+/// their analysis cache/DB rows -- see `analyzer::purge_song_analysis_data`.
 pub(crate) fn delete_remote_songs_not_in_item_ids(
     kind: &str,
     item_ids: &[String],
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<Vec<String>> {
     with_conn_mut(|c| {
-        if item_ids.is_empty() {
-            c.execute(
+        let tx = c.transaction()?;
+        let removed_hashes: Vec<String> = if item_ids.is_empty() {
+            let mut stmt = tx.prepare(
+                "SELECT file_hash FROM songs WHERE json_extract(payload, '$.origin.kind') = ?1",
+            )?;
+            let rows = stmt.query_map([kind], |r| r.get::<_, String>(0))?;
+            let hashes = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            drop(stmt);
+            tx.execute(
                 "DELETE FROM songs WHERE json_extract(payload, '$.origin.kind') = ?1",
                 [kind],
             )?;
-            return Ok(());
-        }
-        let placeholders = (1..=item_ids.len())
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
-        // The leading bind is `kind`, the rest are the item ids; chain them
-        // together for `params_from_iter`.
-        let sql = format!(
-            "DELETE FROM songs
-             WHERE json_extract(payload, '$.origin.kind') = ?
-               AND json_extract(payload, '$.origin.item_id') NOT IN ({placeholders})"
-        );
-        let binds = std::iter::once(kind).chain(item_ids.iter().map(|s| s.as_str()));
-        c.execute(&sql, rusqlite::params_from_iter(binds))?;
-        Ok(())
+            hashes
+        } else {
+            let placeholders = (1..=item_ids.len())
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+            // The leading bind is `kind`, the rest are the item ids; chain them
+            // together for `params_from_iter`.
+            let select_sql = format!(
+                "SELECT file_hash FROM songs
+                 WHERE json_extract(payload, '$.origin.kind') = ?
+                   AND json_extract(payload, '$.origin.item_id') NOT IN ({placeholders})"
+            );
+            let delete_sql = format!(
+                "DELETE FROM songs
+                 WHERE json_extract(payload, '$.origin.kind') = ?
+                   AND json_extract(payload, '$.origin.item_id') NOT IN ({placeholders})"
+            );
+            let hashes = {
+                let mut stmt = tx.prepare(&select_sql)?;
+                let binds = std::iter::once(kind).chain(item_ids.iter().map(|s| s.as_str()));
+                let rows =
+                    stmt.query_map(rusqlite::params_from_iter(binds), |r| r.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let binds = std::iter::once(kind).chain(item_ids.iter().map(|s| s.as_str()));
+            tx.execute(&delete_sql, rusqlite::params_from_iter(binds))?;
+            hashes
+        };
+        tx.commit()?;
+        Ok(removed_hashes)
     })
 }

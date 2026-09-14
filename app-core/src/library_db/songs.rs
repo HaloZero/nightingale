@@ -142,9 +142,18 @@ pub(crate) fn append_songs_for_scan(songs: &[Song], generation: u64) -> rusqlite
     })
 }
 
-pub(crate) fn replace_all_songs_sorted(songs: &[Song]) -> rusqlite::Result<()> {
+/// Returns the `file_hash` of every row that existed before the wipe, so the
+/// caller can purge their analysis cache/DB rows -- a bare `DELETE FROM
+/// songs` here would otherwise orphan them (see `analyzer::
+/// purge_song_analysis_data`).
+pub(crate) fn replace_all_songs_sorted(songs: &[Song]) -> rusqlite::Result<Vec<String>> {
     with_conn_mut(|c| {
         let tx = c.transaction()?;
+        let removed_hashes: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT file_hash FROM songs")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
         tx.execute("DELETE FROM songs", [])?;
         {
             let mut stmt = tx.prepare(INSERT_SONG_SQL)?;
@@ -153,23 +162,42 @@ pub(crate) fn replace_all_songs_sorted(songs: &[Song]) -> rusqlite::Result<()> {
             }
         }
         tx.commit()?;
-        Ok(())
+        Ok(removed_hashes)
     })
 }
 
-pub(crate) fn delete_songs_not_in_paths(paths: &[String]) -> rusqlite::Result<()> {
+/// Returns the `file_hash` of every row this call deleted, so the caller can
+/// purge their analysis cache/DB rows -- see `replace_all_songs_sorted`.
+pub(crate) fn delete_songs_not_in_paths(paths: &[String]) -> rusqlite::Result<Vec<String>> {
     with_conn_mut(|c| {
-        if paths.is_empty() {
-            c.execute("DELETE FROM songs", [])?;
-            return Ok(());
-        }
-        let placeholders = (1..=paths.len()).map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("DELETE FROM songs WHERE path NOT IN ({placeholders})");
-        c.execute(
-            &sql,
-            rusqlite::params_from_iter(paths.iter().map(|s| s.as_str())),
-        )?;
-        Ok(())
+        let tx = c.transaction()?;
+        let removed_hashes: Vec<String> = if paths.is_empty() {
+            let mut stmt = tx.prepare("SELECT file_hash FROM songs")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            let hashes = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            tx.execute("DELETE FROM songs", [])?;
+            hashes
+        } else {
+            let placeholders = (1..=paths.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+            let select_sql =
+                format!("SELECT file_hash FROM songs WHERE path NOT IN ({placeholders})");
+            let delete_sql = format!("DELETE FROM songs WHERE path NOT IN ({placeholders})");
+            let hashes = {
+                let mut stmt = tx.prepare(&select_sql)?;
+                let rows = stmt.query_map(
+                    rusqlite::params_from_iter(paths.iter().map(|s| s.as_str())),
+                    |r| r.get::<_, String>(0),
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            tx.execute(
+                &delete_sql,
+                rusqlite::params_from_iter(paths.iter().map(|s| s.as_str())),
+            )?;
+            hashes
+        };
+        tx.commit()?;
+        Ok(removed_hashes)
     })
 }
 

@@ -492,8 +492,12 @@ impl MediaSource for JellyfinSource {
             &folder_label,
             state.expected_total.max(state.seen_ids.len()),
         );
-        let _ =
-            library_db::remote::delete_remote_songs_not_in_item_ids(ORIGIN_KIND, &state.seen_ids);
+        let removed_hashes =
+            library_db::remote::delete_remote_songs_not_in_item_ids(ORIGIN_KIND, &state.seen_ids)
+                .unwrap_or_default();
+        for hash in &removed_hashes {
+            crate::analyzer::purge_song_analysis_data(hash);
+        }
 
         match self.fetch_playlists() {
             Ok(playlists) => {

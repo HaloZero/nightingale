@@ -188,6 +188,28 @@ impl CacheDir {
         }
     }
 
+    /// Removes every on-disk artifact for `hash` that `delete_song_cache`
+    /// deliberately leaves alone (downloaded YouTube source video, rendered
+    /// karaoke videos) -- for when the song itself is gone from the
+    /// library, not just being queued for re-analysis. Deliberately does
+    /// *not* touch `cover_path`: unlike these, cover art is
+    /// content-addressed by a hash of the image bytes, not `hash`, and can
+    /// be shared by other songs (e.g. the rest of the same album) --
+    /// deleting it by song hash would either miss it or, worse, delete a
+    /// still-referenced file for an unrelated song.
+    pub fn delete_all_song_files(&self, hash: &str) {
+        self.delete_song_cache(hash);
+        for path in [
+            self.karaoke_video_path(hash),
+            self.youtube_karaoke_video_path(hash),
+            self.youtube_video_path(hash),
+        ] {
+            if path.is_file() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
     pub fn delete_transcript_variants(&self, hash: &str) {
         if let Ok(entries) = std::fs::read_dir(&self.path) {
             for entry in entries.flatten() {

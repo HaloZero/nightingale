@@ -15,6 +15,7 @@ below.
 
 ### Fixes
 
+- Removing a song from the library (source file deleted then rescanned, a remote item removed upstream, or switching library sources) now purges its cached analysis: stems, transcript, lyrics, and rendered karaoke/YouTube videos, plus the matching analysis-queue, karaoke-video-status, and lookup/sync database rows. Previously these were orphaned on disk and in the database indefinitely. Cover art is intentionally left untouched, since it's cached by image content rather than by song and can be shared across songs (e.g. the rest of an album).
 - Analysis status sorting now orders ready songs by the transcript source shown in their status badge.
 - Forced lyric alignment now uses LRCLIB's synced-lyrics timestamps as per-line anchors when available, instead of aligning the whole song as a single block. This fixes lines landing several seconds early after a musical pause (e.g. a pre-chorus build) that the aligner previously collapsed.
 
