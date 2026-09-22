@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use axum::{
     body::Body,
@@ -18,10 +19,30 @@ struct ResolvedPath(PathBuf);
 
 impl ResolvedPath {
     fn resolve(input: &Path) -> Option<Self> {
+        let started = Instant::now();
         let canonical_input = std::fs::canonicalize(input).ok()?;
+        let input_elapsed = started.elapsed();
+        if input_elapsed.as_millis() > 250 {
+            tracing::warn!(
+                "media: canonicalizing input path took {}ms: {}",
+                input_elapsed.as_millis(),
+                input.display()
+            );
+        }
+
         let allowed_roots = allowed_roots();
         for root in allowed_roots {
-            if let Ok(canon_root) = std::fs::canonicalize(&root) {
+            let root_started = Instant::now();
+            let canon_root = std::fs::canonicalize(&root);
+            let root_elapsed = root_started.elapsed();
+            if root_elapsed.as_millis() > 250 {
+                tracing::warn!(
+                    "media: canonicalizing allowed root took {}ms: {}",
+                    root_elapsed.as_millis(),
+                    root.display()
+                );
+            }
+            if let Ok(canon_root) = canon_root {
                 if canonical_input.starts_with(&canon_root) {
                     return Some(Self(canonical_input));
                 }
@@ -40,7 +61,15 @@ fn allowed_roots() -> Vec<PathBuf> {
         app_core::nightingale_dir(),
         app_core::default_nightingale_dir(),
     ];
+    let config_started = Instant::now();
     let config = app_core::AppConfig::load();
+    let config_elapsed = config_started.elapsed();
+    if config_elapsed.as_millis() > 250 {
+        tracing::warn!(
+            "media: AppConfig::load() took {}ms while resolving allowed roots",
+            config_elapsed.as_millis()
+        );
+    }
     roots.push(config.effective_data_path());
     if let Some(app_core::LibrarySource::Folder { path }) = config.library_source.as_ref() {
         roots.push(path.clone());
