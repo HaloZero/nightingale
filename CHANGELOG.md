@@ -16,6 +16,7 @@ below.
 ### Improvements
 
 - The self-hosted server now logs a warning with elapsed time when resolving a media file path (canonicalizing the request path, an allowed root, or loading config to determine allowed roots) takes over 250ms, to help diagnose slow first-load requests after the library volume has been idle.
+- Playback on mobile web no longer loads or renders decorative backgrounds (shaders, Pixabay clips, YouTube backgrounds, or a video-karaoke song's own bundled video), and skips fetching/preparing them entirely, so a phone browser only has to load audio and lyrics. Desktop and the Tauri app are unaffected. The theme/flavor touch controls and their status text are hidden on mobile web accordingly.
 
 ### Fixes
 

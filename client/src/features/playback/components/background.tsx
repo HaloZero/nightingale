@@ -3,6 +3,7 @@ import { memo } from 'react';
 import { usePlaybackMicActions } from '@/features/playback/providers/playback-mic-context';
 import { usePlaybackThemeState } from '@/features/playback/providers/playback-theme-context';
 import { usePlaybackTransportState } from '@/features/playback/providers/playback-transport-context';
+import { useIsMobileWeb } from '@/shared/hooks/use-is-mobile';
 
 import { PixabayVideo } from './pixabay-video';
 import { ShaderVisualizer } from './shader-visualizer';
@@ -23,9 +24,18 @@ function ShaderBranch({ themeIndex, isPlaying }: { themeIndex: number; isPlaying
 }
 
 function BackgroundImpl() {
+  const isMobileWeb = useIsMobileWeb();
   const { isReady, isPlaying } = usePlaybackTransportState();
   const { themeIndex, videoFlavor, sourceVideoPath, youtubeBackground, pixabayRotationEnabled } =
     usePlaybackThemeState();
+
+  // Shaders, Pixabay clips, the song's own video, and YouTube backgrounds
+  // are all decorative on top of lyrics/audio -- skip mounting every one of
+  // them on mobile web so no background bytes compete with the audio/lyrics
+  // fetch on a constrained connection.
+  if (isMobileWeb) {
+    return null;
+  }
 
   if (!isReady) {
     return (

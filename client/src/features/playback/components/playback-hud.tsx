@@ -13,6 +13,7 @@ import {
   usePlaybackTransportState,
 } from '@/features/playback/providers';
 import { computeLyricGapCaption, findCurrentSegment } from '@/features/playback/utils/lyrics-gap';
+import { useIsMobileWeb } from '@/shared/hooks/use-is-mobile';
 import type { AppConfig } from '@/types/AppConfig';
 
 import { isPixabayTheme, themeName } from './theme';
@@ -97,6 +98,30 @@ function TouchButton({
   );
 }
 
+function ThemeHint({
+  show,
+  showShortcuts,
+  themeIndex,
+  videoFlavor,
+}: {
+  show: boolean;
+  showShortcuts: boolean;
+  themeIndex: number;
+  videoFlavor: VideoFlavor;
+}) {
+  if (!show) {
+    return null;
+  }
+
+  return (
+    <HintText>
+      {showShortcuts
+        ? formatThemeText(themeIndex, videoFlavor)
+        : `Theme: ${themeName(themeIndex, videoFlavor)}`}
+    </HintText>
+  );
+}
+
 function SettingsInfo({
   guideVolume,
   guideAvailable,
@@ -106,6 +131,7 @@ function SettingsInfo({
   themeIndex,
   videoFlavor,
   showShortcuts,
+  showTheme = true,
 }: {
   guideVolume: number;
   guideAvailable: boolean;
@@ -115,6 +141,7 @@ function SettingsInfo({
   themeIndex: number;
   videoFlavor: VideoFlavor;
   showShortcuts: boolean;
+  showTheme?: boolean;
 }) {
   return (
     <div className="flex flex-col items-end">
@@ -133,11 +160,12 @@ function SettingsInfo({
         Monitor: {micMonitorUserEnabled ? 'ON' : 'OFF'}
         {showShortcuts ? ' [R]' : ''}
       </HintText>
-      <HintText>
-        {showShortcuts
-          ? formatThemeText(themeIndex, videoFlavor)
-          : `Theme: ${themeName(themeIndex, videoFlavor)}`}
-      </HintText>
+      <ThemeHint
+        show={showTheme}
+        showShortcuts={showShortcuts}
+        themeIndex={themeIndex}
+        videoFlavor={videoFlavor}
+      />
       {showShortcuts && <HintText>[ESC] Back</HintText>}
     </div>
   );
@@ -153,6 +181,7 @@ function TouchControls({
   position: PlaybackHudPosition;
 }) {
   const [open, setOpen] = useState(false);
+  const isMobileWeb = useIsMobileWeb();
   const { guideVolume, guideAvailable } = usePlaybackTransportState();
   const { setGuideVolume, handlePause } = usePlaybackTransportActions();
   const { micUserEnabled, micName, micMonitorUserEnabled } = usePlaybackMicState();
@@ -188,6 +217,7 @@ function TouchControls({
           themeIndex={themeIndex}
           videoFlavor={videoFlavor}
           showShortcuts={false}
+          showTheme={!isMobileWeb}
         />
       </div>
 
@@ -225,12 +255,16 @@ function TouchControls({
             label={micMonitorUserEnabled ? 'Monitor Off' : 'Monitor On'}
             onClick={handleToggleMicMonitor}
           />
-          <TouchButton label="Theme" onClick={cycleTheme} />
-          <TouchButton
-            label="Flavor"
-            onClick={cycleFlavor}
-            disabled={!isPixabayTheme(themeIndex)}
-          />
+          {!isMobileWeb && (
+            <>
+              <TouchButton label="Theme" onClick={cycleTheme} />
+              <TouchButton
+                label="Flavor"
+                onClick={cycleFlavor}
+                disabled={!isPixabayTheme(themeIndex)}
+              />
+            </>
+          )}
         </div>
       )}
     </div>
@@ -336,7 +370,8 @@ function PlaybackHudImpl({
   const gapCaptionRef = useRef<HTMLOutputElement>(null);
   const gapHintRef = useRef(0);
 
-  const showPixabayCredit = isPixabayTheme(themeIndex);
+  const isMobileWeb = useIsMobileWeb();
+  const showPixabayCredit = isPixabayTheme(themeIndex) && !isMobileWeb;
   const hasTouch = useHasTouchInput();
 
   // Update playback text without triggering React renders every frame.
@@ -445,6 +480,7 @@ function PlaybackHudImpl({
               themeIndex={themeIndex}
               videoFlavor={videoFlavor}
               showShortcuts={!hasTouch}
+              showTheme={!isMobileWeb}
             />
           </div>
           <TouchControls config={config} hasTouch={hasTouch} position={position} />

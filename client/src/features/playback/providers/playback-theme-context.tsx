@@ -27,6 +27,7 @@ import {
 } from '@/features/playback/components/theme';
 import { usePlaybackConfigPersist } from '@/features/playback/hooks/use-playback-config-persist';
 import { FLAVORS, type VideoFlavor } from '@/features/playback/lib/video-flavor';
+import { useIsMobileWeb } from '@/shared/hooks/use-is-mobile';
 import type { AppConfig } from '@/types/AppConfig';
 import type { Song } from '@/types/Song';
 import type { YoutubeBackground } from '@/types/YoutubeBackground';
@@ -76,7 +77,14 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
   const initialTheme = config?.last_theme ?? 0;
   const initialVideoFlavor = config?.last_video_flavor ?? 0;
 
-  const [themeIndex, setThemeIndex] = useState(song.is_video ? SOURCE_VIDEO_INDEX : initialTheme);
+  // Mobile web never renders a background layer (see `Background`), so
+  // there's no reason to default into or fetch the source-video/YouTube
+  // slots -- that would otherwise pull a full-size video over the same
+  // connection the audio/lyrics need.
+  const isMobileWeb = useIsMobileWeb();
+  const hasSourceVideo = song.is_video && !isMobileWeb;
+
+  const [themeIndex, setThemeIndex] = useState(hasSourceVideo ? SOURCE_VIDEO_INDEX : initialTheme);
   const [flavorIndex, setFlavorIndex] = useState(initialVideoFlavor);
 
   const persistConfig = usePlaybackConfigPersist(config);
@@ -84,7 +92,7 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
   const [playableVideo, setPlayableVideo] = useState<PlayableVideo | null>(null);
 
   useEffect(() => {
-    if (!song.is_video) {
+    if (!hasSourceVideo) {
       return undefined;
     }
 
@@ -102,9 +110,9 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
     return () => {
       cancelled = true;
     };
-  }, [fileHash, song.is_video]);
+  }, [fileHash, hasSourceVideo]);
 
-  const sourceVideoPath = resolveSourceVideoPath(song, playableVideo);
+  const sourceVideoPath = hasSourceVideo ? resolveSourceVideoPath(song, playableVideo) : undefined;
 
   // Keyed by the `fileHash` a fetch was started for, so a song change
   // mid-flight doesn't let a stale response land as the current
@@ -118,6 +126,10 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
     youtubeBackgroundState.fileHash === fileHash ? youtubeBackgroundState.background : null;
 
   useEffect(() => {
+    if (isMobileWeb) {
+      return undefined;
+    }
+
     let cancelled = false;
 
     void loadYoutubeBackground(fileHash)
@@ -132,17 +144,17 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
     return () => {
       cancelled = true;
     };
-  }, [fileHash]);
+  }, [fileHash, isMobileWeb]);
 
   const cycleTheme = useCallback(() => {
     setThemeIndex((prev) => {
-      const next = nextThemeIndex(prev, song.is_video, youtubeBackground !== null);
+      const next = nextThemeIndex(prev, hasSourceVideo, youtubeBackground !== null);
       if (next !== SOURCE_VIDEO_INDEX && next !== YOUTUBE_INDEX) {
         persistConfig({ last_theme: next });
       }
       return next;
     });
-  }, [song.is_video, youtubeBackground, persistConfig]);
+  }, [hasSourceVideo, youtubeBackground, persistConfig]);
 
   const cycleFlavor = useCallback(() => {
     setFlavorIndex((prev) => {
@@ -159,7 +171,7 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
       videoFlavor: FLAVORS[flavorIndex % FLAVORS.length],
       sourceVideoPath,
       sourceVideoTempoRatio: song.tempo,
-      hasSourceVideo: song.is_video,
+      hasSourceVideo,
       youtubeBackground,
       pixabayRotationEnabled: config?.pixabay_video_rotation ?? false,
     }),
@@ -168,7 +180,7 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
       flavorIndex,
       sourceVideoPath,
       song.tempo,
-      song.is_video,
+      hasSourceVideo,
       youtubeBackground,
       config?.pixabay_video_rotation,
     ],

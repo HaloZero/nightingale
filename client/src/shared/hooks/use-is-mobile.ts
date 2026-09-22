@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { isTauri } from '@/bridge/runtime';
+
 const MOBILE_QUERY = '(max-width: 767px)';
 
 export function isMobileViewport(): boolean {
@@ -19,4 +21,12 @@ export function useIsMobile(): boolean {
   }, []);
 
   return isMobile;
+}
+
+/** Narrower than `useIsMobile`: excludes the Tauri desktop app so a shrunk
+ * desktop window doesn't get treated as a phone browser. Callers use this to
+ * skip mobile-web-only work (e.g. decorative background video). */
+export function useIsMobileWeb(): boolean {
+  const isMobile = useIsMobile();
+  return isMobile && !isTauri;
 }
