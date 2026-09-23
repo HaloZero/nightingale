@@ -13,6 +13,10 @@ below.
 
 ## [Unreleased]
 
+### Features
+
+- Added a dedicated search page (reachable from the profile menu) with a single search bar and no other library data loaded up front. Typing live-queries the whole library (any source, any analysis status) with ranked, typo-tolerant matching -- the same similarity scoring Chromecast voice commands already used -- and lists results with inline Play and Add-to-queue actions. The main library browser's search box is unchanged and still does plain substring matching.
+
 ### Improvements
 
 - The self-hosted server now logs a warning with elapsed time when resolving a media file path (canonicalizing the request path, an allowed root, or loading config to determine allowed roots) takes over 250ms, to help diagnose slow first-load requests after the library volume has been idle.

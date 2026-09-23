@@ -3,6 +3,7 @@ export const CACHE_STATS = ['cache-stats'];
 export const PROFILES = ['profiles'];
 export const PLAYBACK_QUEUE = ['playback-queue'];
 export const SONGS = ['songs'];
+export const SEARCH_SONGS = ['search-songs'];
 export const SONGS_META = ['songs-meta'];
 export const ANALYSIS_QUEUE = ['analysis-queue'];
 export const MENU = ['menu'];

@@ -81,6 +81,7 @@ pub use profile::ProfileStore;
 pub use scanner::start_scan;
 pub use search::{
     find_alternative_analyzed_songs, find_best_matching_local_song, find_song_by_hash,
+    search_songs_ranked,
 };
 pub use song::{Song, SongOrigin};
 pub use source::{

@@ -1,7 +1,7 @@
 use app_core::{
     clear_video_queue, detect_sync_offset_for_hash, ensure_mp3_stems_ready_payload,
     find_music_video_for_hash, load_lyrics_file, mark_video_queue_processing,
-    save_lyrics_and_realign, search_lrclib_for_hash, shift_key_done_payload,
+    save_lyrics_and_realign, search_lrclib_for_hash, search_songs_ranked, shift_key_done_payload,
     shift_tempo_done_payload, AnalysisQueue, AppConfig, CacheStats, FailureKind,
     LibraryMenuFilters, LibraryMenuItems, LibrarySource, LoadSongsParams, PixabayVideoDownloaded,
     PlaybackSession, ProfileStore, SongTarget, SongsStore, VideoProcessingQueue, VideoQueueKind,
@@ -335,6 +335,19 @@ async fn dispatch(state: AppState, name: &str, payload: Value) -> CmdResult {
                 .map_err(serde_err)?)
         }
         "load_songs_meta" => Ok(serde_json::to_value(SongsStore::load_meta()).map_err(serde_err)?),
+        "search_songs" => {
+            #[derive(Deserialize)]
+            struct Args {
+                query: String,
+                limit: usize,
+            }
+            let args: Args = deserialize(payload)?;
+            let results =
+                tokio::task::spawn_blocking(move || search_songs_ranked(&args.query, args.limit))
+                    .await
+                    .map_err(blocking_task_err)?;
+            Ok(serde_json::to_value(results).map_err(serde_err)?)
+        }
         "load_analysis_queue" => {
             Ok(serde_json::to_value(AnalysisQueue::load()).map_err(serde_err)?)
         }

@@ -7,6 +7,7 @@ import { UPDATES_SUPPORTED } from '@/bridge/platform';
 import { MenuIndex, MenuLayout } from '@/features/menu/menu';
 import { MenuFocusProvider } from '@/features/menu/providers/menu-focus-context';
 import { Playback } from '@/features/playback/playback';
+import { SearchPage } from '@/features/search/search-page';
 import { SettingsPage } from '@/features/settings/settings';
 import { useUpdate } from '@/features/updates/queries/use-update';
 import { Toaster } from '@/shared/components/ui/sonner';
@@ -35,6 +36,7 @@ const InnerWrapper = () => (
             <Route path="settings" element={<SettingsPage />} />
           </Route>
           <Route path="/playback" element={<Playback />} />
+          <Route path="/search" element={<SearchPage />} />
         </Routes>
       </BrowserRouter>
     </MenuFocusProvider>

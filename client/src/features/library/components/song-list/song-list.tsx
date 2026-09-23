@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 
 import type { PlaybackQueueEntry } from '@/bridge/playback-queue';
+import { songKey } from '@/features/library/lib/song-key';
 import { useAnalysisQueue, useSongs } from '@/features/library/queries/use-songs';
 import { useLibraryFilter } from '@/features/menu/hooks/use-library-filter';
 import { useSearch } from '@/features/menu/hooks/use-search';
@@ -22,7 +23,6 @@ import type { SongSortColumn } from '@/types/SongSortColumn';
 import { Filters, type SongListView } from './filters';
 import { Progress } from './progress';
 import { QueueSidebar } from './queue-sidebar';
-import { songKey } from './shared/song-key';
 import { SongDetailsSidebar } from './song-details-sidebar';
 import type { SongItemProps } from './types';
 import { SongGrid } from './views/song-grid';

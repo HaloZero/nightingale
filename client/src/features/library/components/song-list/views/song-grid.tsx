@@ -1,7 +1,7 @@
+import { songKey } from '@/features/library/lib/song-key';
 import { useBestScoresBySongForActiveProfile } from '@/features/profiles/hooks/use-best-scores-by-song';
 import type { Song } from '@/types/Song';
 
-import { songKey } from '../shared/song-key';
 import type { SongItemProps } from '../types';
 import { SongGridCard } from './song-grid-card';
 

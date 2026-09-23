@@ -22,6 +22,16 @@ export const loadSongsByHashes = async (fileHashes: string[]): Promise<Song[]> =
   return await invoke<Song[]>('load_songs_by_hashes', { fileHashes });
 };
 
+/**
+ * Ranked, typo-tolerant free-text search across the whole library (any
+ * origin, any analysis status). Backed by the same similarity scoring as
+ * Chromecast voice matching -- unlike `loadSongs`'s plain substring search
+ * used by the main library browser, which is intentionally left alone.
+ */
+export const searchSongs = async (query: string, limit: number): Promise<Song[]> => {
+  return await invoke<Song[]>('search_songs', { query, limit });
+};
+
 export const loadSongsMeta = async (): Promise<SongsMeta> => {
   return await invoke<SongsMeta>('load_songs_meta');
 };

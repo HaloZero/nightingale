@@ -100,6 +100,11 @@ pub(crate) fn load_songs_meta() -> SongsMeta {
 }
 
 #[tauri::command]
+pub(crate) fn search_songs(query: String, limit: usize) -> Vec<Song> {
+    app_core::search_songs_ranked(&query, limit)
+}
+
+#[tauri::command]
 pub(crate) fn load_analysis_queue() -> AnalysisQueue {
     AnalysisQueue::load()
 }

@@ -6,6 +6,7 @@ import {
   HeartIcon,
   InfoIcon,
   RefreshCcwDotIcon,
+  SearchIcon,
   TrophyIcon,
   UserIcon,
 } from 'lucide-react';
@@ -203,6 +204,18 @@ export const Actions = ({ registerCallback, focusedSidebarIndex }: ActionsProps)
               <DropdownMenuItem onClick={() => setMode('leaderboards')}>
                 <TrophyIcon />
                 Leaderboards
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setDropdownOpen(false);
+                  if (isMobile) {
+                    setOpen(false);
+                  }
+                  void navigate('/search');
+                }}
+              >
+                <SearchIcon />
+                Search
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {

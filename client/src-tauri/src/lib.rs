@@ -37,7 +37,7 @@ use profile::{add_score, create_profile, delete_profile, load_profiles, switch_p
 use scanner::{
     clear_library_source, jellyfin_login, jellyfin_ping, load_analysis_queue,
     load_library_menu_items, load_songs, load_songs_by_hashes, load_songs_meta, navidrome_login,
-    navidrome_ping, plex_begin_pin, plex_manual_login, plex_ping, plex_poll_pin,
+    navidrome_ping, plex_begin_pin, plex_manual_login, plex_ping, plex_poll_pin, search_songs,
     set_library_source, trigger_scan,
 };
 use tauri::{Manager, RunEvent, WebviewWindowBuilder};
@@ -138,6 +138,7 @@ pub fn run() {
             load_songs,
             load_songs_by_hashes,
             load_songs_meta,
+            search_songs,
             load_analysis_queue,
             load_library_menu_items,
             // Analyzer
