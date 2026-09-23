@@ -25,18 +25,50 @@ fn normalize(s: &str) -> String {
     s.trim().to_lowercase()
 }
 
-/// Highest similarity between `query` (already normalized by the caller)
-/// and `song`'s title, "artist title", or album -- floored high whenever
-/// `query` is a literal substring of one of them, so an exact or partial
-/// contains-match never ranks below a merely-similar fuzzy one.
+/// Similarity between `query` (already normalized by the caller) and
+/// `song`'s title/artist/album. Comparing word-by-word (rather than one
+/// Jaro-Winkler call against the whole concatenated string) matters because
+/// a short, possibly-typo'd query against a long multi-word title scores
+/// poorly by whole-string similarity even when it's a near-perfect match for
+/// one word in it -- e.g. "kathmandoo" vs "Kathmandu (Face It, You're
+/// Caviar, I'm Hotdogs)" needs to compare against "kathmandu" alone, not the
+/// full title. Every query word must find *some* good match somewhere in
+/// the candidate's words (the `min` below) -- same AND-per-word requirement
+/// as the substring search this replaces, just typo-tolerant per word
+/// instead of exact. Floored high whenever `query` is a literal substring of
+/// title/artist/album, so an exact or partial contains-match never ranks
+/// below a merely-similar fuzzy one.
 fn score_song(query: &str, song: &Song) -> f64 {
     let title = normalize(&song.title);
-    let artist_title = normalize(&format!("{} {}", song.artist, song.title));
+    let artist = normalize(&song.artist);
     let album = normalize(&song.album);
+    let artist_title = format!("{artist} {title}");
 
-    let fuzzy = strsim::jaro_winkler(query, &title)
-        .max(strsim::jaro_winkler(query, &artist_title))
+    let candidate_words: Vec<&str> = title
+        .split_whitespace()
+        .chain(artist.split_whitespace())
+        .chain(album.split_whitespace())
+        .collect();
+
+    let per_word = query
+        .split_whitespace()
+        .map(|query_word| {
+            candidate_words
+                .iter()
+                .map(|candidate_word| strsim::jaro_winkler(query_word, candidate_word))
+                .fold(0.0_f64, f64::max)
+        })
+        .fold(f64::INFINITY, f64::min);
+
+    // A full-phrase comparison in addition to the per-word one: helps a
+    // multi-word query that closely matches the whole "artist title" (e.g. a
+    // spoken Chromecast command) outscore one that merely matches each word
+    // in isolation.
+    let whole_phrase = strsim::jaro_winkler(query, &artist_title)
+        .max(strsim::jaro_winkler(query, &title))
         .max(strsim::jaro_winkler(query, &album));
+
+    let fuzzy = per_word.max(whole_phrase);
 
     if title.contains(query) || artist_title.contains(query) || album.contains(query) {
         fuzzy.max(0.9)
