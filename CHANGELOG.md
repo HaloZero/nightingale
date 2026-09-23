@@ -22,6 +22,10 @@ below.
 - The self-hosted server now logs a warning with elapsed time when resolving a media file path (canonicalizing the request path, an allowed root, or loading config to determine allowed roots) takes over 250ms, to help diagnose slow first-load requests after the library volume has been idle.
 - Playback on mobile web no longer loads or renders decorative backgrounds (shaders, Pixabay clips, YouTube backgrounds, or a video-karaoke song's own bundled video), and skips fetching/preparing them entirely, so a phone browser only has to load audio and lyrics. Desktop and the Tauri app are unaffected. The theme/flavor touch controls and their status text are hidden on mobile web accordingly.
 
+### Removed
+
+- Removed the custom Chromecast receiver (`/api/customcast`, the `receiver_app_id` config option, and the separate `/receiver.html` web app) after the Cast Developer Console app registration for it never got past `LAUNCH_ERROR`/`NOT_FOUND`. Casting to the stock `DefaultMediaReceiver` via `/api/cast` (raw audio, or a pre-rendered karaoke video when `chromecast.karaoke_video` is set) is unaffected.
+
 ### Fixes
 
 - Removing a song from the library (source file deleted then rescanned, a remote item removed upstream, or switching library sources) now purges its cached analysis: stems, transcript, lyrics, and rendered karaoke/YouTube videos, plus the matching analysis-queue, karaoke-video-status, and lookup/sync database rows. Previously these were orphaned on disk and in the database indefinitely. Cover art is intentionally left untouched, since it's cached by image content rather than by song and can be shared across songs (e.g. the rest of an album).

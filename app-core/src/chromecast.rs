@@ -2,15 +2,8 @@
 //! `AppConfig.chromecast`. The device is hand-configured (host/port) rather
 //! than discovered over mDNS -- we already know exactly which device to hit.
 //!
-//! Two receiver paths, chosen by `ChromecastConfig.receiver_app_id`:
-//!  - `None` (default): Google's stock `DefaultMediaReceiver`, handed a URL
-//!    to the raw audio or a pre-rendered karaoke-video MP4 via `media.load`
-//!    -- the original behavior, unchanged.
-//!  - `Some(app_id)`: our custom Cast Receiver (`client/src/pages/receiver`),
-//!    launched by ID and driven by a `crate::cast_protocol::CastReceiverMessage`
-//!    broadcast on a custom namespace instead of `media.load` -- the
-//!    receiver fetches everything else (transcript, stems, background)
-//!    itself, same-origin against this server.
+//! Launches Google's stock `DefaultMediaReceiver` and hands it a URL to the
+//! raw audio or a pre-rendered karaoke-video MP4 via `media.load`.
 //!
 //! `cast_song_to_configured_device` is blocking (synchronous TCP via
 //! `rust_cast`); callers on an async runtime must run it via
@@ -29,21 +22,12 @@ use rust_cast::{
 };
 use tracing::{info, warn};
 
-use crate::cast_protocol::{CAST_NAMESPACE, CastReceiverMessage};
 use crate::config::ChromecastConfig;
 use crate::error::NightingaleError;
 use crate::song::Song;
 
 const DEFAULT_SERVER_PORT: u16 = 8080;
 const RECEIVER_DESTINATION_ID: &str = "receiver-0";
-
-/// How long to wait after connecting to the freshly-launched custom
-/// receiver's transport before broadcasting the load message -- the
-/// receiver page needs time to finish loading its JS bundle and register
-/// `context.addCustomMessageListener` before it can hear anything.
-/// `broadcast_message` has no ack, so a message sent too early is silently
-/// lost. MVP mitigation; tune against real device/network timing.
-const RECEIVER_BOOTSTRAP_DELAY_MS: u64 = 3000;
 
 static CRYPTO_PROVIDER_INIT: Once = Once::new();
 
@@ -95,27 +79,10 @@ fn server_base_url(config: &ChromecastConfig) -> Result<String, NightingaleError
 }
 
 /// Casts `song` (must be `SongOrigin::LocalFile`) to the device described by
-/// `config`. `guide_volume` (0.0-1.0) only applies to the custom-receiver
-/// path -- the DefaultMediaReceiver path has no live audio mixing to
-/// control, it just plays a URL.
-///
-/// `force_custom_receiver` is the *only* thing that selects the custom
-/// receiver -- merely having `config.receiver_app_id` set does **not**
-/// switch this function's default behavior. That was tried first and
-/// reverted: it meant setting `receiver_app_id` (needed to make
-/// `/api/customcast` work at all) silently changed what every existing
-/// `/api/cast` URL/automation did, with no way to opt back out short of
-/// unsetting the field again. Now `receiver_app_id` only *gates* the custom
-/// path (still required, still a hard error if missing when
-/// `force_custom_receiver` is true) -- it doesn't *select* it. `/api/cast`
-/// (`force_custom_receiver: false`) always takes the DefaultMediaReceiver
-/// path; only `/api/customcast` (`force_custom_receiver: true`,
-/// `client/src-server/src/cast.rs`) ever reaches the custom receiver.
+/// `config`.
 pub fn cast_song_to_configured_device(
     config: &ChromecastConfig,
     song: &Song,
-    guide_volume: Option<f64>,
-    force_custom_receiver: bool,
 ) -> Result<(), NightingaleError> {
     ensure_crypto_provider();
 
@@ -123,21 +90,6 @@ pub fn cast_song_to_configured_device(
         "[chromecast] casting {:?} by {:?} (file_hash={}) to {}:{}",
         song.title, song.artist, song.file_hash, config.host, config.port
     );
-
-    if force_custom_receiver && config.receiver_app_id.is_none() {
-        return Err(NightingaleError::Other(
-            "force_custom_receiver requested but chromecast.receiver_app_id is not set in \
-             config.json"
-                .to_string(),
-        ));
-    }
-
-    if force_custom_receiver && config.karaoke_video {
-        warn!(
-            "[chromecast] karaoke_video is set but ignored for this cast -- the custom receiver \
-             always renders background + lyrics live instead of playing a pre-rendered video"
-        );
-    }
 
     let device = CastDevice::connect_without_host_verification(config.host.as_str(), config.port)
         .map_err(|e| NightingaleError::Other(format!("chromecast connect failed: {e:?}")))?;
@@ -152,24 +104,7 @@ pub fn cast_song_to_configured_device(
 
     stop_running_apps(&device);
 
-    let selected_app_id = config
-        .receiver_app_id
-        .as_deref()
-        .filter(|_| force_custom_receiver);
-    info!(
-        "[chromecast] receiver path decision: force_custom_receiver={force_custom_receiver} \
-         configured receiver_app_id={:?} -> {}",
-        config.receiver_app_id,
-        match selected_app_id {
-            Some(app_id) => format!("custom receiver app_id={app_id}"),
-            None => "DefaultMediaReceiver".to_string(),
-        }
-    );
-
-    match selected_app_id {
-        Some(app_id) => cast_via_custom_receiver(&device, app_id, song, guide_volume),
-        None => cast_via_default_media_receiver(&device, config, song),
-    }
+    cast_via_default_media_receiver(&device, config, song)
 }
 
 /// `LAUNCH` on an app_id that's already running is effectively a no-op from
@@ -182,7 +117,7 @@ pub fn cast_song_to_configured_device(
 /// plays, confirmed by `Status`, just not on screen. Explicitly stopping
 /// whatever's already running first forces a real relaunch -- and therefore
 /// a real CEC trigger -- every single cast, not just the first one after the
-/// device was idle. Shared by both receiver paths below.
+/// device was idle.
 fn stop_running_apps(device: &CastDevice<'_>) {
     match device.receiver.get_status() {
         Ok(status) => {
@@ -283,63 +218,6 @@ fn cast_via_default_media_receiver(
     // Give the receiver a moment to process the load before we drop the
     // connection -- playback keeps going on the device after we disconnect,
     // but disconnecting mid-handshake has been observed to abort the load.
-    std::thread::sleep(Duration::from_millis(500));
-
-    Ok(())
-}
-
-/// Builds the `Load` message broadcast to the custom receiver -- split out
-/// from `cast_via_custom_receiver` so it's unit-testable without a device
-/// connection.
-fn build_load_message(song: &Song, guide_volume: Option<f64>) -> CastReceiverMessage {
-    CastReceiverMessage::Load {
-        file_hash: song.file_hash.clone(),
-        guide_volume: guide_volume.map(|v| v.clamp(0.0, 1.0)),
-    }
-}
-
-/// Custom-receiver casting path: launch our own receiver by `app_id` and
-/// tell it what to play over `crate::cast_protocol::CAST_NAMESPACE` instead
-/// of `media.load`. The receiver independently fetches the transcript,
-/// audio stems, and background asset same-origin against this server once
-/// it has `file_hash` -- nothing else needs to cross the Cast connection,
-/// so we disconnect right after broadcasting (same fire-and-forget shape as
-/// the DefaultMediaReceiver path above).
-fn cast_via_custom_receiver(
-    device: &CastDevice<'_>,
-    app_id: &str,
-    song: &Song,
-    guide_volume: Option<f64>,
-) -> Result<(), NightingaleError> {
-    info!("[chromecast] requesting launch of custom receiver app_id={app_id}");
-    let app = device
-        .receiver
-        .launch_app(&CastDeviceApp::Custom(app_id.to_string()))
-        .map_err(|e| {
-            NightingaleError::Other(format!(
-                "custom receiver launch failed for app_id={app_id}: {e:?}"
-            ))
-        })?;
-    info!(
-        "[chromecast] launched custom receiver app_id={} display_name={:?} transport_id={} session_id={}",
-        app.app_id, app.display_name, app.transport_id, app.session_id
-    );
-
-    device
-        .connection
-        .connect(app.transport_id.as_str())
-        .map_err(|e| NightingaleError::Other(format!("chromecast transport connect failed: {e:?}")))?;
-    info!("[chromecast] transport connection established");
-
-    std::thread::sleep(Duration::from_millis(RECEIVER_BOOTSTRAP_DELAY_MS));
-
-    let message = build_load_message(song, guide_volume);
-    device
-        .receiver
-        .broadcast_message(CAST_NAMESPACE, &message)
-        .map_err(|e| NightingaleError::Other(format!("chromecast broadcast_message failed: {e:?}")))?;
-    info!("[chromecast] broadcast load message: {message:?}");
-
     std::thread::sleep(Duration::from_millis(500));
 
     Ok(())

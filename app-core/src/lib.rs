@@ -1,7 +1,6 @@
 mod analyzer;
 mod audiodb;
 mod cache;
-mod cast_protocol;
 mod chromecast;
 mod config;
 mod error;
@@ -43,7 +42,6 @@ pub use cache::{
     clear_videos, default_nightingale_dir, nightingale_dir, normalized_target_path, reels_dir,
     same_path, set_default_data_path,
 };
-pub use cast_protocol::{CAST_NAMESPACE, CastReceiverMessage};
 pub use chromecast::cast_song_to_configured_device;
 pub use config::{AppConfig, ChromecastConfig, LibrarySource};
 pub use karaoke_video::{

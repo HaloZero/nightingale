@@ -54,7 +54,6 @@ const chromecastConfigSchema: z.ZodType<ChromecastConfig> = z.object({
   port: z.number(),
   server_base_url: nullableString,
   karaoke_video: z.boolean(),
-  receiver_app_id: nullableString,
 });
 
 export const appConfigSchema: z.ZodType<AppConfig> = z.object({

@@ -224,23 +224,11 @@ function segmentVisibility(
   };
 }
 
-/** Style-override hook for alternate render targets (e.g. the Chromecast
- * receiver) -- every field defaults to today's exact desktop appearance, so
- * the desktop call site needs no changes. */
-type LyricsDisplayClassNames = {
-  container?: string;
-  currentPill?: string;
-  currentLine?: string;
-  nextPill?: string;
-  nextLine?: string;
-};
-
 type LyricsDisplayProps = {
   segments: Segment[];
   verticalPosition?: LyricsVerticalPosition | null;
   horizontalPosition?: LyricsHorizontalPosition | null;
   scale?: number | null;
-  classNames?: LyricsDisplayClassNames;
 };
 
 const lyricPositions = (props: LyricsDisplayProps) => ({
@@ -360,13 +348,6 @@ function syncSegmentVisibility(options: SyncVisibilityOptions): (() => void) | u
   };
 }
 
-function lineFontSizeStyle(
-  override: string | undefined,
-  fontSize: string,
-): { fontSize: string } | undefined {
-  return override === undefined ? { fontSize } : undefined;
-}
-
 type CurrentLinePillProps = {
   containerRef: RefObject<HTMLDivElement | null>;
   countdownRef: RefObject<HTMLSpanElement | null>;
@@ -374,7 +355,6 @@ type CurrentLinePillProps = {
   hasReading: boolean;
   horizontal: LyricsHorizontalPosition;
   fontSize: string;
-  classNames: LyricsDisplayClassNames | undefined;
   wordRefs: RefObject<(HTMLSpanElement | null)[]>;
 };
 
@@ -385,26 +365,24 @@ function CurrentLinePill({
   hasReading: segmentHasReading,
   horizontal,
   fontSize,
-  classNames,
   wordRefs,
 }: CurrentLinePillProps) {
   return (
     <div
       ref={containerRef}
-      className={
-        classNames?.currentPill ??
-        'relative max-w-full rounded-lg bg-black/40 px-3 py-2 sm:px-5 sm:py-2.5'
-      }
+      className="relative max-w-full rounded-lg bg-black/40 px-3 py-2 sm:px-5 sm:py-2.5"
       style={{ display: 'none' }}
     >
       <span ref={countdownRef} className={COUNTDOWN_CLASS} style={{ display: 'none' }} />
       {segment.words.length > 0 && (
         <p
-          className={
-            classNames?.currentLine ??
-            lineClass(segmentHasReading, 'leading-tight font-bold', 'gap-x-3 gap-y-1', horizontal)
-          }
-          style={lineFontSizeStyle(classNames?.currentLine, fontSize)}
+          className={lineClass(
+            segmentHasReading,
+            'leading-tight font-bold',
+            'gap-x-3 gap-y-1',
+            horizontal,
+          )}
+          style={{ fontSize }}
         >
           {segment.words.map((word, wi) => (
             <WordToken
@@ -431,7 +409,6 @@ type NextLinePillProps = {
   hasReading: boolean;
   horizontal: LyricsHorizontalPosition;
   fontSize: string;
-  classNames: LyricsDisplayClassNames | undefined;
 };
 
 function NextLinePill({
@@ -440,20 +417,16 @@ function NextLinePill({
   hasReading: segmentHasReading,
   horizontal,
   fontSize,
-  classNames,
 }: NextLinePillProps) {
   return (
     <div
       ref={containerRef}
-      className={classNames?.nextPill ?? 'max-w-full rounded-md bg-black/25 px-3 py-1.5 sm:px-4'}
+      className="max-w-full rounded-md bg-black/25 px-3 py-1.5 sm:px-4"
       style={{ display: 'none' }}
     >
       <p
-        className={
-          classNames?.nextLine ??
-          lineClass(segmentHasReading, 'leading-tight', 'gap-x-2 gap-y-0.5', horizontal)
-        }
-        style={lineFontSizeStyle(classNames?.nextLine, fontSize)}
+        className={lineClass(segmentHasReading, 'leading-tight', 'gap-x-2 gap-y-0.5', horizontal)}
+        style={{ fontSize }}
       >
         {segment.words.map((word, wi) => (
           <WordToken
@@ -471,7 +444,7 @@ function NextLinePill({
 }
 
 function LyricsDisplayImpl(props: LyricsDisplayProps) {
-  const { segments, classNames } = props;
+  const { segments } = props;
   const { vertical, horizontal } = lyricPositions(props);
   const scale = clampPlaybackScale(props.scale);
   const currentFontSize = `clamp(${1.35 * scale}rem, ${7 * scale}svh, ${2.5 * scale}rem)`;
@@ -539,7 +512,6 @@ function LyricsDisplayImpl(props: LyricsDisplayProps) {
         'pointer-events-none absolute inset-x-0 z-10 flex flex-col gap-2 overflow-hidden px-3 sm:px-10',
         verticalClass[vertical],
         horizontalItemsClass[horizontal],
-        classNames?.container,
       )}
     >
       <CurrentLinePill
@@ -549,7 +521,6 @@ function LyricsDisplayImpl(props: LyricsDisplayProps) {
         hasReading={segHasReading}
         horizontal={horizontal}
         fontSize={currentFontSize}
-        classNames={classNames}
         wordRefs={wordRefs}
       />
 
@@ -560,7 +531,6 @@ function LyricsDisplayImpl(props: LyricsDisplayProps) {
           hasReading={nextHasReading}
           horizontal={horizontal}
           fontSize={nextFontSize}
-          classNames={classNames}
         />
       )}
     </div>
