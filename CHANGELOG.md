@@ -15,6 +15,7 @@ below.
 
 ### Features
 
+- Added a "Has no karaoke videos" item to the library sidebar's Karaoke Video section, for filtering to songs with neither a rendered local karaoke video nor a YouTube-background one.
 - Added a dedicated search page (reachable from the profile menu) with a single search bar and no other library data loaded up front. Typing live-queries the whole library (any source, any analysis status) with ranked, typo-tolerant matching -- the same similarity scoring Chromecast voice commands already used -- and lists results with inline Play and Add-to-queue actions. The main library browser's search box is unchanged and still does plain substring matching.
 
 ### Improvements

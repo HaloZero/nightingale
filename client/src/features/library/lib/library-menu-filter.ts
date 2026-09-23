@@ -50,6 +50,7 @@ const KARAOKE_VIDEO_FILTERS: Record<string, LibraryMenuFilters> = {
     ...EMPTY_LIBRARY_FILTER,
     query: 'has_youtube_karaoke_video_outdated',
   },
+  no_karaoke_video: { ...EMPTY_LIBRARY_FILTER, query: 'no_karaoke_video' },
 };
 
 // Sections backed by a lookup table of pre-built filters (see `HOT_FILTERS`

@@ -216,6 +216,11 @@ fn append_structural_filters(
                 "json_extract(s.payload, '$.youtube_karaoke_video_version') > 0 AND json_extract(s.payload, '$.youtube_karaoke_video_version') != {}",
                 crate::karaoke_video::RENDER_VERSION
             )),
+            "no_karaoke_video" => where_parts.push(
+                "json_extract(s.payload, '$.karaoke_video_version') = 0 AND \
+                 json_extract(s.payload, '$.youtube_karaoke_video_version') = 0"
+                    .to_string(),
+            ),
             _ => {}
         }
     }
@@ -751,6 +756,21 @@ pub(crate) fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
 
+        // Unlike the four counts above (read from `karaoke_video_status`,
+        // which only has rows for songs that have actually been rendered at
+        // least once), "no karaoke video" needs every song with neither
+        // version set -- including ones never rendered at all, so never
+        // present in that table -- hence querying `songs` directly instead.
+        let (no_karaoke_total, no_karaoke_analysed): (i64, i64) = c.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN s.is_analyzed = 1 THEN 1 ELSE 0 END), 0)
+             FROM songs s
+             WHERE json_extract(s.payload, '$.karaoke_video_version') = 0
+               AND json_extract(s.payload, '$.youtube_karaoke_video_version') = 0",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+
         let karaoke_video = vec![
             LibraryMenuItem {
                 value: "has_karaoke_video".into(),
@@ -783,6 +803,14 @@ pub(crate) fn query_library_menu_items() -> rusqlite::Result<LibraryMenuItems> {
                 queued_count: 0,
                 analysing_count: 0,
                 count: youtube_outdated_total as u64,
+            },
+            LibraryMenuItem {
+                value: "no_karaoke_video".into(),
+                label: "Has no karaoke videos".into(),
+                analysed_count: no_karaoke_analysed as u64,
+                queued_count: 0,
+                analysing_count: 0,
+                count: no_karaoke_total as u64,
             },
         ];
 
