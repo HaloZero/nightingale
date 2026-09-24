@@ -22,7 +22,7 @@ use crate::state::AppState;
 #[command(name = "server", about = "Nightingale self-hosted web server.")]
 struct Args {
     /// Address to bind the HTTP/WS listener to.
-    #[arg(long, env = "NIGHTINGALE_BIND", default_value = "0.0.0.0:8080")]
+    #[arg(long, env = "NIGHTINGALE_BIND", default_value = "0.0.0.0:8591")]
     bind: SocketAddr,
 
     /// Override the data folder. Equivalent to `NIGHTINGALE_DATA_PATH=...`.
