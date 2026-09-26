@@ -234,6 +234,11 @@ const SEPARATION_SNAPSHOT_DELAY: Duration = Duration::from_secs(120);
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long to wait for the analyzer server to ack an `idle_cleanup` command
+/// before giving up on it. Generous: this only fires once the local queue is
+/// empty, so it's never on the critical path of getting to the next song.
+const IDLE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
+
 struct ServerProcess {
     child: Child,
     reader: BufReader<TcpStream>,
@@ -1274,6 +1279,8 @@ fn spawn_worker() {
                 if AppConfig::load().parallel_analysis_only() {
                     state.worker_running = false;
                     state.active_hash = None;
+                    drop(state);
+                    send_idle_cleanup();
                     return;
                 }
                 match state.queue.pop_front() {
@@ -1284,6 +1291,8 @@ fn spawn_worker() {
                     None => {
                         state.worker_running = false;
                         state.active_hash = None;
+                        drop(state);
+                        send_idle_cleanup();
                         return;
                     }
                 }
@@ -1295,6 +1304,40 @@ fn spawn_worker() {
             state.active_hash = None;
         }
     });
+}
+
+/// Tells a running analyzer server to release the model caches it only keeps
+/// warm for back-to-back songs (notably the cached MLX Whisper model and
+/// MLX's own unified-memory buffer cache -- see `gpu.release_idle_caches` in
+/// the analyzer) now that the local worker has nothing left queued. No-ops if
+/// no server is running -- there's nothing to clean up -- and is best-effort
+/// otherwise: any failure just leaves the server's caches warm, which costs
+/// memory but not correctness, so it's logged and swallowed rather than
+/// disrupting the worker's shutdown.
+fn send_idle_cleanup() {
+    let mut guard = lock_unpoisoned(&ANALYZER_SERVER);
+    let Some(server) = guard.as_mut() else {
+        return;
+    };
+
+    if let Err(e) = server.writer.write_all(b"{\"type\":\"idle_cleanup\"}\n") {
+        warn!("[analyzer] Failed to send idle cleanup: {e}");
+        return;
+    }
+    if let Err(e) = server.writer.flush() {
+        warn!("[analyzer] Failed to flush idle cleanup: {e}");
+        return;
+    }
+
+    let stream = server.reader.get_ref();
+    let _ = stream.set_read_timeout(Some(IDLE_CLEANUP_TIMEOUT));
+    let mut line = String::new();
+    match server.reader.read_line(&mut line) {
+        Ok(0) => warn!("[analyzer] Server closed connection during idle cleanup"),
+        Ok(_) => info!("[analyzer] Idle cleanup acknowledged: {}", line.trim()),
+        Err(e) => warn!("[analyzer] Idle cleanup ack not received: {e}"),
+    }
+    let _ = server.reader.get_ref().set_read_timeout(None);
 }
 
 fn process_song(initial_hash: &str, cache: &CacheDir) {

@@ -16,12 +16,13 @@ below.
 ### Features
 
 - Added a "Has no karaoke videos" item to the library sidebar's Karaoke Video section, for filtering to songs with neither a rendered local karaoke video nor a YouTube-background one.
-- Added a dedicated search page (reachable from the profile menu) with a single search bar and no other library data loaded up front. Typing live-queries the whole library (any source, any analysis status) with ranked, typo-tolerant matching -- the same similarity scoring Chromecast voice commands already used -- and lists results with inline Play and Add-to-queue actions. The main library browser's search box is unchanged and still does plain substring matching.
+- Added a dedicated search page (reachable from the profile menu) with a single search bar and no other library data loaded up front. Typing live-queries the whole library (any source, any analysis status) with ranked, typo-tolerant matching -- the same similarity scoring Chromecast voice commands already used -- and lists results as rows that play on tap/click, with a separate Add-to-queue action. The main library browser's search box is unchanged and still does plain substring matching.
 
 ### Improvements
 
 - The self-hosted server now logs a warning with elapsed time when resolving a media file path (canonicalizing the request path, an allowed root, or loading config to determine allowed roots) takes over 250ms, to help diagnose slow first-load requests after the library volume has been idle.
 - Playback on mobile web no longer loads or renders decorative backgrounds (shaders, Pixabay clips, YouTube backgrounds, or a video-karaoke song's own bundled video), and skips fetching/preparing them entirely, so a phone browser only has to load audio and lyrics. Desktop and the Tauri app are unaffected. The theme/flavor touch controls and their status text are hidden on mobile web accordingly.
+- The persistent analyzer server now releases its cached MLX Whisper model and MLX's own unified-memory buffer cache once the local analysis queue is empty, instead of holding them for the lifetime of the process. Back-to-back songs on the same model still skip the reload, since cleanup only runs when the queue actually drains.
 
 ### Removed
 

@@ -12,6 +12,7 @@ Wire protocol (NDJSON over TCP, one JSON object per line):
   Client -> server:
     {"type":"hello","token":"..."}
     {"type":"analyze","hash":"...","audio_path":"...","cache_path":"...", ...}
+    {"type":"idle_cleanup"}
     {"type":"quit"}
   Server -> client:
     {"type":"hello_ack"}
@@ -20,6 +21,7 @@ Wire protocol (NDJSON over TCP, one JSON object per line):
     {"type":"timing","stage":"key_detect"|"separation"|"transcribe"|"align","ms":N}
     {"type":"done","hash":"..."}
     {"type":"error","kind":"oom"|"generic","msg":"..."}
+    {"type":"idle_cleanup_done"}
 """
 
 import json
@@ -34,7 +36,14 @@ if os.name == "nt":
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gpu import end_of_song_cleanup, hard_free_gpu, log_vram, reset_peak_stats, vram_snapshot
+from gpu import (
+    end_of_song_cleanup,
+    hard_free_gpu,
+    log_vram,
+    release_idle_caches,
+    reset_peak_stats,
+    vram_snapshot,
+)
 from whisper_compat import (
     detect_device,
     is_oom,
@@ -155,6 +164,10 @@ def main():
             ctype = cmd.get("type")
             if ctype == "quit":
                 break
+            if ctype == "idle_cleanup":
+                release_idle_caches()
+                _send(wfile, {"type": "idle_cleanup_done"})
+                continue
             if ctype == "analyze":
                 try:
                     process_song(cmd, device)

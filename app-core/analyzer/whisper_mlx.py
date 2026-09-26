@@ -43,6 +43,24 @@ def _repo_for(model_name: str) -> str:
     return MODEL_REPOS.get(model_name, f"mlx-community/whisper-{model_name}-mlx")
 
 
+def free_model() -> None:
+    """Drop `mlx_whisper`'s cached model, if one is loaded.
+
+    `mlx_whisper.transcribe` caches the last-loaded model on its
+    `ModelHolder` class so back-to-back songs on the same model skip the
+    reload; that cache is exactly what needs clearing once the queue is
+    empty, so a stale ~3GB model doesn't stay pinned in unified memory
+    between analysis runs. Reaches into `mlx_whisper` internals, so this is
+    best-effort and silently no-ops if that shape ever changes upstream.
+    """
+    try:
+        from mlx_whisper.transcribe import ModelHolder
+        ModelHolder.model = None
+        ModelHolder.model_path = None
+    except Exception:
+        pass
+
+
 def transcribe(
     audio,
     model_name: str,
