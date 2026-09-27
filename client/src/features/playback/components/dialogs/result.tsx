@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { useDialogNav } from '@/features/menu/hooks/use-dialog-nav';
 import { topScoresForSong } from '@/features/playback/utils/result';
 import { Stars } from '@/shared/components/shared/stars';
@@ -37,8 +39,42 @@ type Props = {
   nextPending: boolean;
   exitLabel: string;
   onBack: () => void;
+  onSearch?: () => void;
   onNext?: () => void;
 };
+
+type FooterButton = {
+  key: string;
+  label: ReactNode;
+  variant: 'outline' | 'default';
+  onClick: () => void;
+};
+
+type FooterButtonsInput = {
+  exitLabel: string;
+  nextLabel: ReactNode;
+  onBack: () => void;
+  onSearch: (() => void) | undefined;
+  onNext: (() => void) | undefined;
+};
+
+function footerButtons({
+  exitLabel,
+  nextLabel,
+  onBack,
+  onSearch,
+  onNext,
+}: FooterButtonsInput): FooterButton[] {
+  const buttons: FooterButton[] = [];
+  if (onSearch) {
+    buttons.push({ key: 'search', label: 'Back to Search', variant: 'outline', onClick: onSearch });
+  }
+  buttons.push({ key: 'back', label: exitLabel, variant: 'outline', onClick: onBack });
+  if (onNext) {
+    buttons.push({ key: 'next', label: nextLabel, variant: 'default', onClick: onNext });
+  }
+  return buttons;
+}
 
 export const ResultDialog = ({
   open,
@@ -49,14 +85,23 @@ export const ResultDialog = ({
   nextPending,
   exitLabel,
   onBack,
+  onSearch,
   onNext,
 }: Props) => {
   const board = topScoresForSong(scores, song.file_hash, TOP_LIMIT);
+  const nextLabel = nextPending ? (
+    <>
+      <Spinner className="size-4" /> Preparing…
+    </>
+  ) : (
+    'Next Song'
+  );
+  const buttons = footerButtons({ exitLabel, nextLabel, onBack, onSearch, onNext });
 
   const { focusedIndex } = useDialogNav({
     open,
-    itemCount: onNext ? 2 : 1,
-    onConfirm: (index) => (index === 0 ? onBack() : onNext?.()),
+    itemCount: buttons.length,
+    onConfirm: (index) => buttons[index]?.onClick(),
     onBack,
   });
 
@@ -127,36 +172,23 @@ export const ResultDialog = ({
           ) : null}
 
           <DialogFooter className="mt-2 sm:justify-center">
-            <Button
-              type="button"
-              variant="outline"
-              className={cn('w-full sm:w-auto', NO_FOCUS_RING, open && focusedIndex === 0 && RING)}
-              disabled={nextPending}
-              onClick={onBack}
-            >
-              {exitLabel}
-            </Button>
-            {onNext ? (
+            {buttons.map((button, index) => (
               <Button
+                key={button.key}
                 type="button"
+                variant={button.variant}
                 className={cn(
                   'w-full sm:w-auto',
                   NO_FOCUS_RING,
-                  open && focusedIndex === 1 && RING,
+                  open && focusedIndex === index && RING,
                 )}
                 disabled={nextPending}
-                aria-busy={nextPending}
-                onClick={onNext}
+                aria-busy={button.key === 'next' ? nextPending : undefined}
+                onClick={button.onClick}
               >
-                {nextPending ? (
-                  <>
-                    <Spinner className="size-4" /> Preparing…
-                  </>
-                ) : (
-                  'Next Song'
-                )}
+                {button.label}
               </Button>
-            ) : null}
+            ))}
           </DialogFooter>
         </div>
       </DialogContent>

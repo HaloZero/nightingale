@@ -53,6 +53,7 @@ export type PlaybackTransportActions = {
   handlePause: () => void;
   handleContinue: () => void;
   handleExit: () => void;
+  handleExitToSearch: () => void;
 };
 
 const TransportStateContext = createContext<PlaybackTransportState | null>(null);
@@ -133,14 +134,20 @@ export function PlaybackTransportProvider({
     audio.resume();
   }, [audio]);
 
-  const handleExit = useCallback(() => {
-    audio.cleanup();
-    if (isSessionPlayback()) {
-      void closePlaybackWindow();
-      return;
-    }
-    void navigate('/', { replace: true });
-  }, [audio, navigate]);
+  const exitTo = useCallback(
+    (path: string) => {
+      audio.cleanup();
+      if (isSessionPlayback()) {
+        void closePlaybackWindow();
+        return;
+      }
+      void navigate(path, { replace: true });
+    },
+    [audio, navigate],
+  );
+
+  const handleExit = useCallback(() => exitTo('/'), [exitTo]);
+  const handleExitToSearch = useCallback(() => exitTo('/search'), [exitTo]);
 
   const stateValue = useMemo<PlaybackTransportState>(
     () => ({
@@ -178,6 +185,7 @@ export function PlaybackTransportProvider({
       handlePause,
       handleContinue,
       handleExit,
+      handleExitToSearch,
     }),
     [
       audio.subscribe,
@@ -191,6 +199,7 @@ export function PlaybackTransportProvider({
       handlePause,
       handleContinue,
       handleExit,
+      handleExitToSearch,
     ],
   );
 

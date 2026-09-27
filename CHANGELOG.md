@@ -17,6 +17,7 @@ below.
 
 - Added a "Has no karaoke videos" item to the library sidebar's Karaoke Video section, for filtering to songs with neither a rendered local karaoke video nor a YouTube-background one.
 - Added a dedicated search page (reachable from the profile menu) with a single search bar and no other library data loaded up front. Typing live-queries the whole library (any source, any analysis status) with ranked, typo-tolerant matching -- the same similarity scoring Chromecast voice commands already used -- and lists results as rows that play on tap/click, with a separate Add-to-queue action. The main library browser's search box is unchanged and still does plain substring matching.
+- The end-of-song result dialog now offers a "Back to Search" button alongside "Back to Menu", jumping straight to the dedicated search page instead of the library home. Not shown during Tauri session playback, where exiting closes the playback window instead of navigating.
 
 ### Improvements
 

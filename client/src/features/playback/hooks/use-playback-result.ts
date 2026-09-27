@@ -34,6 +34,7 @@ export type PlaybackResult = {
   activeProfile: string | null;
   nextPending: boolean;
   onBack: () => void;
+  onSearch: () => void;
   onNext?: () => void;
 };
 
@@ -45,7 +46,7 @@ export function usePlaybackResult(song: Song, queuePlayback: boolean): PlaybackR
   const { isPreparing, playNext } = useStartNextPlaybackQueueSong(entries);
 
   const { isFinished } = usePlaybackTransportState();
-  const { handleExit } = usePlaybackTransportActions();
+  const { handleExit, handleExitToSearch } = usePlaybackTransportActions();
   const { rawScore } = usePlaybackMicState();
   const { skipOutroPending } = usePlaybackTranscriptState();
   const { clearSkipOutroPending } = usePlaybackTranscriptActions();
@@ -124,6 +125,10 @@ export function usePlaybackResult(song: Song, queuePlayback: boolean): PlaybackR
     setShowResult(false);
     handleExit();
   }, [handleExit]);
+  const onSearch = useCallback(() => {
+    setShowResult(false);
+    handleExitToSearch();
+  }, [handleExitToSearch]);
   const onNext = useCallback(() => playNext(), [playNext]);
   const hasNext = queuePlayback && entries.length > 0;
 
@@ -134,6 +139,7 @@ export function usePlaybackResult(song: Song, queuePlayback: boolean): PlaybackR
     activeProfile: profileData?.active ?? null,
     nextPending: isPreparing,
     onBack,
+    onSearch,
     onNext: hasNext ? onNext : undefined,
   };
 }

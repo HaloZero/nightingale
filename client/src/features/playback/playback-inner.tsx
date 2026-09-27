@@ -94,6 +94,7 @@ function PlaybackLayout({ song, config, queuePlayback, sessionPlayback }: Playba
         nextPending={result.nextPending}
         exitLabel={sessionPlayback ? 'Exit Playback' : 'Back to Menu'}
         onBack={result.onBack}
+        onSearch={sessionPlayback ? undefined : result.onSearch}
         onNext={result.onNext}
       />
     </div>
