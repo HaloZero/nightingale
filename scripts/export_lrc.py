@@ -18,6 +18,7 @@ Usage:
     python3 scripts/export_lrc.py <file_hash>
     python3 scripts/export_lrc.py --search "toxic britney"
     python3 scripts/export_lrc.py --search "toxic" -o "/path/to/Toxic.lrc"
+    python3 scripts/export_lrc.py --search "toxic" --next-to-source
 """
 
 from __future__ import annotations
@@ -67,17 +68,22 @@ def resolve_cache_dir(cfg: dict, data_path: Path) -> Path:
     return resolve_relative(raw)
 
 
-def find_songs(conn: sqlite3.Connection, search: str) -> list[tuple[str, str, str, str]]:
-    """(file_hash, title, artist, album) rows whose title or artist contains
-    every word in `search`, case-insensitively."""
+def find_songs(conn: sqlite3.Connection, search: str) -> list[tuple[str, str, str, str, str]]:
+    """(file_hash, title, artist, album, path) rows whose title or artist
+    contains every word in `search`, case-insensitively."""
     words = search.lower().split()
-    rows = conn.execute("SELECT file_hash, title, artist, album FROM songs").fetchall()
+    rows = conn.execute("SELECT file_hash, title, artist, album, path FROM songs").fetchall()
     matches = []
-    for file_hash, title, artist, album in rows:
+    for file_hash, title, artist, album, path in rows:
         haystack = f"{title} {artist}".lower()
         if all(word in haystack for word in words):
-            matches.append((file_hash, title, artist, album))
+            matches.append((file_hash, title, artist, album, path))
     return matches
+
+
+def find_source_path(conn: sqlite3.Connection, file_hash: str) -> str | None:
+    row = conn.execute("SELECT path FROM songs WHERE file_hash = ?", (file_hash,)).fetchone()
+    return row[0] if row else None
 
 
 def format_timestamp(seconds: float) -> str:
@@ -112,8 +118,19 @@ def main() -> int:
     )
     parser.add_argument("file_hash", nargs="?", help="Exact file hash to export")
     parser.add_argument("--search", help="Find a song by title/artist substring instead")
-    parser.add_argument(
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
         "-o", "--output", type=Path, help="Write to this path instead of stdout"
+    )
+    output_group.add_argument(
+        "--next-to-source",
+        action="store_true",
+        help="Write next to the song's own audio/video file, same basename with a .lrc extension",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="With --next-to-source, overwrite an existing .lrc file instead of refusing",
     )
     parser.add_argument(
         "--data-dir", type=Path, help="Nightingale data dir (default: resolved like the app itself)"
@@ -135,6 +152,8 @@ def main() -> int:
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
 
+    source_path: str | None = None
+
     if args.search:
         matches = find_songs(conn, args.search)
         if not matches:
@@ -142,13 +161,15 @@ def main() -> int:
             return 1
         if len(matches) > 1:
             print(f"{len(matches)} songs matched \"{args.search}\" -- be more specific, or pass the hash directly:", file=sys.stderr)
-            for file_hash, title, artist, album in matches:
+            for file_hash, title, artist, album, _path in matches:
                 print(f"  {file_hash}  {artist} - {title} ({album})", file=sys.stderr)
             return 1
-        file_hash, title, artist, _album = matches[0]
+        file_hash, title, artist, _album, source_path = matches[0]
         print(f"Matched: {artist} - {title} ({file_hash})", file=sys.stderr)
     else:
         file_hash = args.file_hash
+        if args.next_to_source:
+            source_path = find_source_path(conn, file_hash)
 
     transcript_path = cache_dir / f"{file_hash}_transcript.json"
     if not transcript_path.is_file():
@@ -158,7 +179,17 @@ def main() -> int:
     transcript = json.loads(transcript_path.read_text())
     lrc_text = transcript_to_lrc(transcript)
 
-    if args.output:
+    if args.next_to_source:
+        if not source_path:
+            print(f"No song with file_hash {file_hash} found in the library", file=sys.stderr)
+            return 1
+        output_path = Path(source_path).with_suffix(".lrc")
+        if output_path.exists() and not args.force:
+            print(f"{output_path} already exists -- pass --force to overwrite", file=sys.stderr)
+            return 1
+        output_path.write_text(lrc_text)
+        print(f"Wrote {output_path}", file=sys.stderr)
+    elif args.output:
         args.output.write_text(lrc_text)
         print(f"Wrote {args.output}", file=sys.stderr)
     else:
