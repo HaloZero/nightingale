@@ -1,10 +1,10 @@
 import { memo } from 'react';
 
+import { AlbumArt } from '@/shared/components/shared/album-art';
 import { Stars } from '@/shared/components/shared/stars';
 import { cn } from '@/shared/utils/cn';
 import { formatSeconds } from '@/shared/utils/format-duration';
 
-import { AlbumArt } from '../shared/album-art';
 import { LanguageBadge } from '../shared/language-badge';
 import { StatusBadge } from '../shared/status-badge';
 import type { SongItemProps } from '../types';

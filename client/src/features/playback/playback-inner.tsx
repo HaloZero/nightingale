@@ -9,6 +9,7 @@
 import { isTauri } from '@/bridge/runtime';
 import { Background } from '@/features/playback/components/background';
 import { ResultDialog } from '@/features/playback/components/dialogs/result';
+import { LoadingScreen } from '@/features/playback/components/loading-screen';
 import { LyricsDisplay } from '@/features/playback/components/lyrics-display';
 import { PauseOverlay } from '@/features/playback/components/pause-overlay';
 import { PitchGraph } from '@/features/playback/components/pitch-graph';
@@ -59,7 +60,7 @@ function PlaybackLayout({ song, config, queuePlayback, sessionPlayback }: Playba
     <div className="fixed inset-0 overflow-hidden bg-black" style={{ contain: 'strict' }}>
       <Background />
 
-      {isReady && (
+      {isReady ? (
         <>
           <PlaybackHud
             title={song.title}
@@ -76,6 +77,8 @@ function PlaybackLayout({ song, config, queuePlayback, sessionPlayback }: Playba
             scale={lyricsScale}
           />
         </>
+      ) : (
+        <LoadingScreen song={song} />
       )}
 
       <PauseOverlay

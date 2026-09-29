@@ -2,7 +2,6 @@ import { ListMusicIcon, PlayIcon, Trash2Icon, XIcon } from 'lucide-react';
 
 import type { PlaybackQueueEntry } from '@/bridge/playback-queue';
 import { useSongDetailsNav } from '@/features/library/components/song-list/details/use-song-details-nav';
-import { AlbumArt } from '@/features/library/components/song-list/shared/album-art';
 import { useDialog } from '@/features/menu/hooks/use-dialog';
 import { useDialogNav } from '@/features/menu/hooks/use-dialog-nav';
 import {
@@ -10,6 +9,7 @@ import {
   useRemovePlaybackQueueEntry,
   useStartNextPlaybackQueueSong,
 } from '@/features/playback-queue/use-playback-queue';
+import { AlbumArt } from '@/shared/components/shared/album-art';
 import {
   AlertDialog,
   AlertDialogAction,

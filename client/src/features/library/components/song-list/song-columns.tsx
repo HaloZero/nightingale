@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 
+import { AlbumArt } from '@/shared/components/shared/album-art';
 import { Stars } from '@/shared/components/shared/stars';
 import { formatSeconds } from '@/shared/utils/format-duration';
 import type { QueuedStatus } from '@/types/QueuedStatus';
 import type { Song } from '@/types/Song';
 import type { SongSortColumn } from '@/types/SongSortColumn';
 
-import { AlbumArt } from './shared/album-art';
 import { LanguageBadge } from './shared/language-badge';
 import { StatusBadge } from './shared/status-badge';
 

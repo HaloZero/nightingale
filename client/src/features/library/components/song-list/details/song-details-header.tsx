@@ -1,12 +1,12 @@
 import { XIcon } from 'lucide-react';
 
+import { AlbumArt } from '@/shared/components/shared/album-art';
 import { Stars } from '@/shared/components/shared/stars';
 import { Button } from '@/shared/components/ui/button';
 import { formatSeconds } from '@/shared/utils/format-duration';
 import type { QueuedStatus } from '@/types/QueuedStatus';
 import type { Song } from '@/types/Song';
 
-import { AlbumArt } from '../shared/album-art';
 import { LanguageBadge, isDisplayableLanguage } from '../shared/language-badge';
 import { StatusBadge } from '../shared/status-badge';
 
