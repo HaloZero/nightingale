@@ -46,13 +46,22 @@ def _dictionary_words(text: str, dictionary: dict) -> list[str]:
     character outside ``dictionary`` instead of dropping the word -- one
     output entry per whitespace-separated input token (positionally aligned
     with ``text.split()``), so a word is only dropped if none of its
-    characters are alignable at all."""
+    characters are alignable at all.
+
+    A glyph that maps to the blank id (MMS_FA's dictionary uses "-", like
+    torchaudio's English wav2vec2 ASR models) can't be an alignment target --
+    forced_align rejects any target sequence containing it -- so a literal
+    hyphen in the transcript ("self-control") is treated as out-of-vocabulary
+    here too, same as ctc_align.py does for its own blank glyph.
+    """
     star = dictionary.get("*")
+    blank_id = dictionary.get("-")
     words = []
     for raw_word in _WHITESPACE_RE.findall(text.lower()):
         chars = []
         for char in raw_word:
-            if char in dictionary:
+            code = dictionary.get(char)
+            if code is not None and code != blank_id:
                 chars.append(char)
             elif star is not None:
                 chars.append("*")
