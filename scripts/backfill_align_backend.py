@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-off backfill for the `align_backend` field on already-analyzed songs.
 
-`align_backend` records which forced-alignment backend (whisperx/ctc/qwen)
+`align_backend` records which forced-alignment backend (whisperx/ctc/qwen/mms)
 actually produced a song's current word timing (see
 app-core/src/song.rs::Song::align_backend and
 app-core/analyzer/{align,transcribe,whisper_compat}.py). It's written going
@@ -29,7 +29,7 @@ For each candidate song (analyzed, Lyrics/Generated source, no
   - otherwise, stamp the resolved backend value into both the transcript
     JSON and `payload`.
 
-Backend value: `--backend {whisperx,ctc,qwen}` if given, else whatever
+Backend value: `--backend {whisperx,ctc,qwen,mms}` if given, else whatever
 `align_backend` is set to in config.json (default `"whisperx"`, matching
 `AppConfig::align_backend()`'s own fallback) -- the only backend that could
 have run before this setting existed.
@@ -54,7 +54,7 @@ import sys
 import time
 from pathlib import Path
 
-VALID_BACKENDS = ("whisperx", "ctc", "qwen")
+VALID_BACKENDS = ("whisperx", "ctc", "qwen", "mms")
 
 
 def default_nightingale_dir() -> Path:

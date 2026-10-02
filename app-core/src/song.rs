@@ -107,7 +107,7 @@ pub struct Song {
     #[serde(default)]
     pub transcript_source: Option<TranscriptSource>,
     /// Which forced-alignment backend actually produced this song's current
-    /// timing (`"whisperx"`, `"ctc"`, or `"qwen"` -- see
+    /// timing (`"whisperx"`, `"ctc"`, `"qwen"`, or `"mms"` -- see
     /// `read_transcript_meta`). `None` for `Lrc`/`Usdx` sources (no aligner
     /// runs for those) and for songs analyzed before this field existed,
     /// until they're realigned or backfilled (see
