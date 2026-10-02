@@ -83,14 +83,18 @@ def set_align_backend(name):
     - ``"ctc"``: torchaudio ``forced_align`` C++/CUDA kernel, wav2vec2-base model.
     - ``"mms"``: Meta's MMS_FA model (English only; falls through to the
       wav2vec2 path below for any other language).
+    - ``"wav2vec2_bert"``: an English Wav2Vec2-BERT CTC fine-tune
+      (English only; falls through to the wav2vec2 path below for any other
+      language, same as ``"mms"``).
     - ``"qwen"``: Qwen3-ForcedAligner token-classification model. Handled
       directly by the transcribe/align callers (see ``qwen_align``); when a song
       falls outside its support (unsupported language, over-length audio, or any
       failure) the callers fall through to the wav2vec2 path, where ``_run_align``
-      treats any backend other than ``"ctc"``/``"mms"`` as ``whisperx``.
+      treats any backend other than ``"ctc"``/``"mms"``/``"wav2vec2_bert"`` as
+      ``whisperx``.
     """
     global _align_backend
-    _align_backend = name if name in ("whisperx", "ctc", "qwen", "mms") else "whisperx"
+    _align_backend = name if name in ("whisperx", "ctc", "qwen", "mms", "wav2vec2_bert") else "whisperx"
 
 
 def get_align_backend() -> str:
@@ -174,6 +178,32 @@ def _run_align(raw_segments, audio, language, device, model_name=None):
                 raise
             print(
                 f"[nightingale:LOG] mms align backend failed ({e}); "
+                f"falling back to whisperx.align",
+                flush=True,
+            )
+
+    if get_align_backend() == "wav2vec2_bert" and language == "en":
+        try:
+            import wav2vec2_bert_align
+            print(
+                f"[nightingale:LOG] Aligning with Wav2Vec2-BERT CTC on {device}",
+                flush=True,
+            )
+            with gpu_model(f"wav2vec2-bert:{device}") as held:
+                model_state = wav2vec2_bert_align.load_model(device)
+                held.append(model_state["model"])
+                result = wav2vec2_bert_align.wav2vec2_bert_align(raw_segments, model_state, audio, device)
+            _set_effective_align_backend("wav2vec2_bert")
+            return result
+        except Exception as e:
+            if is_oom(e):
+                # Same contract as "ctc"/"mms": let align_with_fallback's OOM
+                # handling retry (re-enters _run_align, keeping the
+                # "wav2vec2_bert" backend, and finally drops to CPU) instead of
+                # silently switching to the slower whisperx path.
+                raise
+            print(
+                f"[nightingale:LOG] wav2vec2_bert align backend failed ({e}); "
                 f"falling back to whisperx.align",
                 flush=True,
             )

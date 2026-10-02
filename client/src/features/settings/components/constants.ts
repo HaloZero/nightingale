@@ -68,6 +68,12 @@ export const ALIGN_BACKENDS: SettingsOption[] = [
     description:
       "English only. Uses a model with a dedicated token for ad-libs and audio that doesn't match the lyrics. Model weights are non-commercial-licensed. Falls back to WhisperX otherwise.",
   },
+  {
+    value: 'wav2vec2_bert',
+    label: 'Wav2Vec2-BERT Forced Alignment (Experimental)',
+    description:
+      'English only. A newer acoustic model that can produce more accurate word timing than the default. Falls back to WhisperX otherwise.',
+  },
 ];
 
 export const MODELS = ['large-v3', 'large-v3-turbo', 'medium', 'small', 'base', 'tiny'];
