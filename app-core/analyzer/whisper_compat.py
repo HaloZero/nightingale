@@ -80,15 +80,17 @@ def set_align_backend(name):
     """Select the forced-alignment backend:
 
     - ``"whisperx"`` (default): pure-Python CTC Viterbi.
-    - ``"ctc"``: torchaudio ``forced_align`` C++/CUDA kernel.
+    - ``"ctc"``: torchaudio ``forced_align`` C++/CUDA kernel, wav2vec2-base model.
+    - ``"mms"``: Meta's MMS_FA model (English only; falls through to the
+      wav2vec2 path below for any other language).
     - ``"qwen"``: Qwen3-ForcedAligner token-classification model. Handled
       directly by the transcribe/align callers (see ``qwen_align``); when a song
       falls outside its support (unsupported language, over-length audio, or any
       failure) the callers fall through to the wav2vec2 path, where ``_run_align``
-      treats any non-``"ctc"`` backend as ``whisperx``.
+      treats any backend other than ``"ctc"``/``"mms"`` as ``whisperx``.
     """
     global _align_backend
-    _align_backend = name if name in ("whisperx", "ctc", "qwen") else "whisperx"
+    _align_backend = name if name in ("whisperx", "ctc", "qwen", "mms") else "whisperx"
 
 
 def get_align_backend() -> str:
@@ -149,6 +151,33 @@ def free_gpu():
 
 def _run_align(raw_segments, audio, language, device, model_name=None):
     import whisperx
+
+    if get_align_backend() == "mms" and language == "en":
+        try:
+            import mms_align
+            print(
+                f"[nightingale:LOG] Aligning with MMS_FA forced alignment on {device}",
+                flush=True,
+            )
+            with gpu_model(f"mms-fa:{device}") as held:
+                model_state = mms_align.load_model(device)
+                held.append(model_state["model"])
+                result = mms_align.mms_align(raw_segments, model_state, audio, device)
+            _set_effective_align_backend("mms")
+            return result
+        except Exception as e:
+            if is_oom(e):
+                # Same contract as the "ctc" backend: let align_with_fallback's
+                # OOM handling retry (re-enters _run_align, keeping the "mms"
+                # backend, and finally drops to CPU) instead of silently
+                # switching to the slower whisperx path.
+                raise
+            print(
+                f"[nightingale:LOG] mms align backend failed ({e}); "
+                f"falling back to whisperx.align",
+                flush=True,
+            )
+
     key_suffix = model_name or language
     with gpu_model(f"wav2vec2:{key_suffix}:{device}") as held:
         if model_name:

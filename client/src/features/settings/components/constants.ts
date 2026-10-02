@@ -62,6 +62,12 @@ export const ALIGN_BACKENDS: SettingsOption[] = [
     description:
       'A fast AI model covering 11 languages. Timing quality varies song to song, but it can do better on Chinese, Japanese, and Korean. Falls back to WhisperX otherwise.',
   },
+  {
+    value: 'mms',
+    label: 'MMS Forced Alignment (Experimental)',
+    description:
+      "English only. Uses a model with a dedicated token for ad-libs and audio that doesn't match the lyrics. Model weights are non-commercial-licensed. Falls back to WhisperX otherwise.",
+  },
 ];
 
 export const MODELS = ['large-v3', 'large-v3-turbo', 'medium', 'small', 'base', 'tiny'];
