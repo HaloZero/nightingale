@@ -509,7 +509,14 @@ fn lines_from_lyrics_text(text: &str) -> Vec<String> {
             return lines;
         }
     }
-    text.lines()
+    // `str::lines` only splits on `\n` or `\r\n` -- some embedded-tag lyrics
+    // (ID3 USLT written by older/legacy tools) use a bare `\r` as the line
+    // separator instead, which `str::lines` doesn't recognize at all, so the
+    // whole lyric block comes back as a single "line". Normalize all three
+    // conventions to `\n` first.
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect()

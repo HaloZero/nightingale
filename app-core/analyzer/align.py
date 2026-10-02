@@ -93,6 +93,45 @@ def align_lyrics(
             flush=True,
         )
 
+    if get_align_backend() == "wav2vec2_bert_2pass" and language == "en":
+        # Pass 1: plain WhisperX on the whole song, same call every other
+        # backend already falls back to. Not one of `_run_align`'s
+        # specially-dispatched backend names, so this transparently runs
+        # the default wav2vec2-base CTC path regardless of the
+        # "wav2vec2_bert_2pass" backend configured above.
+        pass1_result = align_with_fallback(
+            [{"text": " ".join(clean_lines), "start": vocal_start, "end": vocal_end}],
+            audio, language, a_device, pre_align_cleanup,
+        )
+        pass1_segments = map_words_to_lines(pass1_result, clean_lines)
+
+        import wav2vec2_bert_2pass
+        try:
+            pass2_result = wav2vec2_bert_2pass.refine_with_pauses(
+                pass1_segments, audio, vocal_start, vocal_end, a_device,
+            )
+        except Exception as e:
+            print(
+                f"[nightingale:LOG] wav2vec2-bert-2pass: pass 2 failed ({e}); "
+                f"using pass 1 (whisperx) timing only",
+                flush=True,
+            )
+            pass2_result = None
+
+        segments = pass1_segments
+        if pass2_result is not None:
+            pass2_segments = map_words_to_lines(pass2_result, clean_lines)
+            segments = wav2vec2_bert_2pass.merge_with_pass1(pass1_segments, pass2_segments)
+
+        progress(90, f"Alignment complete: {len(segments)} segments, lang={language}")
+        if segments:
+            print(f"[nightingale:LOG] First segment: '{segments[0]['text'][:100]}'", flush=True)
+            print(f"[nightingale:LOG] Last segment: '{segments[-1]['text'][:100]}'", flush=True)
+        return {
+            "language": language, "segments": segments, "source": "lyrics",
+            "align_backend": "wav2vec2_bert_2pass",
+        }
+
     line_token_pairs: list[list[tuple[str, str]]] | None = None
     if cjk.is_cjk(language):
         line_token_pairs = [cjk.tokenize_for_alignment(line, language) for line in clean_lines]
@@ -117,7 +156,7 @@ def align_lyrics(
     if cjk.is_cjk(language):
         segments = _map_chars_to_lines_cjk(align_result, clean_lines, line_token_pairs, language)
     else:
-        segments = _map_words_to_lines(align_result, clean_lines)
+        segments = map_words_to_lines(align_result, clean_lines)
         if cjk.is_korean(language):
             for seg in segments:
                 cjk.attach_reading(seg["words"], language)
@@ -497,7 +536,7 @@ def _match_lines_against_words(aligned: list[dict], lines: list[str]) -> tuple[l
     return segments, missed_lyric_words, interpolated_drops
 
 
-def _map_words_to_lines(align_result: dict, clean_lines: list[str]) -> list[dict]:
+def map_words_to_lines(align_result: dict, clean_lines: list[str]) -> list[dict]:
     """Map aligned word timestamps back to original lyric lines by
     text-matching one flat aligned-word stream against every line (see
     `_match_lines_against_words`)."""

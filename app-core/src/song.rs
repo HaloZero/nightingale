@@ -107,8 +107,9 @@ pub struct Song {
     #[serde(default)]
     pub transcript_source: Option<TranscriptSource>,
     /// Which forced-alignment backend actually produced this song's current
-    /// timing (`"whisperx"`, `"ctc"`, `"qwen"`, `"mms"`, or `"wav2vec2_bert"`
-    /// -- see `read_transcript_meta`). `None` for `Lrc`/`Usdx` sources (no aligner
+    /// timing (`"whisperx"`, `"ctc"`, `"qwen"`, `"mms"`, `"wav2vec2_bert"`, or
+    /// `"wav2vec2_bert_2pass"` -- see `read_transcript_meta`). `None` for
+    /// `Lrc`/`Usdx` sources (no aligner
     /// runs for those) and for songs analyzed before this field existed,
     /// until they're realigned or backfilled (see
     /// `scripts/backfill_align_backend.py`).

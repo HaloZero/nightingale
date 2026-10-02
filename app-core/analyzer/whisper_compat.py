@@ -86,6 +86,12 @@ def set_align_backend(name):
     - ``"wav2vec2_bert"``: an English Wav2Vec2-BERT CTC fine-tune
       (English only; falls through to the wav2vec2 path below for any other
       language, same as ``"mms"``).
+    - ``"wav2vec2_bert_2pass"``: handled directly by ``align.py``, same as
+      ``"qwen"`` below -- a cheap WhisperX pass locates natural pauses'
+      line boundaries, then Wav2Vec2-BERT refines each pause-bounded chunk.
+      Falls back to the plain WhisperX pass alone (never attempts the
+      Wav2Vec2-BERT pass) when no chunk-safe pause structure is found; see
+      ``wav2vec2_bert_2pass.py``.
     - ``"qwen"``: Qwen3-ForcedAligner token-classification model. Handled
       directly by the transcribe/align callers (see ``qwen_align``); when a song
       falls outside its support (unsupported language, over-length audio, or any
@@ -94,7 +100,9 @@ def set_align_backend(name):
       ``whisperx``.
     """
     global _align_backend
-    _align_backend = name if name in ("whisperx", "ctc", "qwen", "mms", "wav2vec2_bert") else "whisperx"
+    _align_backend = name if name in (
+        "whisperx", "ctc", "qwen", "mms", "wav2vec2_bert", "wav2vec2_bert_2pass",
+    ) else "whisperx"
 
 
 def get_align_backend() -> str:

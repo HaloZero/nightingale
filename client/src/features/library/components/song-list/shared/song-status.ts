@@ -38,6 +38,15 @@ export function formatAlignBackend(backend: Song['align_backend']): string {
   if (backend === 'whisperx') {
     return 'WhisperX';
   }
+  if (backend === 'mms') {
+    return 'MMS Forced Alignment';
+  }
+  if (backend === 'wav2vec2_bert') {
+    return 'Wav2Vec2-BERT Forced Alignment';
+  }
+  if (backend === 'wav2vec2_bert_2pass') {
+    return 'Wav2Vec2-BERT Two-Pass Forced Alignment';
+  }
   return 'Unknown';
 }
 

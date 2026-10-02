@@ -74,6 +74,12 @@ export const ALIGN_BACKENDS: SettingsOption[] = [
     description:
       'English only. A newer acoustic model that can produce more accurate word timing than the default. Falls back to WhisperX otherwise.',
   },
+  {
+    value: 'wav2vec2_bert_2pass',
+    label: 'Wav2Vec2-BERT Two-Pass Forced Alignment (Experimental)',
+    description:
+      'English only. Times the song with WhisperX first, then re-times each natural pause-bounded section with the more accurate Wav2Vec2-BERT model. Falls back to the WhisperX timing alone for songs without enough pauses to split safely.',
+  },
 ];
 
 export const MODELS = ['large-v3', 'large-v3-turbo', 'medium', 'small', 'base', 'tiny'];
