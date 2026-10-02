@@ -12,6 +12,26 @@ pub struct ScoreRecord {
     pub played_at: u64,
 }
 
+/// Marks that playback actually started for a song, independent of whether it
+/// was ever scored. Lets a later analysis compare this against `scores` to
+/// compute songs played without being scored.
+///
+/// `title`/`artist` are a denormalized snapshot taken at play time purely so
+/// `profiles.json` is readable by eye without cross-referencing the library
+/// database -- `song_hash` remains the real identity (see
+/// `40-security-domain.md`'s "treat song identifiers as opaque" rule). They
+/// reflect whatever the library said at that moment and are not kept in
+/// sync with later metadata edits or library removal.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlayRecord {
+    pub profile: String,
+    pub song_hash: String,
+    pub title: String,
+    pub artist: String,
+    pub played_at: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[ts(export)]
 pub struct ProfileStore {
@@ -19,6 +39,8 @@ pub struct ProfileStore {
     pub profiles: Vec<String>,
     #[serde(default)]
     pub scores: Vec<ScoreRecord>,
+    #[serde(default)]
+    pub plays: Vec<PlayRecord>,
 }
 
 impl ProfileStore {
@@ -70,6 +92,8 @@ impl ProfileStore {
 
         self.scores.retain(|r| r.profile != name);
 
+        self.plays.retain(|r| r.profile != name);
+
         if self.active.as_deref() == Some(name) {
             self.active = self.profiles.first().cloned();
         }
@@ -90,6 +114,34 @@ impl ProfileStore {
             profile,
             song_hash: song_hash.to_string(),
             score,
+            played_at,
+        });
+        self.save();
+    }
+
+    pub fn add_play(&mut self, song_hash: &str) {
+        let profile = match &self.active {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let played_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // Best-effort snapshot for human readability (see `PlayRecord`'s doc
+        // comment) -- a lookup failure shouldn't stop the play from being
+        // recorded, so this falls back to an empty string rather than
+        // bailing out of the whole record.
+        let (title, artist) = crate::library_db::load_song_by_hash(song_hash)
+            .ok()
+            .flatten()
+            .map(|song| (song.title, song.artist))
+            .unwrap_or_default();
+        self.plays.push(PlayRecord {
+            profile,
+            song_hash: song_hash.to_string(),
+            title,
+            artist,
             played_at,
         });
         self.save();

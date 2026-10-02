@@ -33,7 +33,9 @@ use playback_queue::{
     remove_playback_queue_entry,
 };
 use playback_session::{load_playback_session, save_playback_session};
-use profile::{add_score, create_profile, delete_profile, load_profiles, switch_profile};
+use profile::{
+    add_score, create_profile, delete_profile, load_profiles, mark_played, switch_profile,
+};
 use scanner::{
     clear_library_source, jellyfin_login, jellyfin_ping, load_analysis_queue,
     load_library_menu_items, load_songs, load_songs_by_hashes, load_songs_meta, navidrome_login,
@@ -115,6 +117,7 @@ pub fn run() {
             create_profile,
             delete_profile,
             add_score,
+            mark_played,
             // Playback queue
             load_playback_queue,
             add_playback_queue_entry,

@@ -14,6 +14,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -22,6 +23,7 @@ import { toast } from 'sonner';
 
 import { ensureMp3Stems, onStemsReady } from '@/bridge/playback';
 import { isSessionPlayback } from '@/bridge/playback-session';
+import { markPlayed } from '@/bridge/profile';
 import { setWakeLockDesired } from '@/bridge/wake-lock';
 import { closePlaybackWindow } from '@/bridge/window';
 import {
@@ -117,6 +119,23 @@ export function PlaybackTransportProvider({
   }, [fileHash, navigate]);
 
   const audio = useAudioPlayer(fileHash, initialGuideVolumeSnapshot, stemsReady);
+
+  // Record exactly one "playback started" event per song, the moment its audio
+  // is actually ready to play. Guarded by a ref (not state) so React StrictMode's
+  // dev double-invoke and re-renders while isReady stays true don't double-fire.
+  const markedPlayedRef = useRef(false);
+
+  useEffect(() => {
+    if (!audio.isReady || markedPlayedRef.current) {
+      return;
+    }
+    markedPlayedRef.current = true;
+    markPlayed(fileHash).catch((error: unknown) => {
+      toast.error(
+        `Could not record play: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }, [audio.isReady, fileHash]);
 
   useEffect(() => {
     if (typeof audio.error === 'string' && audio.error !== '') {

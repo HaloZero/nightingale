@@ -111,6 +111,17 @@ async fn dispatch(state: AppState, name: &str, payload: Value) -> CmdResult {
             store.add_score(&args.song_hash, args.score);
             Ok(Value::Null)
         }
+        "mark_played" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                song_hash: String,
+            }
+            let args: Args = deserialize(payload)?;
+            let mut store = ProfileStore::load();
+            store.add_play(&args.song_hash);
+            Ok(Value::Null)
+        }
 
         // ── Playback queue ───────────────────────────────────────────────
         "load_playback_queue" => {

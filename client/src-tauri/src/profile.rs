@@ -32,3 +32,10 @@ pub(crate) fn add_score(song_hash: String, score: u32) {
 
     profile_store.add_score(&song_hash, score);
 }
+
+#[tauri::command]
+pub(crate) fn mark_played(song_hash: String) {
+    let mut profile_store = ProfileStore::load();
+
+    profile_store.add_play(&song_hash);
+}
