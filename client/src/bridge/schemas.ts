@@ -104,6 +104,7 @@ export const appConfigSchema: z.ZodType<AppConfig> = z.object({
   parallel_analysis_url: nullableString,
   parallel_analysis_only: nullableBoolean,
   chromecast: chromecastConfigSchema.nullable(),
+  debug_mode: nullableBoolean,
 });
 
 export const songsMetaSchema: z.ZodType<SongsMeta> = z.object({

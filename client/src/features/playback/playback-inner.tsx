@@ -8,6 +8,7 @@
 
 import { isTauri } from '@/bridge/runtime';
 import { Background } from '@/features/playback/components/background';
+import { DebugScrubBar } from '@/features/playback/components/debug-scrub-bar';
 import { ResultDialog } from '@/features/playback/components/dialogs/result';
 import { LoadingScreen } from '@/features/playback/components/loading-screen';
 import { LyricsDisplay } from '@/features/playback/components/lyrics-display';
@@ -43,14 +44,48 @@ function displaySettings(config: AppConfig | null) {
   };
 }
 
-function PlaybackLayout({ song, config, queuePlayback, sessionPlayback }: PlaybackLayoutProps) {
-  const { isReady, paused } = usePlaybackTransportState();
-  const { handleContinue, handleExit } = usePlaybackTransportActions();
+type PlaybackReadyOverlaysProps = {
+  song: Song;
+  config: AppConfig | null;
+  sessionWindowControls: boolean;
+};
+
+function PlaybackReadyOverlays({
+  song,
+  config,
+  sessionWindowControls,
+}: PlaybackReadyOverlaysProps) {
   const { segments } = usePlaybackTranscriptState();
   const { series } = usePlaybackMicState();
   const { lyricsVerticalPosition, lyricsHorizontalPosition, lyricsScale, pitchGraphScale } =
     displaySettings(config);
   const hudPosition = lyricsVerticalPosition === 'top' ? 'bottom' : 'top';
+  const debugMode = config?.debug_mode ?? false;
+
+  return (
+    <>
+      <PlaybackHud
+        title={song.title}
+        artist={song.artist}
+        config={config}
+        position={hudPosition}
+        windowControls={sessionWindowControls}
+      />
+      <PitchGraph series={series} position={hudPosition} scale={pitchGraphScale} />
+      <LyricsDisplay
+        segments={segments}
+        verticalPosition={lyricsVerticalPosition}
+        horizontalPosition={lyricsHorizontalPosition}
+        scale={lyricsScale}
+      />
+      {debugMode && <DebugScrubBar />}
+    </>
+  );
+}
+
+function PlaybackLayout({ song, config, queuePlayback, sessionPlayback }: PlaybackLayoutProps) {
+  const { isReady, paused } = usePlaybackTransportState();
+  const { handleContinue, handleExit } = usePlaybackTransportActions();
   const sessionWindowControls = sessionPlayback && isTauri;
 
   usePlaybackInput(config);
@@ -61,22 +96,11 @@ function PlaybackLayout({ song, config, queuePlayback, sessionPlayback }: Playba
       <Background />
 
       {isReady ? (
-        <>
-          <PlaybackHud
-            title={song.title}
-            artist={song.artist}
-            config={config}
-            position={hudPosition}
-            windowControls={sessionWindowControls}
-          />
-          <PitchGraph series={series} position={hudPosition} scale={pitchGraphScale} />
-          <LyricsDisplay
-            segments={segments}
-            verticalPosition={lyricsVerticalPosition}
-            horizontalPosition={lyricsHorizontalPosition}
-            scale={lyricsScale}
-          />
-        </>
+        <PlaybackReadyOverlays
+          song={song}
+          config={config}
+          sessionWindowControls={sessionWindowControls}
+        />
       ) : (
         <LoadingScreen song={song} />
       )}

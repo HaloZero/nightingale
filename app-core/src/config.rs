@@ -295,6 +295,12 @@ pub struct AppConfig {
     /// `None` means casting is disabled.
     #[serde(default)]
     pub chromecast: Option<ChromecastConfig>,
+    /// Developer-only flag that exposes debug-oriented UI not meant for
+    /// normal end users (e.g. a scrub/seek bar on the playback screen for
+    /// visually/aurally checking lyric-alignment quality). Off by default;
+    /// toggled by hand-editing `config.json` -- there is no settings-UI
+    /// control for it.
+    pub debug_mode: Option<bool>,
 }
 
 fn default_data_path_option() -> Option<PathBuf> {
@@ -363,6 +369,7 @@ impl Default for AppConfig {
             parallel_analysis_url: None,
             parallel_analysis_only: None,
             chromecast: None,
+            debug_mode: None,
         }
     }
 }
@@ -581,6 +588,10 @@ impl AppConfig {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
+    }
+
+    pub fn debug_mode(&self) -> bool {
+        self.debug_mode.unwrap_or(false)
     }
 }
 

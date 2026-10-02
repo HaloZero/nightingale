@@ -115,4 +115,12 @@ export type AppConfig = {
    * `None` means casting is disabled.
    */
   chromecast: ChromecastConfig | null;
+  /**
+   * Developer-only flag that exposes debug-oriented UI not meant for
+   * normal end users (e.g. a scrub/seek bar on the playback screen for
+   * visually/aurally checking lyric-alignment quality). Off by default;
+   * toggled by hand-editing `config.json` -- there is no settings-UI
+   * control for it.
+   */
+  debug_mode: boolean | null;
 };
