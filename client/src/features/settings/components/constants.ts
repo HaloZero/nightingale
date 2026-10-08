@@ -80,6 +80,12 @@ export const ALIGN_BACKENDS: SettingsOption[] = [
     description:
       'English only. Times the song with WhisperX first, then re-times each natural pause-bounded section with the more accurate Wav2Vec2-BERT model. Falls back to the WhisperX timing alone for songs without enough pauses to split safely.',
   },
+  {
+    value: 'echora',
+    label: 'Echora MMS Forced Alignment (Experimental)',
+    description:
+      'English only for now. A multilingual MMS-based model tuned on song lyrics. Model weights are personal, non-commercial-licensed. Falls back to WhisperX otherwise.',
+  },
 ];
 
 export const MODELS = ['large-v3', 'large-v3-turbo', 'medium', 'small', 'base', 'tiny'];

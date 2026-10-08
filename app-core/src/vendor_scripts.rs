@@ -12,6 +12,7 @@ const QWEN_ALIGN_PY: &str = include_str!("../analyzer/qwen_align.py");
 const MMS_ALIGN_PY: &str = include_str!("../analyzer/mms_align.py");
 const WAV2VEC2_BERT_ALIGN_PY: &str = include_str!("../analyzer/wav2vec2_bert_align.py");
 const WAV2VEC2_BERT_2PASS_PY: &str = include_str!("../analyzer/wav2vec2_bert_2pass.py");
+const ECHORA_ALIGN_PY: &str = include_str!("../analyzer/echora_align.py");
 const AUDIO_PY: &str = include_str!("../analyzer/audio.py");
 const HALLUCINATION_PY: &str = include_str!("../analyzer/hallucination.py");
 const LANGUAGE_PY: &str = include_str!("../analyzer/language.py");
@@ -34,6 +35,7 @@ const FILES: &[(&str, &str)] = &[
     ("mms_align.py", MMS_ALIGN_PY),
     ("wav2vec2_bert_align.py", WAV2VEC2_BERT_ALIGN_PY),
     ("wav2vec2_bert_2pass.py", WAV2VEC2_BERT_2PASS_PY),
+    ("echora_align.py", ECHORA_ALIGN_PY),
     ("audio.py", AUDIO_PY),
     ("hallucination.py", HALLUCINATION_PY),
     ("language.py", LANGUAGE_PY),
