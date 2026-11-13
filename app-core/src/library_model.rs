@@ -34,6 +34,12 @@ pub struct SongSort {
 pub struct LibraryMenuFilters {
     pub artist: Option<String>,
     pub album: Option<String>,
+    /// File/source-tagged genre, exact match against `Song.genre` (a real
+    /// column, always populated -- untagged songs read as `"Unknown
+    /// Genre"`). Unlike `language` below, this is scanned metadata, not
+    /// analysis-derived.
+    #[serde(default)]
+    pub genre: Option<String>,
     pub playlist: Option<String>,
     pub query: Option<String>,
     #[serde(default)]
@@ -42,6 +48,12 @@ pub struct LibraryMenuFilters {
     pub transcript_source: Option<String>,
     #[serde(default)]
     pub search: Option<String>,
+    /// ISO language code (e.g. "en"), or "unknown" for songs with no
+    /// language set yet. `Song.language` is only ever populated
+    /// post-analysis (it doubles as the Whisper language hint/override), so
+    /// this only meaningfully narrows analyzed songs.
+    #[serde(default)]
+    pub language: Option<String>,
     /// Folder path prefix (ending in a separator) from a folder menu item.
     #[serde(default)]
     pub folder: Option<String>,
@@ -52,7 +64,7 @@ pub struct LibraryMenuFilters {
 #[ts(export)]
 pub enum SongTarget {
     Hashes { hashes: Vec<String> },
-    Filter { filters: LibraryMenuFilters },
+    Filter { filters: Box<LibraryMenuFilters> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

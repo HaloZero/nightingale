@@ -154,3 +154,36 @@ def end_of_song_cleanup() -> None:
     except Exception:
         pass
     hard_free_gpu("end_of_song")
+
+
+def release_idle_caches() -> None:
+    """Release caches that are worth keeping warm between back-to-back songs
+    but not while the server is sitting idle with an empty queue.
+
+    Unlike `end_of_song_cleanup` (run after every song, CUDA/general only),
+    this also drops `whisper_mlx`'s cached model object and clears MLX's own
+    buffer cache. MLX arrays live in Apple Silicon's unified memory, so that
+    cache is real host RAM the process would otherwise hold onto indefinitely
+    -- there's no CUDA-style VRAM boundary making it show up separately.
+    Reloading a ~3GB MLX Whisper model on the next song is an acceptable cost
+    for the queue-drained case; it's the every-song case this is deliberately
+    *not* called from.
+    """
+    try:
+        import whisper_mlx
+        whisper_mlx.free_model()
+    except Exception:
+        pass
+    try:
+        import mlx.core as mx
+        # `synchronize()` first is required, not cosmetic: MLX's Metal work
+        # is async, so the buffer behind the array `free_model()` just
+        # dropped may still be in flight when `clear_cache()` runs. Without
+        # this, `clear_cache()` sees an empty cache (the buffer hasn't landed
+        # in it yet) and silently frees nothing -- confirmed by measuring
+        # `mx.get_cache_memory()` before/after on a real array.
+        mx.synchronize()
+        mx.clear_cache()
+    except Exception:
+        pass
+    end_of_song_cleanup()

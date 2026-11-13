@@ -28,6 +28,7 @@ import {
   isVideoFlavor,
   type VideoFlavor,
 } from '@/features/playback/lib/video-flavor';
+import { useIsMobileWeb } from '@/shared/hooks/use-is-mobile';
 import type { AppConfig } from '@/types/AppConfig';
 import type { Song } from '@/types/Song';
 
@@ -60,8 +61,9 @@ type PlayableVideo = { fileHash: string; path: string };
 function resolveSourceVideoPath(
   song: Song,
   playableVideo: PlayableVideo | null,
+  hasSourceVideo: boolean,
 ): string | undefined {
-  if (!song.is_video) {
+  if (!hasSourceVideo) {
     return undefined;
   }
   return playableVideo?.fileHash === song.file_hash ? playableVideo.path : song.path;
@@ -69,14 +71,20 @@ function resolveSourceVideoPath(
 
 export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeProviderProps) {
   const fileHash = song.file_hash;
+  // Shaders, Pixabay clips, and a song's own bundled video are all decorative
+  // on top of lyrics/audio -- skip offering/fetching any of them on mobile
+  // web so no background bytes compete with the audio/lyrics fetch on a
+  // constrained connection.
+  const isMobileWeb = useIsMobileWeb();
+  const hasSourceVideo = song.is_video && !isMobileWeb;
   const themes = useMemo(
-    () => createPlaybackThemes(config?.custom_backgrounds ?? [], song.is_video),
-    [config?.custom_backgrounds, song.is_video],
+    () => createPlaybackThemes(config?.custom_backgrounds ?? [], hasSourceVideo),
+    [config?.custom_backgrounds, hasSourceVideo],
   );
   const [currentThemeKey, setCurrentThemeKey] = useState(() =>
     initialThemeKey({
       themes,
-      hasSourceVideo: song.is_video,
+      hasSourceVideo,
       selection: config?.last_background,
       legacyIndex: config?.last_theme ?? 0,
     }),
@@ -86,7 +94,7 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
   const persistConfig = usePlaybackConfigPersist(config);
 
   useEffect(() => {
-    if (!song.is_video) {
+    if (!hasSourceVideo) {
       return undefined;
     }
 
@@ -103,10 +111,10 @@ export function PlaybackThemeProvider({ song, config, children }: PlaybackThemeP
     return () => {
       cancelled = true;
     };
-  }, [fileHash, song.is_video]);
+  }, [fileHash, hasSourceVideo]);
 
   const theme = themes.find((candidate) => themeKey(candidate) === currentThemeKey) ?? themes[0];
-  const sourceVideoPath = resolveSourceVideoPath(song, playableVideo);
+  const sourceVideoPath = resolveSourceVideoPath(song, playableVideo, hasSourceVideo);
 
   const selectTheme = useCallback(
     (key: string) => {

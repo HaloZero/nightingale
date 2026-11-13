@@ -27,3 +27,7 @@ diesel::define_sql_function! {
     #[sql_name = "json_extract"]
     fn json_extract_text(json: Text, path: Text) -> NullableText;
 }
+
+diesel::define_sql_function! {
+    fn strftime(format: Text, timestring: Text) -> Text;
+}

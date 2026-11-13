@@ -21,7 +21,7 @@ use super::schema::songs;
 use super::songs::{append_songs, update_library_meta};
 use super::sql_functions::json_extract_text;
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 static MIGRATION_TOTAL: AtomicUsize = AtomicUsize::new(0);
@@ -128,6 +128,45 @@ pub(super) fn run_migrations(conn: &mut SqliteConnection) -> Result<(), Nighting
                 ON playlist_songs(playlist_id, position);
             CREATE INDEX IF NOT EXISTS idx_playlist_songs_song
                 ON playlist_songs(song_id);
+        ",
+        )?;
+    }
+    if version < 3 {
+        conn.batch_execute(
+            "
+            ALTER TABLE songs ADD COLUMN genre TEXT NOT NULL DEFAULT 'Unknown Genre';
+            ALTER TABLE songs ADD COLUMN has_lrc_file INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE songs ADD COLUMN has_embedded_lyrics INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE analysis_queue ADD COLUMN failed_kind TEXT;
+            ALTER TABLE analysis_queue ADD COLUMN failed_acknowledged INTEGER NOT NULL DEFAULT 0;
+
+            CREATE TABLE IF NOT EXISTS analysis_timings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                device TEXT,
+                whisper_model TEXT NOT NULL,
+                beam_size INTEGER NOT NULL,
+                batch_size INTEGER NOT NULL,
+                separator TEXT NOT NULL,
+                asr_engine TEXT NOT NULL,
+                align_backend TEXT NOT NULL,
+                vocal_detection_threshold_pct REAL NOT NULL,
+                key_detect_ms INTEGER,
+                separation_ms INTEGER,
+                transcribe_or_align_ms INTEGER,
+                transcribe_ms INTEGER,
+                align_ms INTEGER,
+                load_avg_1m REAL,
+                gpu_active_ratio REAL,
+                gpu_freq_mhz INTEGER,
+                gpu_temp_c REAL,
+                cpu_active_ratio REAL,
+                mem_pressure_ratio REAL,
+                total_ms INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_analysis_timings_file_hash
+                ON analysis_timings(file_hash);
         ",
         )?;
     }

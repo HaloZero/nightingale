@@ -6,17 +6,21 @@ export type LibraryMenuSection =
   | 'no_metadata'
   | 'artists'
   | 'albums'
+  | 'genres'
   | 'playlists'
+  | 'languages'
   | 'folders';
 
 export const EMPTY_LIBRARY_FILTER: LibraryMenuFilters = {
   artist: null,
   album: null,
+  genre: null,
   playlist: null,
   query: null,
   status: null,
   transcript_source: null,
   search: null,
+  language: null,
   folder: null,
 };
 
@@ -33,34 +37,40 @@ const NO_METADATA_FILTERS: Record<string, LibraryMenuFilters> = {
   unknown_album: { ...EMPTY_LIBRARY_FILTER, album: 'unknown_album' },
 };
 
+// Sections whose selection narrows by setting exactly one filter field to
+// the clicked item's value -- `hot`/`no_metadata` are handled separately
+// above since they map to a fixed lookup table instead of the item value.
+const SINGLE_FIELD_SECTIONS: Partial<Record<LibraryMenuSection, keyof LibraryMenuFilters>> = {
+  artists: 'artist',
+  albums: 'album',
+  genres: 'genre',
+  playlists: 'playlist',
+  languages: 'language',
+  folders: 'folder',
+};
+
 export function libraryFilterFromMenuSelection(
   section: LibraryMenuSection,
   item: LibraryMenuItem,
 ): LibraryMenuFilters {
-  switch (section) {
-    case 'hot':
-      return HOT_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
-    case 'no_metadata':
-      return NO_METADATA_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
-    case 'artists':
-      return { ...EMPTY_LIBRARY_FILTER, artist: item.value };
-    case 'albums':
-      return { ...EMPTY_LIBRARY_FILTER, album: item.value };
-    case 'playlists':
-      return { ...EMPTY_LIBRARY_FILTER, playlist: item.value };
-    case 'folders':
-      return { ...EMPTY_LIBRARY_FILTER, folder: item.value };
+  if (section === 'hot') {
+    return HOT_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
   }
-  section satisfies never;
-  return EMPTY_LIBRARY_FILTER;
+  if (section === 'no_metadata') {
+    return NO_METADATA_FILTERS[item.value] ?? EMPTY_LIBRARY_FILTER;
+  }
+  const field = SINGLE_FIELD_SECTIONS[section];
+  return field ? { ...EMPTY_LIBRARY_FILTER, [field]: item.value } : EMPTY_LIBRARY_FILTER;
 }
 
 export function libraryFiltersEqual(a: LibraryMenuFilters, b: LibraryMenuFilters): boolean {
   return (
     a.artist === b.artist &&
     a.album === b.album &&
+    a.genre === b.genre &&
     a.playlist === b.playlist &&
     a.folder === b.folder &&
+    a.language === b.language &&
     a.query === b.query
   );
 }

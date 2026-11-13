@@ -5,13 +5,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use tracing::warn;
+use tracing::{info, warn};
 use walkdir::WalkDir;
 
+use crate::analyzer::purge_song_analysis_data;
 use crate::cache::CacheDir;
+use crate::config::AppConfig;
 use crate::error::NightingaleError;
 use crate::library_db::{self, PlaylistDefinition, PlaylistSongKeyKind};
-use crate::song::{Song, SongOrigin, build_nge_song, build_song};
+use crate::song::{Song, SongOrigin, build_nge_song, build_song, has_sidecar_lrc, tag_has_lyrics};
 use crate::usdx;
 
 use super::{MediaSource, SCAN_BATCH_SIZE, ScanContext, SourceKind, flush_batch};
@@ -49,6 +51,10 @@ impl MediaSource for FolderSource {
     fn scan(&self, ctx: &ScanContext<'_>) -> Result<(), NightingaleError> {
         let media_files = collect_media_paths(&self.root);
         let folder_label = self.label();
+        info!(
+            "[scanner] Folder scan starting: \"{folder_label}\" ({} media file(s) found on disk)",
+            media_files.len()
+        );
 
         // Source-switch wipes are handled centrally in `scanner::start_scan`;
         // here we only need to prune rows whose paths disappeared between
@@ -57,22 +63,41 @@ impl MediaSource for FolderSource {
             .iter()
             .map(|(p, _)| p.to_string_lossy().into_owned())
             .collect();
-        let _ = library_db::delete_songs_not_in_paths(&paths);
+        let removed_hashes = library_db::delete_songs_not_in_paths(&paths).unwrap_or_default();
+        for hash in &removed_hashes {
+            purge_song_analysis_data(hash);
+        }
         let _ = library_db::update_library_meta(&folder_label, media_files.len());
 
-        let already_processed: HashSet<String> =
-            library_db::load_song_path_strings().unwrap_or_default();
+        // Loaded once and reused below for both "what's new" (the `pending`
+        // filter) and the lyrics-flags refresh pass -- avoids a second
+        // full-library query.
+        let known_songs = library_db::load_all_songs().unwrap_or_default();
+        let already_processed: HashSet<String> = known_songs
+            .iter()
+            .map(|s| s.path.to_string_lossy().into_owned())
+            .collect();
 
         let pending: Vec<_> = media_files
             .into_iter()
             .filter(|(p, _)| !already_processed.contains(&p.to_string_lossy().into_owned()))
             .collect();
+        info!(
+            "[scanner] {} already-known song(s), {} new file(s) to process",
+            known_songs.len(),
+            pending.len()
+        );
 
         let mut batch: Vec<Song> = Vec::new();
+        let mut added = 0usize;
+        let mut failed = 0usize;
         let generation = ctx.generation;
 
         for (i, (path, kind)) in pending.iter().enumerate() {
             if !library_db::scan_generation_is_current(generation) {
+                info!(
+                    "[scanner] Folder scan cancelled (superseded by a newer scan) after adding {added} new song(s)"
+                );
                 return Ok(());
             }
             let result = match kind {
@@ -82,8 +107,12 @@ impl MediaSource for FolderSource {
                 MediaKind::Nge => build_nge_song(path, ctx.cache),
             };
             match result {
-                Ok(song) => batch.push(song),
+                Ok(song) => {
+                    batch.push(song);
+                    added += 1;
+                }
                 Err(e) => {
+                    failed += 1;
                     warn!("Failed to process {}: {e}", path.display());
                 }
             }
@@ -93,10 +122,20 @@ impl MediaSource for FolderSource {
         }
 
         flush_batch(&mut batch, generation);
+        if !pending.is_empty() {
+            info!("[scanner] Added {added} new song(s), {failed} failed");
+        }
+
+        if library_db::scan_generation_is_current(generation)
+            && AppConfig::load().refresh_lyrics_on_scan()
+        {
+            refresh_lyrics_flags(&known_songs, generation);
+        }
 
         if library_db::scan_generation_is_current(generation) {
             sync_folder_playlists(&self.root);
         }
+        info!("[scanner] Folder scan finished: \"{folder_label}\"");
         Ok(())
     }
 
@@ -137,6 +176,63 @@ fn classify_media_file(path: &Path) -> Option<MediaKind> {
     } else {
         None
     }
+}
+
+/// A regular scan only calls `build_song` for brand-new paths (see the
+/// `already_processed` filter in `scan` above), so an already-known song is
+/// otherwise frozen at whatever was true the first time it was scanned.
+/// `has_lrc_file`/`has_embedded_lyrics` are the deliberate exception: a
+/// `.lrc` sidecar can show up, or tags can get edited, well after a song was
+/// first added, and both are cheap to re-check (a `stat` + one tag read) --
+/// so every scan/rescan re-derives them for every already-known local song
+/// and only writes a DB row when something actually changed. USDX songs are
+/// skipped: their lyrics come from the chart file itself, not a sidecar/tag
+/// next to it (see usdx.rs), so re-checking their `path` would be checking
+/// the wrong file. Remote-source songs are skipped too -- no local bytes to
+/// check at scan time.
+fn refresh_lyrics_flags(known_songs: &[Song], generation: u64) {
+    let candidates = known_songs
+        .iter()
+        .filter(|s| matches!(s.origin, SongOrigin::LocalFile) && s.usdx.is_none())
+        .count();
+    info!("[scanner] Refreshing lyrics flags for {candidates} already-known local song(s)");
+
+    let mut changed = 0usize;
+    for song in known_songs {
+        if !library_db::scan_generation_is_current(generation) {
+            info!(
+                "[scanner] Lyrics-flags refresh cancelled (superseded by a newer scan) after {changed} change(s)"
+            );
+            return;
+        }
+        if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
+            continue;
+        }
+        let has_lrc_file = has_sidecar_lrc(&song.path);
+        let has_embedded_lyrics = !song.is_video && tag_has_lyrics(&song.path);
+        if has_lrc_file == song.has_lrc_file && has_embedded_lyrics == song.has_embedded_lyrics {
+            continue;
+        }
+        let mut updated = song.clone();
+        updated.has_lrc_file = has_lrc_file;
+        updated.has_embedded_lyrics = has_embedded_lyrics;
+        match library_db::update_song_fields(&song.file_hash, &updated) {
+            Ok(()) => {
+                changed += 1;
+                info!(
+                    "[scanner] Lyrics flags changed for \"{}\": has_lrc_file={has_lrc_file} has_embedded_lyrics={has_embedded_lyrics}",
+                    song.path.display()
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to refresh lyrics flags for {}: {e}",
+                    song.path.display()
+                );
+            }
+        }
+    }
+    info!("[scanner] Lyrics-flags refresh finished: {changed} song(s) changed");
 }
 
 fn sync_folder_playlists(root: &Path) {

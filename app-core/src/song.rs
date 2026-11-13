@@ -97,12 +97,21 @@ pub struct Song {
     pub title: String,
     pub artist: String,
     pub album: String,
+    #[serde(default = "default_genre")]
+    pub genre: String,
     pub duration_secs: f64,
     pub album_art_path: Option<PathBuf>,
     pub is_analyzed: bool,
     pub language: Option<String>,
     #[serde(default)]
     pub transcript_source: Option<TranscriptSource>,
+    /// Which forced-alignment backend actually produced this song's current
+    /// timing (`"whisperx"`, `"ctc"`, `"qwen"`, `"mms"`, `"wav2vec2_bert"`, or
+    /// `"wav2vec2_bert_2pass"` -- see `read_transcript_meta`). `None` for
+    /// `Lrc`/`Usdx` sources (no aligner runs for those) and for songs
+    /// analyzed before this field existed, until they're realigned.
+    #[serde(default)]
+    pub align_backend: Option<String>,
     #[serde(default)]
     pub key: Option<String>,
     #[serde(default)]
@@ -121,10 +130,38 @@ pub struct Song {
     /// hidden. Defaults to `false` for stem-separated songs.
     #[serde(default)]
     pub no_stems: bool,
+    /// True when a `.lrc` sidecar sits next to the audio file (same
+    /// directory, same basename, `.lrc` extension). Always `false` for
+    /// remote-source songs (Jellyfin/Navidrome/Plex) -- their bytes aren't
+    /// local at scan time.
+    #[serde(default)]
+    pub has_lrc_file: bool,
+    /// True when the audio file's own tags carry non-empty lyrics (ID3
+    /// `USLT` via lofty's `ItemKey::UnsyncLyrics`, or MP4's lyrics atom via
+    /// `ItemKey::Lyrics` -- ID3v2 doesn't map to `Lyrics` at all, see
+    /// `tag_has_lyrics`). Always `false` for video files (no tag read
+    /// attempted) and remote-source songs.
+    #[serde(default)]
+    pub has_embedded_lyrics: bool,
+}
+
+impl Song {
+    /// Whether this song has a *known* lyrics source that isn't ASR
+    /// transcription -- a `.lrc` sidecar or an embedded tag, either one.
+    /// Drives the "External Lyrics" library filter and, at analyze time,
+    /// tells `process_song` to forced-align that text instead of
+    /// transcribing (see `lyrics::local_lyrics_path`).
+    pub fn has_external_lyrics(&self) -> bool {
+        self.has_lrc_file || self.has_embedded_lyrics
+    }
 }
 
 fn default_tempo() -> f64 {
     1.0
+}
+
+fn default_genre() -> String {
+    "Unknown Genre".to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +171,7 @@ pub(crate) struct TranscriptMetaInfo {
     pub key: Option<String>,
     pub tempo: f64,
     pub no_stems: bool,
+    pub align_backend: Option<String>,
 }
 
 /// File-derived fields -- everything `Song::from_path` reads straight from
@@ -144,8 +182,11 @@ struct FileDerivedFields {
     title: String,
     artist: String,
     album: String,
+    genre: String,
     duration_secs: f64,
     album_art_path: Option<PathBuf>,
+    has_lrc_file: bool,
+    has_embedded_lyrics: bool,
 }
 
 fn try_read_file_derived_fields(
@@ -153,7 +194,7 @@ fn try_read_file_derived_fields(
     is_video: bool,
     cache: &CacheDir,
 ) -> Result<FileDerivedFields, NightingaleError> {
-    let (mut title, mut artist, mut album, duration_secs, cover_bytes) = if is_video {
+    let (mut title, mut artist, mut album, mut genre, duration_secs, cover_bytes) = if is_video {
         read_video_metadata(path)?
     } else {
         read_metadata(path)?
@@ -172,6 +213,9 @@ fn try_read_file_derived_fields(
     if album.is_empty() {
         album = "Unknown Album".to_string();
     }
+    if genre.is_empty() {
+        genre = default_genre();
+    }
 
     // Content-addressed: writes only if a cover with this exact hash isn't
     // already cached, so a refresh after the physical cover file was
@@ -188,12 +232,18 @@ fn try_read_file_derived_fields(
         })
         .transpose()?;
 
+    let has_lrc_file = has_sidecar_lrc(path);
+    let has_embedded_lyrics = !is_video && tag_has_lyrics(path);
+
     Ok(FileDerivedFields {
         title,
         artist,
         album,
+        genre,
         duration_secs,
         album_art_path,
+        has_lrc_file,
+        has_embedded_lyrics,
     })
 }
 
@@ -206,15 +256,18 @@ fn read_file_derived_fields(path: &Path, is_video: bool, cache: &CacheDir) -> Fi
             .to_string(),
         artist: "Unknown Artist".to_string(),
         album: "Unknown Album".to_string(),
+        genre: default_genre(),
         duration_secs: 0.0,
         album_art_path: None,
+        has_lrc_file: false,
+        has_embedded_lyrics: false,
     })
 }
 
 impl Song {
-    /// Re-reads title/artist/album/duration/album art straight from
-    /// `self.path`, overwriting the current values in place. Everything
-    /// analysis-derived (key, tempo,
+    /// Re-reads title/artist/album/genre/duration/album art/has_lrc_file/
+    /// has_embedded_lyrics straight from `self.path`, overwriting the
+    /// current values in place. Everything analysis-derived (key, tempo,
     /// transcript_source, is_analyzed, ...) is untouched -- this is a
     /// metadata-only refresh, not a reanalysis. Exists for the "Refresh
     /// metadata" action: unlike a rescan (which only ever runs this logic
@@ -228,15 +281,21 @@ impl Song {
             title,
             artist,
             album,
+            genre,
             duration_secs,
             album_art_path,
+            has_lrc_file,
+            has_embedded_lyrics,
         } = try_read_file_derived_fields(&self.path, self.is_video, cache)?;
 
         self.title = title;
         self.artist = artist;
         self.album = album;
+        self.genre = genre;
         self.duration_secs = duration_secs;
         self.album_art_path = album_art_path;
+        self.has_lrc_file = has_lrc_file;
+        self.has_embedded_lyrics = has_embedded_lyrics;
         Ok(())
     }
 }
@@ -267,7 +326,7 @@ pub(crate) fn build_song(
     let file_hash = compute_file_hash(path)?;
 
     let is_analyzed = cache.transcript_exists(&file_hash);
-    let (transcript_source, language, key, tempo, no_stems) = if is_analyzed {
+    let (transcript_source, language, key, tempo, no_stems, align_backend) = if is_analyzed {
         let meta = read_transcript_meta(cache, &file_hash);
         (
             Some(meta.source),
@@ -275,17 +334,21 @@ pub(crate) fn build_song(
             meta.key,
             meta.tempo,
             meta.no_stems,
+            meta.align_backend,
         )
     } else {
-        (None, None, None, default_tempo(), false)
+        (None, None, None, default_tempo(), false, None)
     };
 
     let FileDerivedFields {
         title,
         artist,
         album,
+        genre,
         duration_secs,
         album_art_path,
+        has_lrc_file,
+        has_embedded_lyrics,
     } = read_file_derived_fields(path, is_video, cache);
 
     Ok(Song {
@@ -294,11 +357,13 @@ pub(crate) fn build_song(
         title,
         artist,
         album,
+        genre,
         duration_secs,
         album_art_path,
         is_analyzed,
         language,
         transcript_source,
+        align_backend,
         key,
         override_key: None,
         tempo,
@@ -307,6 +372,8 @@ pub(crate) fn build_song(
         usdx: None,
         origin: SongOrigin::LocalFile,
         no_stems,
+        has_lrc_file,
+        has_embedded_lyrics,
     })
 }
 
@@ -406,11 +473,13 @@ pub(crate) fn build_nge_song(path: &Path, cache: &CacheDir) -> Result<Song, Nigh
         title: meta.title,
         artist: meta.artist,
         album: meta.album,
+        genre: default_genre(),
         duration_secs: meta.duration_secs,
         album_art_path: extract_nge_cover(&nge, cache),
         is_analyzed: meta.is_analyzed,
         language: meta.language,
         transcript_source: meta.transcript_source,
+        align_backend: None,
         key: meta.key,
         override_key: meta.override_key,
         tempo: meta.tempo,
@@ -419,6 +488,8 @@ pub(crate) fn build_nge_song(path: &Path, cache: &CacheDir) -> Result<Song, Nigh
         usdx: None,
         origin: SongOrigin::LocalFile,
         no_stems: meta.no_stems,
+        has_lrc_file: false,
+        has_embedded_lyrics: false,
     })
 }
 
@@ -445,6 +516,7 @@ pub(crate) fn read_transcript_meta(cache: &CacheDir, hash: &str) -> TranscriptMe
         key: None,
         tempo: default_tempo(),
         no_stems: false,
+        align_backend: None,
     })
 }
 
@@ -463,6 +535,8 @@ pub(crate) fn try_read_transcript_meta(cache: &CacheDir, hash: &str) -> Option<T
         tempo: f64,
         #[serde(default)]
         no_stems: bool,
+        #[serde(default)]
+        align_backend: Option<String>,
     }
     let data = std::fs::read_to_string(cache.transcript_path(hash)).ok()?;
     let parsed = serde_json::from_str::<TranscriptMeta>(&data).ok()?;
@@ -478,10 +552,11 @@ pub(crate) fn try_read_transcript_meta(cache: &CacheDir, hash: &str) -> Option<T
         key: parsed.key,
         tempo: parsed.tempo,
         no_stems: parsed.no_stems,
+        align_backend: parsed.align_backend,
     })
 }
 
-type MediaMetadata = (String, String, String, f64, Option<Vec<u8>>);
+type MediaMetadata = (String, String, String, String, f64, Option<Vec<u8>>);
 
 fn read_metadata(path: &Path) -> Result<MediaMetadata, NightingaleError> {
     let tagged = lofty::read_from_path(path)
@@ -497,6 +572,7 @@ fn read_metadata(path: &Path) -> Result<MediaMetadata, NightingaleError> {
                 String::new(),
                 String::new(),
                 String::new(),
+                String::new(),
                 duration_secs,
                 None,
             ));
@@ -506,10 +582,45 @@ fn read_metadata(path: &Path) -> Result<MediaMetadata, NightingaleError> {
     let title = tag.title().map(|s| s.to_string()).unwrap_or_default();
     let artist = tag.artist().map(|s| s.to_string()).unwrap_or_default();
     let album = tag.album().map(|s| s.to_string()).unwrap_or_default();
+    let genre = tag.genre().map(|s| s.to_string()).unwrap_or_default();
 
     let album_art = tag.pictures().first().map(|pic| pic.data().to_vec());
 
-    Ok((title, artist, album, duration_secs, album_art))
+    Ok((title, artist, album, genre, duration_secs, album_art))
+}
+
+/// Whether `path`'s own tags carry non-empty lyrics. Tries `ItemKey::Lyrics`
+/// first (how MP4's lyr atom is exposed), then falls back to
+/// `ItemKey::UnsyncLyrics` (ID3v2's `USLT` frame is *only* exposed under
+/// that key -- lofty doesn't map ID3v2 to `Lyrics` at all, so MP3s with
+/// embedded lyrics would otherwise silently read as having none). Re-reads
+/// the file rather than threading a 6th value through `read_metadata`'s
+/// tuple -- clarity win over one extra open. `pub(crate)` so
+/// `source::folder`'s rescan pass can reuse the exact same check for
+/// already-known songs, not just brand-new ones (see
+/// `Song::has_embedded_lyrics`).
+pub(crate) fn tag_has_lyrics(path: &Path) -> bool {
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return false;
+    };
+    let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
+        return false;
+    };
+    // ID3v2 (MP3) doesn't support `ItemKey::Lyrics` at all -- its `USLT`
+    // frame only maps to `ItemKey::UnsyncLyrics` (lofty's own docs call this
+    // out explicitly). MP4's lyr atom maps to both, so trying `Lyrics` first
+    // and falling back covers both tag formats.
+    tag.get_string(lofty::tag::ItemKey::Lyrics)
+        .or_else(|| tag.get_string(lofty::tag::ItemKey::UnsyncLyrics))
+        .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// Whether a `.lrc` sidecar sits next to `path` (same directory, same
+/// basename, `.lrc` extension) -- the other local lyrics source alongside
+/// embedded tags, checked regardless of `is_video`. `pub(crate)` for the
+/// same reason as `tag_has_lyrics`.
+pub(crate) fn has_sidecar_lrc(path: &Path) -> bool {
+    path.with_extension("lrc").is_file()
 }
 
 fn read_video_metadata(path: &Path) -> Result<MediaMetadata, NightingaleError> {
@@ -526,6 +637,7 @@ fn read_video_metadata(path: &Path) -> Result<MediaMetadata, NightingaleError> {
     let mut title = String::new();
     let mut artist = String::new();
     let mut album = String::new();
+    let mut genre = String::new();
     let mut duration_secs = 0.0;
     let mut found_duration = false;
     let mut reading_audio_stream = false;
@@ -554,6 +666,9 @@ fn read_video_metadata(path: &Path) -> Result<MediaMetadata, NightingaleError> {
         if let Some(val) = strip_meta_tag(trimmed, "album") {
             album = val;
         }
+        if let Some(val) = strip_meta_tag(trimmed, "genre") {
+            genre = val;
+        }
     }
 
     if !found_duration {
@@ -565,7 +680,7 @@ fn read_video_metadata(path: &Path) -> Result<MediaMetadata, NightingaleError> {
 
     let album_art = extract_video_thumbnail(&ffmpeg, path);
 
-    Ok((title, artist, album, duration_secs, album_art))
+    Ok((title, artist, album, genre, duration_secs, album_art))
 }
 
 fn extract_video_thumbnail(ffmpeg: &Path, video_path: &Path) -> Option<Vec<u8>> {

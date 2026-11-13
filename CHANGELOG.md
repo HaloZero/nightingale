@@ -13,6 +13,11 @@ below.
 
 ## [Unreleased]
 
+### Improvements
+
+- Playback now requests a screen wake lock while a song is actively playing, so mobile and desktop browsers stop dimming or locking the screen mid-song. The lock releases on pause, on song end, and when the tab is backgrounded, and is re-requested automatically once the tab is visible again while still playing. No effect where the browser doesn't support the Wake Lock API.
+- Playback on mobile web no longer loads or renders decorative backgrounds (shaders, Pixabay clips, custom backgrounds, or a video song's own bundled video), so a phone browser only has to load audio and lyrics. Desktop and the Tauri app are unaffected. The theme/flavor touch controls and their status text are hidden on mobile web accordingly.
+
 ## [1.4.1] - 2026-11-09
 
 ### Fixes

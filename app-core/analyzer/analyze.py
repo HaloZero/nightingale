@@ -44,8 +44,10 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for transcription")
     parser.add_argument("--separator", default="karaoke", choices=["karaoke", "demucs"],
                         help="Stem separation method: karaoke (UVR, cleaner) or demucs (faster)")
-    parser.add_argument("--engine", default="whisper", choices=["whisper", "parakeet"],
-                        help="Transcription engine: whisper (default) or parakeet (NeMo on CUDA, ONNX elsewhere)")
+    parser.add_argument("--engine", default="whisper", choices=["whisper", "parakeet", "whisper_mlx"],
+                        help="Transcription engine: whisper (default), parakeet (NeMo on CUDA, ONNX "
+                             "elsewhere), or whisper_mlx (Whisper on Apple Silicon's GPU via MLX; "
+                             "falls back to whisper elsewhere)")
     parser.add_argument("--align-backend", dest="align_backend", default="whisperx",
                         choices=["whisperx", "ctc", "qwen"],
                         help="Forced-alignment backend: whisperx (default, Python Viterbi), "
@@ -56,6 +58,9 @@ def main():
                              "detection. Lower keeps more edge audio; default 0.15")
     parser.add_argument("--lyrics", help="Path to pre-fetched lyrics JSON (align-only mode)")
     parser.add_argument("--language", default=None, help="Override automatic language detection")
+    parser.add_argument("--skip-transcription", dest="skip_transcription", action="store_true",
+                        help="Only run key detection and stem separation; skip transcription "
+                             "entirely (e.g. to pre-warm the stems cache for a song)")
     args = parser.parse_args()
 
     audio_path = os.path.abspath(args.audio_path)
@@ -81,6 +86,7 @@ def main():
         engine=args.engine,
         lyrics_path=args.lyrics,
         language_override=args.language,
+        skip_transcription=args.skip_transcription,
     )
 
     progress(100, "DONE")

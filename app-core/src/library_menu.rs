@@ -24,9 +24,12 @@ pub struct LibraryMenuItem {
 pub struct LibraryMenuItems {
     pub hot: Vec<LibraryMenuItem>,
     pub no_metadata: Vec<LibraryMenuItem>,
+    pub lyrics: Vec<LibraryMenuItem>,
     pub artists: Vec<LibraryMenuItem>,
     pub albums: Vec<LibraryMenuItem>,
+    pub genres: Vec<LibraryMenuItem>,
     pub playlists: Vec<LibraryMenuItem>,
+    pub languages: Vec<LibraryMenuItem>,
     pub folders: Vec<LibraryMenuItem>,
 }
 

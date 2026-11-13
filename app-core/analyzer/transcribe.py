@@ -1,13 +1,17 @@
 """WhisperX / Parakeet transcription: full-audio transcription of vocals with forced alignment."""
 
 import re
+import time
 
 import cjk
 from audio import detect_vocal_region, highpass_filter, normalize_rms
 from gpu import gpu_model, hard_free_gpu
 from hallucination import is_hallucination, remove_hallucinated_words
 from language import detect_language_multiwindow
-from whisper_compat import progress, align_with_fallback, get_align_backend, load_whisper_model
+from whisper_compat import (
+    progress, align_with_fallback, get_align_backend, get_effective_align_backend, timing, starting,
+    load_whisper_model,
+)
 
 
 def transcribe_vocals(
@@ -72,6 +76,22 @@ def transcribe_vocals(
             pre_align_cleanup=pre_align_cleanup,
         )
         if engine_used in ("parakeet", "onnx-cpu-fallback"):
+            return _build_result_from_words(payload, language, duration_secs, engine_used)
+
+        raw_segments = payload
+    elif engine == "whisper_mlx":
+        payload, language, engine_used = _transcribe_whisper_mlx_or_fallback(
+            audio=audio,
+            full_audio=full_audio,
+            vocal_start=vocal_start,
+            device=device,
+            compute_type=compute_type,
+            model_name=model_name,
+            beam_size=beam_size,
+            batch_size=batch_size,
+            language_override=language_override,
+        )
+        if engine_used == "whisper_mlx":
             return _build_result_from_words(payload, language, duration_secs, engine_used)
 
         raw_segments = payload
@@ -182,6 +202,8 @@ def _transcribe_whisper(
     _, no_vad_asr = _whisper_asr_options(beam_size)
 
     with gpu_model(f"whisper:{model_name}") as held:
+        starting("model_load")
+        t0 = time.perf_counter()
         if language_override:
             language = language_override
             print(f"[nightingale:LOG] Using language override: '{language}'", flush=True)
@@ -192,6 +214,7 @@ def _transcribe_whisper(
                 asr_options=no_vad_asr,
             )
             held.append(model)
+            timing("model_load", t0)
         else:
             progress(58, "Detecting language from vocals (multi-window)...")
             model = load_whisper_model(
@@ -199,6 +222,7 @@ def _transcribe_whisper(
                 task="transcribe", asr_options=no_vad_asr,
             )
             held.append(model)
+            timing("model_load", t0)
             language = detect_language_multiwindow(model, full_audio)
             print(f"[nightingale:LOG] Final detected language: '{language}'", flush=True)
             progress(59, f"Detected language: {language}")
@@ -206,12 +230,23 @@ def _transcribe_whisper(
         print(f"[nightingale:LOG] Model ready for lang={language}", flush=True)
 
         progress(60, "Transcribing vocals...")
+        # WhisperX processes every VAD-detected segment in one blocking call
+        # with no output in between by default -- for a full song on CPU
+        # (forced whenever device == "mps"; ctranslate2 has no MPS kernel)
+        # with a large model/high beam size, that gap can run long enough to
+        # look indistinguishable from a hang to anything watching stdout
+        # (e.g. bench_analyze.py's idle timeout). progress_callback gives us
+        # a flushed line per segment so real progress is visible throughout.
+        def _log_transcribe_progress(pct: float) -> None:
+            print(f"[nightingale:LOG] Transcribing: {pct:.1f}%", flush=True)
+
         result = model.transcribe(
             audio,
             batch_size=batch_size,
             task="transcribe",
             language=language,
             chunk_size=30,
+            progress_callback=_log_transcribe_progress,
         )
 
     raw_segments = result.get("segments", [])
@@ -285,6 +320,43 @@ def _transcribe_parakeet_or_fallback(
 
     engine_used = "onnx-cpu-fallback" if backend == "onnx-cpu-fallback" else "parakeet"
     return words, language, engine_used
+
+
+def _transcribe_whisper_mlx_or_fallback(
+    *, audio, full_audio, vocal_start, device, compute_type,
+    model_name, beam_size, batch_size, language_override,
+) -> tuple[list[dict], str, str]:
+    """Try Whisper MLX (Apple Silicon); fall back to regular Whisper on any failure."""
+    import whisper_mlx
+
+    def _fallback_to_whisper(reason: str) -> tuple[list[dict], str, str]:
+        print(f"[nightingale:LOG] Whisper MLX unavailable ({reason}); falling back to Whisper", flush=True)
+        raw_segments, language = _transcribe_whisper(
+            audio=audio, full_audio=full_audio, vocal_start=vocal_start,
+            device=device, compute_type=compute_type,
+            model_name=model_name, beam_size=beam_size, batch_size=batch_size,
+            language_override=language_override,
+        )
+        return raw_segments, language, "whisper-fallback"
+
+    if not whisper_mlx.is_available():
+        return _fallback_to_whisper("mlx not importable on this machine")
+
+    try:
+        words, language = whisper_mlx.transcribe(
+            audio, model_name=model_name, beam_size=beam_size, language=language_override,
+        )
+    except Exception as e:
+        return _fallback_to_whisper(str(e))
+
+    if not words:
+        return _fallback_to_whisper("produced no words")
+
+    for w in words:
+        w["start"] = round(w["start"] + vocal_start, 3)
+        w["end"] = round(w["end"] + vocal_start, 3)
+
+    return words, language, "whisper_mlx"
 
 
 def _filter_hallucinations(raw_segments: list[dict], duration_secs: float) -> list[dict]:
@@ -373,7 +445,10 @@ def _align_and_build(raw_segments: list[dict], audio, language: str, device: str
             print(f"[nightingale:LOG] First word: '{segments[0]['words'][0]}'", flush=True)
         print(f"[nightingale:LOG] Last segment: '{segments[-1]['text'][:100]}'", flush=True)
 
-    return {"language": language, "segments": segments}
+    return {
+        "language": language, "segments": segments,
+        "align_backend": get_effective_align_backend(),
+    }
 
 
 def _align_and_build_qwen(raw_segments: list[dict], audio, language: str, pre_align_cleanup=None) -> dict | None:
@@ -426,7 +501,7 @@ def _align_and_build_qwen(raw_segments: list[dict], audio, language: str, pre_al
             print(f"[nightingale:LOG] First word: '{segments[0]['words'][0]}'", flush=True)
         print(f"[nightingale:LOG] Last segment: '{segments[-1]['text'][:100]}'", flush=True)
 
-    return {"language": language, "segments": segments}
+    return {"language": language, "segments": segments, "align_backend": "qwen"}
 
 
 def _retokenize_cjk(raw_segments: list[dict], aligned_segments: list[dict], language: str) -> list[dict]:

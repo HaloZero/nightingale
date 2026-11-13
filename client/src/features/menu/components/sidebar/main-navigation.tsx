@@ -4,7 +4,9 @@ import {
   Flame,
   FileQuestionMark,
   FolderIcon,
+  LanguagesIcon,
   ListMusicIcon,
+  TagIcon,
   UserIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -71,7 +73,13 @@ const NAV_SECTIONS: NavSectionConfig[] = [
     icon: FileQuestionMark,
   },
   { section: 'artists', label: 'menu.sidebar.mainNavigation.artists', icon: UserIcon },
+  { section: 'genres', label: 'menu.sidebar.mainNavigation.genres', icon: TagIcon },
   { section: 'playlists', label: 'menu.sidebar.mainNavigation.playlists', icon: ListMusicIcon },
+  {
+    section: 'languages',
+    label: 'menu.sidebar.mainNavigation.languages',
+    icon: LanguagesIcon,
+  },
   { section: 'folders', label: 'menu.sidebar.mainNavigation.folders', icon: FolderIcon },
 ];
 

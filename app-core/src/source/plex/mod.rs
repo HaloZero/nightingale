@@ -211,6 +211,10 @@ impl PlexSource {
                 "Unknown Artist",
             ),
             album: pick_string(item.parent_title.as_deref(), "Unknown Album"),
+            genre: pick_string(
+                item.genre.first().and_then(|t| t.tag.as_deref()),
+                "Unknown Genre",
+            ),
             duration_secs: item
                 .duration
                 .map(|value| value as f64 / 1000.0)
@@ -219,6 +223,7 @@ impl PlexSource {
             is_analyzed: false,
             language: None,
             transcript_source: None,
+            align_backend: None,
             key: None,
             override_key: None,
             tempo: 1.0,
@@ -232,6 +237,8 @@ impl PlexSource {
                 cover_tag,
             },
             no_stems: false,
+            has_lrc_file: false,
+            has_embedded_lyrics: false,
         })
     }
 
@@ -1033,6 +1040,8 @@ struct PlexMetadata {
     thumb: Option<String>,
     #[serde(rename = "Media", default)]
     media: Vec<PlexMedia>,
+    #[serde(rename = "Genre", default)]
+    genre: Vec<PlexTag>,
 }
 
 #[derive(Deserialize)]
@@ -1049,4 +1058,10 @@ struct PlexPart {
     key: String,
     #[serde(default)]
     container: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PlexTag {
+    #[serde(default)]
+    tag: Option<String>,
 }

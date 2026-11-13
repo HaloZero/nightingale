@@ -43,7 +43,7 @@ export const SongList = ({
   onSort,
 }: SongListProps) => {
   const { mutate: addToQueue, isLoading: addingToQueue } = useAddPlaybackQueueEntry();
-  const { enqueueOne } = useAnalysis();
+  const { enqueueOne, realign } = useAnalysis();
   const { setMode } = useDialog();
   const { launch, reserveTarget } = usePlaybackLauncher();
   const [multiplayerSong, setMultiplayerSong] = useState<Song | null>(null);
@@ -66,8 +66,9 @@ export const SongList = ({
       onPlay: play,
       onPlayMultiplayer: setMultiplayerSong,
       onProvideLyrics: (song) => setMode({ mode: 'edit-lyrics', song }),
+      onRealign: (song) => void realign(song.file_hash),
     }),
-    [addToQueue, addingToQueue, enqueueOne, play, setMode],
+    [addToQueue, addingToQueue, enqueueOne, play, realign, setMode],
   );
 
   if (songs.length === 0 && !loading) {

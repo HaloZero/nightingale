@@ -17,7 +17,7 @@ use crate::{
     cache::CacheDir,
     config::AppConfig,
     library_db,
-    library_model::{LibraryMenuFilters, LoadSongsParams, SongTarget, SongsMeta, SongsStore},
+    library_model::{LibraryMenuFilters, LoadSongsParams, SongsMeta, SongsStore},
     song::try_read_transcript_meta,
     source::{ScanContext, active_source_from_config},
 };
@@ -85,6 +85,11 @@ pub fn start_scan() {
         }
     };
 
+    info!(
+        "[scanner] Scan triggered (generation={scan_generation}, source=\"{}\")",
+        source.label()
+    );
+
     // If the active source's identity changed (folder → Jellyfin, different
     // Jellyfin server, different folder path) the rows already in the DB
     // belong to a different library and would otherwise stick around — each
@@ -93,7 +98,18 @@ pub fn start_scan() {
     let new_label = source.label();
     let (existing_label, _) = library_db::read_library_meta().unwrap_or_default();
     if existing_label != new_label {
+        info!(
+            "[scanner] Source changed (\"{existing_label}\" -> \"{new_label}\") -- clearing library before rescanning"
+        );
+        let removed_hashes: Vec<String> = library_db::load_all_songs()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|song| song.file_hash)
+            .collect();
         let _ = library_db::replace_all_songs_sorted(&[]);
+        for hash in &removed_hashes {
+            analyzer::purge_song_analysis_data(hash);
+        }
         let _ = library_db::analysis_queue_clear();
         let _ = library_db::update_library_meta(&new_label, 0);
     }
@@ -109,12 +125,18 @@ pub fn start_scan() {
             return;
         }
 
-        if library_db::scan_generation_is_current(scan_generation)
-            && AppConfig::load().auto_analyze()
-        {
-            let _ = analyzer::enqueue(SongTarget::Filter {
-                filters: LibraryMenuFilters::default(),
-            });
+        if !library_db::scan_generation_is_current(scan_generation) {
+            info!(
+                "[scanner] Scan (generation={scan_generation}) superseded by a newer scan before it finished"
+            );
+            return;
+        }
+
+        info!("[scanner] Scan (generation={scan_generation}) finished");
+
+        if AppConfig::load().auto_analyze() {
+            info!("[scanner] auto_analyze is on -- queuing every unanalyzed song");
+            analyzer::enqueue_all(&LibraryMenuFilters::default());
         }
     });
 }

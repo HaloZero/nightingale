@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use ts_rs::TS;
 
 use crate::analyzer::{
@@ -93,6 +93,23 @@ pub struct SidecarLrc {
 
 const SIDECAR_LRC_MAX_BYTES: u64 = 1024 * 1024;
 
+fn normalize(s: &str) -> String {
+    s.trim().to_lowercase()
+}
+
+/// Minimum `jaro_winkler` similarity (same normalized-lowercase, trimmed
+/// comparison `search.rs` uses) between a candidate's LRCLIB album name and
+/// the song's own tagged album to count as "the same release" in
+/// `lrclib_candidates`'s ranking. Calibrated against a real mismatch case
+/// (Britney Spears' "Toxic"): genuine spelling/punctuation variants of the
+/// same album ("Greatest Hits: My Prerogative" vs "Greatest Hits - My
+/// Prerogative - CD1" vs the full-width-colon "Greatest Hits：My
+/// Prerogative") scored 0.88-0.99 against each other, while unrelated
+/// albums LRCLIB returned for the same song ("Woman", "Drivetime
+/// Anthems", "The Singles Collection") scored 0.32-0.58 -- 0.8 sits
+/// cleanly in the gap between those two clusters.
+const ALBUM_MATCH_THRESHOLD: f64 = 0.8;
+
 pub(crate) fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
     let title = &song.title;
     let artist = &song.artist;
@@ -108,27 +125,35 @@ pub(crate) fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
         song.duration_secs, song.album
     );
 
-    let url = format!(
-        "https://lrclib.net/api/search?track_name={}&artist_name={}",
-        urlencoding::encode(title),
-        urlencoding::encode(artist),
-    );
-    let resp = match agent
-        .get(&url)
-        .header("User-Agent", "Nightingale/1.0")
-        .call()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("[lrclib] Search request failed: {e}");
-            return Vec::new();
-        }
-    };
-    let results: Vec<LrclibCandidate> = match resp.into_body().read_json() {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("[lrclib] Failed to parse search results: {e}");
-            return Vec::new();
+    // LRCLIB's search endpoint accepts an `album_name` filter that narrows
+    // results server-side -- confirmed a real filter, not just a ranking
+    // hint: an album that doesn't match anything in its catalog returns
+    // zero results rather than falling back to a broader match. Try it
+    // first: a hit means every candidate actually belongs to the right
+    // release, rather than being picked from whatever LRCLIB's default
+    // title+artist search happens to return (capped at 20, ranked by its
+    // own relevance/popularity -- not guaranteed to even include the
+    // release this file is actually from). Falls back to the plain
+    // title+artist search if the narrowed one comes back empty, so a
+    // tagged album that just doesn't match LRCLIB's naming isn't a dead
+    // end.
+    let results = if song.album.is_empty() || song.album == "Unknown Album" {
+        lrclib_search(&agent, title, artist, None)
+    } else {
+        let narrowed = lrclib_search(&agent, title, artist, Some(&song.album));
+        if narrowed.is_empty() {
+            info!(
+                "[lrclib] No results narrowed to album \"{}\", retrying without it",
+                song.album
+            );
+            lrclib_search(&agent, title, artist, None)
+        } else {
+            info!(
+                "[lrclib] {} result(s) narrowed to album \"{}\"",
+                narrowed.len(),
+                song.album
+            );
+            narrowed
         }
     };
 
@@ -147,9 +172,22 @@ pub(crate) fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
         with_lyrics.len()
     );
 
-    let album_lower = song.album.to_lowercase();
+    // Fuzzy rather than exact album match: LRCLIB's own album strings vary
+    // too much release to release for an exact-lowercase-equality check to
+    // land often -- e.g. "Greatest Hits: My Prerogative" vs "Greatest Hits
+    // - My Prerogative - CD1" vs "Greatest Hits：My Prerogative" (full-width
+    // colon) all clearly name the same release but never compare equal.
+    // `jaro_winkler` (same fuzzy-match approach `search.rs` uses for
+    // free-text song lookup) scores those variants 0.88-0.99 against each
+    // other, while genuinely unrelated albums score well under 0.6 -- see
+    // `ALBUM_MATCH_THRESHOLD`'s doc comment for real numbers. Below the
+    // threshold, still no bonus at all (not a sliding scale) so a
+    // near-but-not-quite match doesn't get to outweigh a real duration
+    // difference.
+    let album_norm = normalize(&song.album);
     with_lyrics.sort_by_key(|r| {
-        let album_bonus: i64 = if r.album_name.to_lowercase() == album_lower {
+        let album_similarity = strsim::jaro_winkler(&album_norm, &normalize(&r.album_name));
+        let album_bonus: i64 = if album_similarity >= ALBUM_MATCH_THRESHOLD {
             0
         } else {
             5_000
@@ -182,6 +220,42 @@ pub(crate) fn lrclib_candidates(song: &Song) -> Vec<LrclibCandidate> {
             }
         })
         .collect()
+}
+
+fn lrclib_search(
+    agent: &ureq::Agent,
+    title: &str,
+    artist: &str,
+    album: Option<&str>,
+) -> Vec<LrclibCandidate> {
+    let mut url = format!(
+        "https://lrclib.net/api/search?track_name={}&artist_name={}",
+        urlencoding::encode(title),
+        urlencoding::encode(artist),
+    );
+    if let Some(album) = album {
+        url.push_str("&album_name=");
+        url.push_str(&urlencoding::encode(album));
+    }
+
+    let resp = match agent
+        .get(&url)
+        .header("User-Agent", "Nightingale/1.0")
+        .call()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("[lrclib] Search request failed: {e}");
+            return Vec::new();
+        }
+    };
+    match resp.into_body().read_json() {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("[lrclib] Failed to parse search results: {e}");
+            Vec::new()
+        }
+    }
 }
 
 pub fn search_lrclib_for_hash(file_hash: &str) -> Vec<LrclibCandidate> {
@@ -542,4 +616,102 @@ pub(crate) fn fetch_lrclib_lyrics(song: &Song, cache: &CacheDir) -> Option<PathB
             None
         }
     }
+}
+
+/// Local lyrics sources, checked before falling back to the LRCLIB network
+/// lookup (`fetch_lrclib_lyrics`): a `.lrc` sidecar next to the audio file,
+/// then lyrics embedded directly in the file's own tags (ID3 `USLT` via
+/// `ItemKey::UnsyncLyrics`, MP4 `©lyr` via `ItemKey::Lyrics` -- see
+/// `read_embedded_lyrics`). Local is treated as
+/// ground-truth-equivalent to the LRCLIB flow -- same shared cache file,
+/// same downstream forced-alignment path (`align_lyrics` in align.py) once
+/// `process_song` passes it through as `cmd_json["lyrics"]`.
+///
+/// Like `fetch_lrclib_lyrics`, this checks the shared cache first and reuses
+/// it if present -- which is also what makes "local always wins" work
+/// without extra bookkeeping: `process_song` calls this before
+/// `fetch_lrclib_lyrics`, so whichever source is found first is the one
+/// that gets cached, and the other call just sees the cache already there.
+pub(crate) fn local_lyrics_path(song: &Song, cache: &CacheDir) -> Option<PathBuf> {
+    let existing = cache.lyrics_path(&song.file_hash);
+    if existing.is_file() {
+        return Some(existing);
+    }
+
+    let (source, raw_text) = read_sidecar_lrc(&song.path)
+        .map(|text| ("sidecar .lrc", text))
+        .or_else(|| read_embedded_lyrics(&song.path).map(|text| ("embedded tag", text)))?;
+
+    let lines = lines_from_lyrics_text(&raw_text);
+    if lines.is_empty() {
+        return None;
+    }
+
+    info!(
+        "[local-lyrics] Found {} lines via {source} for {}",
+        lines.len(),
+        song.path.display()
+    );
+
+    match write_lyrics_file(cache, &song.file_hash, &lines) {
+        Ok(out) => {
+            info!("[local-lyrics] Lyrics saved to {}", out.display());
+            Some(out)
+        }
+        Err(e) => {
+            warn!("[local-lyrics] Failed to write lyrics: {e}");
+            None
+        }
+    }
+}
+
+fn read_sidecar_lrc(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path.with_extension("lrc")).ok()
+}
+
+fn read_embedded_lyrics(path: &Path) -> Option<String> {
+    use lofty::file::TaggedFileExt;
+
+    debug!("Reading tags: {}", path.display());
+    let tagged = lofty::read_from_path(path).ok()?;
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+    // See `song::tag_has_lyrics` -- ID3v2 (MP3) only maps `USLT` to
+    // `ItemKey::UnsyncLyrics`, never `ItemKey::Lyrics`.
+    let text = tag
+        .get_string(lofty::tag::ItemKey::Lyrics)
+        .or_else(|| tag.get_string(lofty::tag::ItemKey::UnsyncLyrics))?;
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+/// Plain lyric lines from raw text. Sidecar `.lrc` files are usually
+/// timestamped, so try `lrc::parse_lrc` first (it also strips word-level
+/// `<mm:ss.xx>` tags from Enhanced LRC); embedded tag lyrics are usually
+/// plain text, so fall back to treating every non-empty line as-is.
+fn lines_from_lyrics_text(text: &str) -> Vec<String> {
+    if let Ok(parsed) = lrc::parse_lrc(text) {
+        let lines: Vec<String> = parsed
+            .segments
+            .into_iter()
+            .map(|s| s.text)
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        if !lines.is_empty() {
+            return lines;
+        }
+    }
+    // `str::lines` only splits on `\n` or `\r\n` -- some embedded-tag lyrics
+    // (ID3 USLT written by older/legacy tools) use a bare `\r` as the line
+    // separator instead, which `str::lines` doesn't recognize at all, so the
+    // whole lyric block comes back as a single "line". Normalize all three
+    // conventions to `\n` first.
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }

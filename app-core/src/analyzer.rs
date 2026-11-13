@@ -4,8 +4,8 @@ use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError, mpsc};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -16,18 +16,70 @@ use crate::config::AppConfig;
 use crate::error::NightingaleError;
 use crate::library_db;
 use crate::library_model::{LibraryMenuFilters, SongTarget};
-use crate::lyrics::{fetch_lrclib_lyrics, write_lyrics_file};
+use crate::lyrics::{fetch_lrclib_lyrics, local_lyrics_path, write_lyrics_file};
 use crate::song::{Song, SongOrigin, TranscriptSource, compute_file_hash, read_transcript_meta};
-use crate::source::{MediaSource, active_source};
+use crate::source::active_source;
 
 // ─── Analysis queue (persisted to disk) ──────────────────────────────
+
+/// Coarse cause for a `QueuedStatus::Failed`, so the UI can group failures
+/// without pattern-matching the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum FailureKind {
+    /// Couldn't convert/fetch the audio into a form analysis can read.
+    AudioPrep,
+    /// The analyzer server process failed to start.
+    ServerStartup,
+    /// The analyzer server crashed mid-analysis (after a retry).
+    ServerCrash,
+    /// CUDA ran out of GPU memory (after a retry).
+    GpuOom,
+    /// The whisperx worker itself reported an error for this song.
+    Worker,
+    /// The pipeline reported success but no transcript file was produced.
+    MissingOutput,
+    /// Rows written before `FailureKind` existed; kind wasn't recorded.
+    Other,
+}
+
+impl FailureKind {
+    fn as_db_str(self) -> &'static str {
+        match self {
+            FailureKind::AudioPrep => "audio_prep",
+            FailureKind::ServerStartup => "server_startup",
+            FailureKind::ServerCrash => "server_crash",
+            FailureKind::GpuOom => "gpu_oom",
+            FailureKind::Worker => "worker",
+            FailureKind::MissingOutput => "missing_output",
+            FailureKind::Other => "other",
+        }
+    }
+
+    fn from_db_str(s: &str) -> Self {
+        match s {
+            "audio_prep" => FailureKind::AudioPrep,
+            "server_startup" => FailureKind::ServerStartup,
+            "server_crash" => FailureKind::ServerCrash,
+            "gpu_oom" => FailureKind::GpuOom,
+            "worker" => FailureKind::Worker,
+            "missing_output" => FailureKind::MissingOutput,
+            _ => FailureKind::Other,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum QueuedStatus {
     Queued,
     Analyzing(usize),
-    Failed(String),
+    Failed {
+        kind: FailureKind,
+        message: String,
+        /// Set via `acknowledge_failures`; resets to false on every new failure.
+        acknowledged: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
@@ -41,11 +93,18 @@ impl AnalysisQueue {
         let entries = library_db::analysis_queue_load_rows()
             .map(|rows| {
                 rows.into_iter()
-                    .map(|(h, st, pct, msg)| {
+                    .map(|(h, st, pct, msg, kind, acknowledged)| {
                         let status = match st.as_str() {
                             "queued" => QueuedStatus::Queued,
                             "analyzing" => QueuedStatus::Analyzing(pct.unwrap_or(0) as usize),
-                            "failed" => QueuedStatus::Failed(msg.unwrap_or_default()),
+                            "failed" => QueuedStatus::Failed {
+                                kind: kind
+                                    .as_deref()
+                                    .map(FailureKind::from_db_str)
+                                    .unwrap_or(FailureKind::Other),
+                                message: msg.unwrap_or_default(),
+                                acknowledged,
+                            },
                             _ => QueuedStatus::Queued,
                         };
                         (h, status)
@@ -61,11 +120,27 @@ impl AnalysisQueue {
             .entries
             .iter()
             .map(|(k, v)| match v {
-                QueuedStatus::Queued => (k.clone(), "queued".to_string(), None, None),
-                QueuedStatus::Analyzing(p) => {
-                    (k.clone(), "analyzing".to_string(), Some(*p as i64), None)
-                }
-                QueuedStatus::Failed(s) => (k.clone(), "failed".to_string(), None, Some(s.clone())),
+                QueuedStatus::Queued => (k.clone(), "queued".to_string(), None, None, None, false),
+                QueuedStatus::Analyzing(p) => (
+                    k.clone(),
+                    "analyzing".to_string(),
+                    Some(*p as i64),
+                    None,
+                    None,
+                    false,
+                ),
+                QueuedStatus::Failed {
+                    kind,
+                    message,
+                    acknowledged,
+                } => (
+                    k.clone(),
+                    "failed".to_string(),
+                    None,
+                    Some(message.clone()),
+                    Some(kind.as_db_str().to_string()),
+                    *acknowledged,
+                ),
             })
             .collect();
         let _ = library_db::analysis_queue_save_rows(&rows);
@@ -75,13 +150,113 @@ impl AnalysisQueue {
         let _ = library_db::analysis_queue_clear();
     }
 }
+
+/// Acknowledges exactly `file_hashes` as `kind` failures, so a failure that
+/// lands after the caller's snapshot isn't swept in too.
+pub fn acknowledge_failures(kind: FailureKind, file_hashes: Vec<String>) {
+    let _ = library_db::analysis_queue_acknowledge_failures(kind.as_db_str(), &file_hashes);
+}
 use crate::vendor::{analyzer_dir, ffmpeg_path, python_path, silent_command};
 
 // ─── Server process ──────────────────────────────────────────────────
 
 static SERVER_PID: AtomicU32 = AtomicU32::new(0);
 
+/// Device string from the most recent server handshake (e.g. "cuda", "mps",
+/// "cpu"); recorded for the analysis-timing log.
+static LAST_DEVICE: Mutex<Option<String>> = Mutex::new(None);
+
+fn last_device() -> Option<String> {
+    lock_unpoisoned(&LAST_DEVICE).clone()
+}
+
+/// 1-minute system load average via `sysctl vm.loadavg` (e.g. `{ 7.71 5.24
+/// 4.50 }`) -- a no-`sudo` proxy for other processes (Plex transcodes,
+/// downloads, ...) competing for CPU/GPU while separation runs.
+fn load_avg_1m() -> Option<f64> {
+    let output = Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .find_map(|tok| tok.parse::<f64>().ok())
+}
+
+/// One system sample (GPU utilization/clock/temp, CPU utilization, memory
+/// pressure) via `macmon pipe -s 1` (https://github.com/vladkens/macmon).
+/// Unlike `powermetrics`, it needs no `sudo`, so it's safe to shell out to
+/// on every analysis run. Every field is `None` -- not an error -- if
+/// `macmon` isn't installed, isn't on `PATH`, or its output doesn't parse as
+/// expected; this is a best-effort diagnostic and must never block or fail
+/// an analysis run.
+struct MacmonSnapshot {
+    gpu_active_ratio: Option<f64>,
+    gpu_freq_mhz: Option<i64>,
+    gpu_temp_c: Option<f64>,
+    cpu_active_ratio: Option<f64>,
+    /// Fraction of physical RAM in use (`memory.ram_usage / ram_total`), as
+    /// a proxy for memory pressure -- macmon doesn't surface macOS's actual
+    /// Normal/Warn/Critical pressure level, only raw usage.
+    mem_pressure_ratio: Option<f64>,
+}
+
+fn macmon_snapshot() -> Option<MacmonSnapshot> {
+    let output = Command::new("macmon")
+        .args(["pipe", "-s", "1", "-i", "200"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let mem = json.get("memory");
+    let ram_usage = mem
+        .and_then(|m| m.get("ram_usage"))
+        .and_then(|v| v.as_f64());
+    let ram_total = mem
+        .and_then(|m| m.get("ram_total"))
+        .and_then(|v| v.as_f64());
+    Some(MacmonSnapshot {
+        gpu_active_ratio: json.get("gpu_active_ratio").and_then(|v| v.as_f64()),
+        gpu_freq_mhz: json.get("gpu_freq_mhz").and_then(|v| v.as_i64()),
+        gpu_temp_c: json
+            .get("temp")
+            .and_then(|t| t.get("gpu_temp_avg"))
+            .and_then(|v| v.as_f64()),
+        cpu_active_ratio: json.get("cpu_active_ratio").and_then(|v| v.as_f64()),
+        mem_pressure_ratio: match (ram_usage, ram_total) {
+            (Some(used), Some(total)) if total > 0.0 => Some(used / total),
+            _ => None,
+        },
+    })
+}
+
+/// `load_avg_1m()` + `macmon_snapshot()`, bundled as the one contention
+/// reading taken for a song's analysis-timing row.
+struct ContentionSnapshot {
+    load_avg_1m: Option<f64>,
+    macmon: Option<MacmonSnapshot>,
+}
+
+/// How far into the separation stage to sample `ContentionSnapshot`. A
+/// snapshot taken at attempt-start (the previous approach) mostly caught the
+/// GPU idle -- separation hadn't ramped up yet -- so `gpu_active_ratio` read
+/// 0 on well over half of sampled songs even though separation is the stage
+/// that actually drives the GPU. Waiting until separation has been running
+/// for a while gives a reading that reflects what's actually contending for
+/// the GPU/CPU during the expensive part of the pipeline.
+const SEPARATION_SNAPSHOT_DELAY: Duration = Duration::from_secs(120);
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long to wait for the analyzer server to ack an `idle_cleanup` command
+/// before giving up on it. Generous: this only fires once the local queue is
+/// empty, so it's never on the critical path of getting to the next song.
+const IDLE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct ServerProcess {
     child: Child,
@@ -276,6 +451,7 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
     } else {
         info!("[analyzer] Handshake ok: port={}", handshake.port);
     }
+    *lock_unpoisoned(&LAST_DEVICE) = handshake.device.clone();
 
     let (reader, writer) = match connect_and_authenticate(handshake.port, &handshake.token) {
         Ok(pair) => pair,
@@ -342,9 +518,33 @@ static ANALYZER: LazyLock<Mutex<AnalyzerState>> = LazyLock::new(|| {
 static FORCE_TRANSCRIBE: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// Hashes whose next analysis pass should go straight to the LRCLIB network
+/// lookup, bypassing the local `.lrc`/embedded-tag check even if
+/// `use_external_lyrics` is on -- set by the explicit "Refetch lyrics &
+/// align" action (`reanalyze_transcript`), since a user who clicked
+/// "refetch" clearly wants a fresh network lookup, not the same local file
+/// re-read yet again. Passive/automatic analysis (a plain scan-driven
+/// enqueue) is untouched -- it still prefers local lyrics when the setting
+/// is on.
+static FORCE_LRCLIB: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
 /// Hashes whose queued job should only run stem separation (key detect +
 /// separation) and keep the already-written LRC-provided transcript.
 static STEMS_ONLY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Hashes whose next analysis pass should use an explicit alignment backend
+/// instead of the default `align_backend` -- set by `realign_with_backend`,
+/// the one-off "Realign (alternative backend)" song action.
+static FORCE_ALIGN_BACKEND: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Removes and returns any pending forced-alignment-backend override for
+/// `file_hash`, consuming it. Called by `process_song` right before it
+/// builds the analysis command.
+pub(crate) fn take_forced_align_backend(file_hash: &str) -> Option<String> {
+    lock_unpoisoned(&FORCE_ALIGN_BACKEND).remove(file_hash)
+}
 
 /// Mark a hash so its next analysis pass separates stems without transcribing,
 /// preserving the transcript built from provided LRC.
@@ -354,17 +554,46 @@ pub(crate) fn mark_stems_only(file_hash: &str) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-fn update_queue_status(file_hash: &str, status: QueuedStatus) {
-    let (st, pct, msg) = match &status {
-        QueuedStatus::Queued => ("queued", None, None::<String>),
-        QueuedStatus::Analyzing(p) => ("analyzing", Some(*p as i64), None::<String>),
-        QueuedStatus::Failed(s) => ("failed", None, Some(s.clone())),
+pub(crate) fn update_queue_status(file_hash: &str, status: QueuedStatus) {
+    let (st, pct, msg, kind, acknowledged) = match &status {
+        QueuedStatus::Queued => ("queued", None, None::<String>, None::<&'static str>, false),
+        QueuedStatus::Analyzing(p) => ("analyzing", Some(*p as i64), None, None, false),
+        QueuedStatus::Failed {
+            kind,
+            message,
+            acknowledged,
+        } => (
+            "failed",
+            None,
+            Some(message.clone()),
+            Some(kind.as_db_str()),
+            *acknowledged,
+        ),
     };
-    let _ = library_db::analysis_queue_upsert_row(file_hash, st, pct, msg.as_deref());
+    let _ = library_db::analysis_queue_upsert_row(
+        file_hash,
+        st,
+        pct,
+        msg.as_deref(),
+        kind,
+        acknowledged,
+    );
 }
 
-fn remove_from_queue(file_hash: &str) {
+fn clear_queue_row(file_hash: &str) {
     let _ = library_db::analysis_queue_delete(file_hash);
+}
+
+/// Single-song counterpart to `remove_from_queue`, same pairing as
+/// `enqueue_one`/`enqueue_all` (as opposed to `clear_queue_row`, called
+/// internally once analysis finishes): also has to drop the hash from
+/// `ANALYZER.queue`, or the worker would just pick it back up despite the
+/// row being gone.
+pub fn remove_from_queue_one(file_hash: &str) {
+    let mut state = lock_unpoisoned(&ANALYZER);
+    state.queue.retain(|h| h != file_hash);
+    drop(state);
+    clear_queue_row(file_hash);
 }
 
 fn take_cancelled(initial_hash: &str, file_hash: &str) -> bool {
@@ -377,8 +606,8 @@ fn discard_cancelled_job(initial_hash: &str, file_hash: &str) -> bool {
         return false;
     }
 
-    remove_from_queue(initial_hash);
-    remove_from_queue(file_hash);
+    clear_queue_row(initial_hash);
+    clear_queue_row(file_hash);
     lock_unpoisoned(&FORCE_TRANSCRIBE).remove(initial_hash);
     lock_unpoisoned(&FORCE_TRANSCRIBE).remove(file_hash);
     lock_unpoisoned(&STEMS_ONLY).remove(initial_hash);
@@ -409,15 +638,26 @@ pub(crate) fn update_song_analyzed(
         }
         // LRC-provided songs without stem separation are flagged in the
         // transcript; mirror that onto the song so playback hides the guide.
-        song.no_stems = read_transcript_meta(&CacheDir::new(), file_hash).no_stems;
+        // Also carries which backend actually aligned it, for the same reason.
+        let meta = read_transcript_meta(&CacheDir::new(), file_hash);
+        song.no_stems = meta.no_stems;
+        song.align_backend = meta.align_backend;
     } else {
         song.key = None;
         song.override_key = None;
         song.tempo = 1.0;
         song.key_offset = 0;
         song.no_stems = false;
+        song.align_backend = None;
     }
     library_db::update_song_fields(file_hash, &song).is_ok()
+}
+
+fn ensure_worker_running(state: &mut AnalyzerState) {
+    if !state.worker_running && !state.queue.is_empty() {
+        state.worker_running = true;
+        spawn_worker();
+    }
 }
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -428,6 +668,47 @@ pub(crate) fn is_usdx_song(file_hash: &str) -> bool {
         .flatten()
         .map(|s| s.usdx.is_some())
         .unwrap_or(false)
+}
+
+pub fn enqueue_one(file_hash: &str) {
+    if is_usdx_song(file_hash) {
+        return;
+    }
+    let mut state = lock_unpoisoned(&ANALYZER);
+    if state.active_hash.as_deref() == Some(file_hash) {
+        return;
+    }
+    if !state.queue.iter().any(|h| h == file_hash) {
+        state.queue.push_back(file_hash.to_string());
+        update_queue_status(file_hash, QueuedStatus::Queued);
+    }
+    ensure_worker_running(&mut state);
+}
+
+/// Batch counterpart to `enqueue_one` for a caller that already has a whole
+/// list of hashes to queue up front (e.g. restoring in-flight rows at
+/// startup) -- same per-hash checks as `enqueue_one`, but takes the
+/// `ANALYZER` lock once and calls `ensure_worker_running` once for the whole
+/// batch instead of once per hash. Calling `enqueue_one` in a loop for N
+/// hashes did N redundant `AppConfig::load()`s (a disk read + double JSON
+/// parse, see `AppConfig::load`) and mutex round-trips just to start the
+/// same one worker.
+pub(crate) fn enqueue_many(file_hashes: &[String]) {
+    let to_queue: Vec<&String> = file_hashes.iter().filter(|h| !is_usdx_song(h)).collect();
+    if to_queue.is_empty() {
+        return;
+    }
+    let mut state = lock_unpoisoned(&ANALYZER);
+    for file_hash in to_queue {
+        if state.active_hash.as_deref() == Some(file_hash.as_str()) {
+            continue;
+        }
+        if !state.queue.iter().any(|h| h == file_hash) {
+            state.queue.push_back(file_hash.clone());
+            update_queue_status(file_hash, QueuedStatus::Queued);
+        }
+    }
+    ensure_worker_running(&mut state);
 }
 
 fn resolve_target<F>(target: SongTarget, filtered: F) -> Result<Vec<String>, String>
@@ -441,34 +722,6 @@ where
     let mut seen = HashSet::new();
     hashes.retain(|hash| seen.insert(hash.clone()));
     Ok(hashes)
-}
-
-fn run_for_target<Q, A>(target: SongTarget, filtered: Q, mut action: A) -> Result<usize, String>
-where
-    Q: FnOnce(&LibraryMenuFilters) -> Result<Vec<String>, NightingaleError>,
-    A: FnMut(&str) -> Result<bool, String>,
-{
-    let hashes = resolve_target(target, filtered)?;
-    let mut affected = 0;
-    let mut failures = Vec::new();
-
-    for hash in &hashes {
-        match action(hash) {
-            Ok(true) => affected += 1,
-            Ok(false) => {}
-            Err(error) => failures.push(format!("{hash}: {error}")),
-        }
-    }
-
-    if failures.is_empty() {
-        Ok(affected)
-    } else {
-        Err(format!(
-            "Updated {affected} song(s); {} failed: {}",
-            failures.len(),
-            failures.join("; ")
-        ))
-    }
 }
 
 fn enqueue_hashes(mut hashes: Vec<String>, skip_persisted: bool) -> usize {
@@ -499,7 +752,7 @@ fn enqueue_hashes(mut hashes: Vec<String>, skip_persisted: bool) -> usize {
     drop(state);
 
     for hash in &newly_queued {
-        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None);
+        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None, None, false);
     }
 
     if should_start {
@@ -507,10 +760,6 @@ fn enqueue_hashes(mut hashes: Vec<String>, skip_persisted: bool) -> usize {
     }
 
     newly_queued.len()
-}
-
-pub(crate) fn enqueue_one(file_hash: &str) {
-    enqueue_hashes(vec![file_hash.to_string()], false);
 }
 
 pub fn enqueue(target: SongTarget) -> Result<usize, String> {
@@ -564,7 +813,7 @@ pub fn cancel_analysis(target: SongTarget) -> Result<usize, String> {
     drop(state);
 
     for hash in &affected {
-        remove_from_queue(hash);
+        clear_queue_row(hash);
         lock_unpoisoned(&FORCE_TRANSCRIBE).remove(hash);
         lock_unpoisoned(&STEMS_ONLY).remove(hash);
     }
@@ -574,6 +823,40 @@ pub fn cancel_analysis(target: SongTarget) -> Result<usize, String> {
     }
 
     Ok(affected.len())
+}
+
+pub fn enqueue_all(filters: &LibraryMenuFilters) {
+    let queue = AnalysisQueue::load();
+    let mut state = lock_unpoisoned(&ANALYZER);
+
+    let pending_hashes =
+        library_db::iter_file_hashes_filtered_not_analyzed(filters).unwrap_or_default();
+
+    let mut newly_queued = Vec::new();
+    for file_hash in pending_hashes {
+        let dominated = !queue.entries.contains_key(&file_hash);
+        if dominated
+            && state.active_hash.as_deref() != Some(&file_hash)
+            && !state.queue.iter().any(|h| h == &file_hash)
+        {
+            state.queue.push_back(file_hash.clone());
+            newly_queued.push(file_hash);
+        }
+    }
+
+    let should_start = !state.worker_running && !state.queue.is_empty();
+    if should_start {
+        state.worker_running = true;
+    }
+    drop(state);
+
+    for hash in &newly_queued {
+        let _ = library_db::analysis_queue_upsert_row(hash, "queued", None, None, None, false);
+    }
+
+    if should_start {
+        spawn_worker();
+    }
 }
 
 pub fn shutdown_server() {
@@ -594,27 +877,78 @@ pub fn shutdown_server() {
     }
 }
 
-fn delete_cache_one(file_hash: &str) -> bool {
+pub fn delete_cache(target: SongTarget) -> Result<usize, String> {
+    let hashes = resolve_target(
+        target,
+        library_db::iter_file_hashes_filtered_full_reanalyzable,
+    )?;
+    for hash in &hashes {
+        delete_cache_one(hash);
+    }
+    Ok(hashes.len())
+}
+
+fn delete_cache_one(file_hash: &str) {
     if is_usdx_song(file_hash) {
-        return false;
+        return;
     }
     let cache = CacheDir::new();
     cache.delete_song_cache(file_hash);
     update_song_analyzed(file_hash, false, None, None, None, None);
-    true
 }
 
-pub fn delete_cache(target: SongTarget) -> Result<usize, String> {
-    run_for_target(
-        target,
-        library_db::iter_file_hashes_filtered_full_reanalyzable,
-        |hash| Ok(delete_cache_one(hash)),
-    )
+/// Cleans up every analysis artifact left behind by a song that has just
+/// been removed from `songs` (source file deleted then rescanned away, or a
+/// remote item pruned/library-source switch) -- cache files and every
+/// `file_hash`-keyed DB table. Unlike `delete_cache`, this always runs
+/// regardless of `is_usdx_song`: that guard exists to avoid stranding a
+/// *still-library* song in a permanently-unanalyzed state (USDX songs are
+/// never re-enqueued), which doesn't apply once the song itself is gone.
+///
+/// Deliberately leaves the append-only history/diagnostic log
+/// (`analysis_timings`, `karaoke_video_runs`) alone -- it's read by
+/// `scripts/analysis_progress.py` and friends for aggregate hardware/perf
+/// analysis, not as per-song state, so a past run's timing data outliving
+/// the song it measured is intentional, not a leak.
+pub(crate) fn purge_song_analysis_data(file_hash: &str) {
+    let cache = CacheDir::new();
+    cache.delete_song_cache(file_hash);
+    let _ = library_db::analysis_queue_delete(file_hash);
+    info!("[analyzer] Purged analysis data for removed song (hash={file_hash})");
 }
 
-fn reanalyze_transcript_one(file_hash: &str, language: Option<String>) -> bool {
+/// Sets a song's stored `language` directly, with no other side effect: no
+/// re-transcription, no re-alignment, no cache/queue changes, and no
+/// `language_override` write (that field only affects a *future* re-run's
+/// language detection -- see `reanalyze_transcript`/`realign`). For when the
+/// detected/tagged language is simply wrong and nothing else needs to change.
+pub fn set_song_language(file_hash: &str, language: Option<String>) {
     if is_usdx_song(file_hash) {
-        return false;
+        return;
+    }
+
+    let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
+        return;
+    };
+    song.language = language;
+    let _ = library_db::update_song_fields(file_hash, &song);
+}
+
+/// Bulk-capable "Refetch lyrics & align" -- see
+/// `iter_file_hashes_filtered_realignable` for eligibility. `language` is
+/// `Some` only from the bulk "Change language" flow (mode = force); `None`
+/// for the plain refetch action, applied to every resolved hash.
+pub fn reanalyze_transcript(target: SongTarget, language: Option<String>) -> Result<usize, String> {
+    let hashes = resolve_target(target, library_db::iter_file_hashes_filtered_realignable)?;
+    for hash in &hashes {
+        reanalyze_transcript_one(hash, language.clone());
+    }
+    Ok(hashes.len())
+}
+
+fn reanalyze_transcript_one(file_hash: &str, language: Option<String>) {
+    if is_usdx_song(file_hash) {
+        return;
     }
 
     if let Some(lang) = language
@@ -624,38 +958,67 @@ fn reanalyze_transcript_one(file_hash: &str, language: Option<String>) -> bool {
         config.set_language_override(file_hash.to_string(), lang);
         config.save();
     }
+    lock_unpoisoned(&FORCE_LRCLIB).insert(file_hash.to_string());
     reanalyze(file_hash, false);
-    true
 }
 
-pub fn reanalyze_transcript(target: SongTarget, language: Option<String>) -> Result<usize, String> {
-    run_for_target(
+/// Bulk-capable "Full reanalysis": every already-analyzed, non-USDX song
+/// matching `target` (see `iter_file_hashes_filtered_full_reanalyzable`) --
+/// songs that aren't yet analyzed at all are already covered by
+/// `enqueue_all`, and USDX songs never support reanalysis (see
+/// `reanalyze_full_one`'s own guard).
+pub fn reanalyze_full(target: SongTarget) -> Result<usize, String> {
+    let hashes = resolve_target(
         target,
-        library_db::iter_file_hashes_filtered_realignable,
-        |hash| Ok(reanalyze_transcript_one(hash, language.clone())),
-    )
+        library_db::iter_file_hashes_filtered_full_reanalyzable,
+    )?;
+    for hash in &hashes {
+        reanalyze_full_one(hash);
+    }
+    Ok(hashes.len())
 }
 
-fn reanalyze_full_one(file_hash: &str) -> bool {
+fn reanalyze_full_one(file_hash: &str) {
     if is_usdx_song(file_hash) {
-        return false;
+        return;
     }
 
     reanalyze(file_hash, true);
-    true
 }
 
-pub fn reanalyze_full(target: SongTarget) -> Result<usize, String> {
-    run_for_target(
-        target,
-        library_db::iter_file_hashes_filtered_full_reanalyzable,
-        |hash| Ok(reanalyze_full_one(hash)),
-    )
+/// Bulk-capable "Realign" -- see `iter_file_hashes_filtered_realignable`.
+/// `language` is `Some` only from the bulk "Change language" flow (mode =
+/// realign), applied to every resolved hash.
+pub fn realign(target: SongTarget, language: Option<String>) -> Result<usize, String> {
+    let hashes = resolve_target(target, library_db::iter_file_hashes_filtered_realignable)?;
+    for hash in &hashes {
+        realign_with_backend(hash, None, language.clone());
+    }
+    Ok(hashes.len())
 }
 
-fn realign_one(file_hash: &str, language: Option<String>) -> bool {
+/// Same as `realign`, but the upcoming analysis pass uses `alt_align_backend`
+/// instead of the default `align_backend` -- see `FORCE_ALIGN_BACKEND`.
+pub fn realign_with_alt_backend(file_hash: &str, language: Option<String>) {
     if is_usdx_song(file_hash) {
-        return false;
+        return;
+    }
+
+    let backend = AppConfig::load().alt_align_backend().to_string();
+    realign_with_backend(file_hash, Some(backend), language);
+}
+
+/// Shared body for `realign`/`realign_with_alt_backend`: `backend` is `None`
+/// for a plain realign, or an explicit backend value (resolved by the
+/// caller, e.g. `alt_align_backend`) to force for the upcoming pass
+/// regardless of the local `align_backend` setting.
+pub fn realign_with_backend(file_hash: &str, backend: Option<String>, language: Option<String>) {
+    if is_usdx_song(file_hash) {
+        return;
+    }
+
+    if let Some(backend) = backend {
+        lock_unpoisoned(&FORCE_ALIGN_BACKEND).insert(file_hash.to_string(), backend);
     }
 
     if let Some(lang) = language.as_ref().filter(|lang| !lang.is_empty()) {
@@ -681,66 +1044,74 @@ fn realign_one(file_hash: &str, language: Option<String>) -> bool {
         None,
     );
     enqueue_one(file_hash);
-    true
 }
 
-pub fn realign(target: SongTarget, language: Option<String>) -> Result<usize, String> {
-    run_for_target(
-        target,
-        library_db::iter_file_hashes_filtered_realignable,
-        |hash| Ok(realign_one(hash, language.clone())),
-    )
+/// Bulk-capable "Force transcribe" -- see
+/// `iter_file_hashes_filtered_realignable`.
+pub fn reanalyze_force_transcribe(target: SongTarget) -> Result<usize, String> {
+    let hashes = resolve_target(target, library_db::iter_file_hashes_filtered_realignable)?;
+    for hash in &hashes {
+        reanalyze_force_transcribe_one(hash);
+    }
+    Ok(hashes.len())
 }
 
-fn reanalyze_force_transcribe_one(file_hash: &str) -> bool {
+fn reanalyze_force_transcribe_one(file_hash: &str) {
     if is_usdx_song(file_hash) {
-        return false;
+        return;
     }
 
     lock_unpoisoned(&FORCE_TRANSCRIBE).insert(file_hash.to_string());
 
     reanalyze(file_hash, false);
-    true
 }
 
-pub fn reanalyze_force_transcribe(target: SongTarget) -> Result<usize, String> {
-    run_for_target(
-        target,
-        library_db::iter_file_hashes_filtered_realignable,
-        |hash| Ok(reanalyze_force_transcribe_one(hash)),
-    )
-}
-
-// Refresh metadata such as artist and cover art without touching analysis-derived fields.
-fn refresh_metadata_one(
-    file_hash: &str,
-    source: &dyn MediaSource,
-    cache: &CacheDir,
-) -> Result<bool, String> {
-    let Some(mut song) = library_db::load_song_by_hash(file_hash).map_err(|e| e.to_string())?
-    else {
-        return Ok(false);
-    };
-    if song.usdx.is_some() {
-        return Ok(false);
+/// Bulk-capable "Remove from queue" -- see `iter_file_hashes_filtered_queued`
+/// for eligibility (excludes songs currently being analyzed). Unlike the
+/// other bulk actions this doesn't enqueue further work; it's done
+/// synchronously by the time it returns.
+pub fn remove_from_queue(target: SongTarget) -> Result<usize, String> {
+    let hashes = resolve_target(target, library_db::iter_file_hashes_filtered_queued)?;
+    for hash in &hashes {
+        remove_from_queue_one(hash);
     }
-    source
-        .refresh_metadata(&mut song, cache)
-        .map_err(|e| e.to_string())?;
-    library_db::update_song_fields(file_hash, &song).map_err(|e| e.to_string())?;
-    Ok(true)
+    Ok(hashes.len())
 }
 
+/// Bulk-capable "Refresh metadata": re-reads title/artist/album/duration/
+/// album art/lyrics-source-flags straight from each matched song's file
+/// (see `Song::refresh_metadata`) without touching anything
+/// analysis-derived -- unlike every other action in this file, it never
+/// calls `enqueue_one` or marks a song unanalyzed. Exists mainly to recover
+/// from a cover-art (or similar) cache file being deleted outside the app: a
+/// normal rescan only ever re-derives these fields for brand-new paths (see
+/// `source::folder::scan`'s `already_processed` filter), so an
+/// already-known song's stale, now-broken `album_art_path` would otherwise
+/// never get fixed. No-ops per song for remote-source/USDX songs (nothing
+/// local to re-read); see `iter_file_hashes_filtered_refreshable`. The
+/// caller is expected to run this off the async runtime (it blocks on file
+/// I/O per song).
 pub fn refresh_metadata(target: SongTarget) -> Result<usize, String> {
-    let source = active_source()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no active library source".to_string())?;
+    let hashes = resolve_target(target, library_db::iter_file_hashes_filtered_refreshable)?;
+    for hash in &hashes {
+        refresh_metadata_one(hash);
+    }
+    Ok(hashes.len())
+}
+
+fn refresh_metadata_one(file_hash: &str) {
+    let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
+        return;
+    };
+    if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
+        return;
+    }
     let cache = CacheDir::new();
-    run_for_target(
-        target,
-        library_db::iter_file_hashes_filtered_refreshable,
-        |hash| refresh_metadata_one(hash, source.as_ref(), &cache),
-    )
+    if let Err(e) = song.refresh_metadata(&cache) {
+        warn!("[analyzer] Failed to refresh metadata for {file_hash}: {e}");
+        return;
+    }
+    let _ = library_db::update_song_fields(file_hash, &song);
 }
 
 fn reanalyze(file_hash: &str, full: bool) {
@@ -815,6 +1186,8 @@ fn spawn_worker() {
                     None => {
                         state.worker_running = false;
                         state.active_hash = None;
+                        drop(state);
+                        send_idle_cleanup();
                         return;
                     }
                 }
@@ -826,6 +1199,40 @@ fn spawn_worker() {
             state.active_hash = None;
         }
     });
+}
+
+/// Tells a running analyzer server to release the model caches it only keeps
+/// warm for back-to-back songs (notably the cached MLX Whisper model and
+/// MLX's own unified-memory buffer cache -- see `gpu.release_idle_caches` in
+/// the analyzer) now that the local worker has nothing left queued. No-ops if
+/// no server is running -- there's nothing to clean up -- and is best-effort
+/// otherwise: any failure just leaves the server's caches warm, which costs
+/// memory but not correctness, so it's logged and swallowed rather than
+/// disrupting the worker's shutdown.
+fn send_idle_cleanup() {
+    let mut guard = lock_unpoisoned(&ANALYZER_SERVER);
+    let Some(server) = guard.as_mut() else {
+        return;
+    };
+
+    if let Err(e) = server.writer.write_all(b"{\"type\":\"idle_cleanup\"}\n") {
+        warn!("[analyzer] Failed to send idle cleanup: {e}");
+        return;
+    }
+    if let Err(e) = server.writer.flush() {
+        warn!("[analyzer] Failed to flush idle cleanup: {e}");
+        return;
+    }
+
+    let stream = server.reader.get_ref();
+    let _ = stream.set_read_timeout(Some(IDLE_CLEANUP_TIMEOUT));
+    let mut line = String::new();
+    match server.reader.read_line(&mut line) {
+        Ok(0) => warn!("[analyzer] Server closed connection during idle cleanup"),
+        Ok(_) => info!("[analyzer] Idle cleanup acknowledged: {}", line.trim()),
+        Err(e) => warn!("[analyzer] Idle cleanup ack not received: {e}"),
+    }
+    let _ = server.reader.get_ref().set_read_timeout(None);
 }
 
 fn process_song(initial_hash: &str, cache: &CacheDir) {
@@ -843,7 +1250,11 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                 warn!("[analyzer] Failed to prepare audio for analysis: {e}");
                 update_queue_status(
                     initial_hash,
-                    QueuedStatus::Failed(format!("audio prep failed: {e}")),
+                    QueuedStatus::Failed {
+                        kind: FailureKind::AudioPrep,
+                        message: format!("audio prep failed: {e}"),
+                        acknowledged: false,
+                    },
                 );
             }
             return;
@@ -880,11 +1291,29 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
 
     let config = AppConfig::load();
     let skip_lrclib = stems_only || lock_unpoisoned(&FORCE_TRANSCRIBE).remove(file_hash);
+    let force_lrclib = lock_unpoisoned(&FORCE_LRCLIB).remove(file_hash);
+    // Local lyrics (a `.lrc` sidecar or a tag embedded in the file itself)
+    // take priority over the LRCLIB network lookup when the user has opted
+    // in via `use_external_lyrics`: whichever is found first is the one
+    // that lands in the shared lyrics cache, and the other check just sees
+    // it already there (see local_lyrics_path's doc comment). Off, analysis
+    // behaves exactly as before this setting existed -- LRCLIB, then ASR.
+    // `force_lrclib` (set only by the explicit "Refetch lyrics & align"
+    // action) skips straight past the local check regardless of the
+    // setting -- otherwise a song with a local `.lrc`/embedded tag can
+    // never be refetched from LRCLIB at all, since local always wins.
     let lyrics_path = if skip_lrclib {
         None
+    } else if config.use_external_lyrics() && !force_lrclib {
+        local_lyrics_path(&song, cache).or_else(|| fetch_lrclib_lyrics(&song, cache))
     } else {
         fetch_lrclib_lyrics(&song, cache)
     };
+
+    // One-shot override from `realign_with_backend` -- see
+    // `FORCE_ALIGN_BACKEND`'s doc comment.
+    let align_backend =
+        take_forced_align_backend(file_hash).unwrap_or_else(|| config.align_backend().to_string());
 
     let mut cmd_json = serde_json::json!({
         "type": "analyze",
@@ -896,7 +1325,7 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         "batch_size": config.batch_size(),
         "separator": config.separator(),
         "engine": config.asr_engine(),
-        "align_backend": config.align_backend(),
+        "align_backend": align_backend,
         "vocal_detection_threshold_pct": config.vocal_detection_threshold_pct(),
     });
 
@@ -929,7 +1358,14 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         Ok(json) => json,
         Err(error) => {
             if !discard_cancelled_job(initial_hash, file_hash) {
-                update_queue_status(file_hash, QueuedStatus::Failed(error.to_string()));
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::Worker,
+                        message: error.to_string(),
+                        acknowledged: false,
+                    },
+                );
             }
             return;
         }
@@ -942,7 +1378,14 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         if let Err(e) = ensure_server(&mut guard) {
             if !discard_cancelled_job(initial_hash, file_hash) {
                 warn!("[analyzer] Failed to start server: {e}");
-                update_queue_status(file_hash, QueuedStatus::Failed(e.to_string()));
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::ServerStartup,
+                        message: e.to_string(),
+                        acknowledged: false,
+                    },
+                );
             }
             return;
         }
@@ -955,27 +1398,43 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
         let Some(server) = guard.as_mut() else {
             update_queue_status(
                 file_hash,
-                QueuedStatus::Failed("analyzer server unavailable".into()),
+                QueuedStatus::Failed {
+                    kind: FailureKind::ServerStartup,
+                    message: "analyzer server unavailable".into(),
+                    acknowledged: false,
+                },
             );
             return;
         };
+        let attempt_start = Instant::now();
         match send_and_monitor(server, &json_str, Some(file_hash), Some(initial_hash)) {
-            Ok(SongResult::Done) => {
+            Ok(SongResult::Done(stage_timings, contention_snapshot)) => {
                 let mut state = lock_unpoisoned(&ANALYZER);
                 let cancelled =
                     state.cancelled.remove(initial_hash) | state.cancelled.remove(file_hash);
                 if cancelled {
                     drop(state);
-                    remove_from_queue(initial_hash);
-                    remove_from_queue(file_hash);
+                    clear_queue_row(initial_hash);
+                    clear_queue_row(file_hash);
                     lock_unpoisoned(&FORCE_TRANSCRIBE).remove(initial_hash);
                     lock_unpoisoned(&FORCE_TRANSCRIBE).remove(file_hash);
                     lock_unpoisoned(&STEMS_ONLY).remove(initial_hash);
                     lock_unpoisoned(&STEMS_ONLY).remove(file_hash);
                     *guard = None;
-                } else {
-                    finalize_song(file_hash, cache);
+                    return;
                 }
+                let total_ms = attempt_start.elapsed().as_millis() as u64;
+                info!("[analyzer:timing] hash={file_hash} stage=total ms={total_ms}");
+                if config.track_analysis_timings() {
+                    record_analysis_timing(
+                        file_hash,
+                        &config,
+                        &stage_timings,
+                        contention_snapshot,
+                        total_ms,
+                    );
+                }
+                finalize_song(file_hash, cache);
                 return;
             }
             Ok(SongResult::Cancelled) => {
@@ -993,11 +1452,25 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                     update_queue_status(file_hash, QueuedStatus::Analyzing(0));
                     continue;
                 }
-                update_queue_status(file_hash, QueuedStatus::Failed("CUDA out of memory".into()));
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::GpuOom,
+                        message: "CUDA out of memory".into(),
+                        acknowledged: false,
+                    },
+                );
                 return;
             }
             Ok(SongResult::Error(msg)) => {
-                update_queue_status(file_hash, QueuedStatus::Failed(msg));
+                update_queue_status(
+                    file_hash,
+                    QueuedStatus::Failed {
+                        kind: FailureKind::Worker,
+                        message: msg,
+                        acknowledged: false,
+                    },
+                );
                 return;
             }
             Err(e) => {
@@ -1017,7 +1490,11 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
                 }
                 update_queue_status(
                     file_hash,
-                    QueuedStatus::Failed(format!("Server crashed: {e}")),
+                    QueuedStatus::Failed {
+                        kind: FailureKind::ServerCrash,
+                        message: format!("Server crashed: {e}"),
+                        acknowledged: false,
+                    },
                 );
                 return;
             }
@@ -1025,13 +1502,23 @@ fn process_song(initial_hash: &str, cache: &CacheDir) {
     }
 }
 
-fn finalize_song(file_hash: &str, cache: &CacheDir) {
+/// Returns whether the song actually ended up marked analyzed -- callers
+/// that can't otherwise tell whether finalization succeeded must check this
+/// rather than assuming success just because they got this far.
+fn finalize_song(file_hash: &str, cache: &CacheDir) -> bool {
     if cache.transcript_exists(file_hash) {
         if let Err(err) = crate::playback::ensure_playable_source_video(file_hash) {
             warn!("[analyzer] Playable source-video conversion failed for {file_hash}: {err}");
         }
         let meta = read_transcript_meta(cache, file_hash);
-        remove_from_queue(file_hash);
+        // `update_song_analyzed` before `remove_from_queue`, deliberately --
+        // each is a separate DB call (lock acquired/released per-call, not
+        // held across both), so a reader on another thread that checks
+        // "gone from the queue" then separately checks `songs.is_analyzed`
+        // could otherwise land in the gap and see "not queued" +
+        // `is_analyzed` still false, and wrongly conclude the analysis never
+        // finished. Committing `is_analyzed` first means "no longer queued"
+        // is trustworthy on its own by the time anyone can observe it.
         update_song_analyzed(
             file_hash,
             true,
@@ -1040,12 +1527,26 @@ fn finalize_song(file_hash: &str, cache: &CacheDir) {
             meta.key,
             Some(meta.tempo),
         );
+        clear_queue_row(file_hash);
         info!("[analyzer] Analysis complete for {file_hash}");
+        true
     } else {
+        warn!(
+            "[analyzer] Finalize failed for {file_hash}: transcript_exists() is false \
+             (transcript_path.is_file()={}, instrumental.is_file()={}, vocals.is_file()={})",
+            cache.transcript_path(file_hash).is_file(),
+            cache.instrumental_path(file_hash).is_file(),
+            cache.vocals_path(file_hash).is_file(),
+        );
         update_queue_status(
             file_hash,
-            QueuedStatus::Failed("Transcript file not found after analysis".into()),
+            QueuedStatus::Failed {
+                kind: FailureKind::MissingOutput,
+                message: "Transcript file not found after analysis".into(),
+                acknowledged: false,
+            },
         );
+        false
     }
 }
 
@@ -1149,7 +1650,7 @@ fn run_key_pass(
             .ok_or_else(|| NightingaleError::Other("analyzer server unavailable".into()))?;
         // `None` progress hash keeps this off the status pipe (no queue rows).
         match send_and_monitor(server, &json_str, None, None) {
-            Ok(SongResult::Done) => return Ok(()),
+            Ok(SongResult::Done(..)) => return Ok(()),
             Ok(SongResult::Cancelled) => {
                 return Err(NightingaleError::Other("key detection cancelled".into()));
             }
@@ -1230,7 +1731,7 @@ fn prepare_audio_for_analysis(
 // ─── Server communication ────────────────────────────────────────────
 
 enum SongResult {
-    Done,
+    Done(Vec<(String, u64)>, Option<ContentionSnapshot>),
     Cancelled,
     Oom,
     Error(String),
@@ -1244,6 +1745,13 @@ enum ServerEvent {
         #[serde(default)]
         msg: String,
     },
+    Starting {
+        stage: String,
+    },
+    Timing {
+        stage: String,
+        ms: u64,
+    },
     Done,
     Error {
         #[serde(default)]
@@ -1253,6 +1761,50 @@ enum ServerEvent {
     },
     #[serde(other)]
     Unknown,
+}
+
+/// Persist one analysis run's per-stage timings + the settings that produced
+/// them, gated on `AppConfig::track_analysis_timings`.
+fn record_analysis_timing(
+    file_hash: &str,
+    config: &AppConfig,
+    stage_timings: &[(String, u64)],
+    contention_snapshot: Option<ContentionSnapshot>,
+    total_ms: u64,
+) {
+    let stage_ms = |name: &str| -> Option<u64> {
+        stage_timings
+            .iter()
+            .find(|(stage, _)| stage == name)
+            .map(|(_, ms)| *ms)
+    };
+    let device = last_device();
+    let macmon = contention_snapshot.as_ref().and_then(|s| s.macmon.as_ref());
+    let row = library_db::AnalysisTimingRow {
+        file_hash,
+        device: device.as_deref(),
+        whisper_model: config.whisper_model(),
+        beam_size: config.beam_size(),
+        batch_size: config.batch_size(),
+        separator: config.separator(),
+        asr_engine: config.asr_engine(),
+        align_backend: config.align_backend(),
+        vocal_detection_threshold_pct: config.vocal_detection_threshold_pct(),
+        key_detect_ms: stage_ms("key_detect"),
+        separation_ms: stage_ms("separation"),
+        transcribe_ms: stage_ms("transcribe"),
+        align_ms: stage_ms("align"),
+        load_avg_1m: contention_snapshot.as_ref().and_then(|s| s.load_avg_1m),
+        gpu_active_ratio: macmon.and_then(|m| m.gpu_active_ratio),
+        gpu_freq_mhz: macmon.and_then(|m| m.gpu_freq_mhz),
+        gpu_temp_c: macmon.and_then(|m| m.gpu_temp_c),
+        cpu_active_ratio: macmon.and_then(|m| m.cpu_active_ratio),
+        mem_pressure_ratio: macmon.and_then(|m| m.mem_pressure_ratio),
+        total_ms,
+    };
+    if let Err(e) = library_db::insert_analysis_timing(&row) {
+        warn!("[analyzer] Failed to record analysis timing: {e}");
+    }
 }
 
 fn send_and_monitor(
@@ -1266,6 +1818,12 @@ fn send_and_monitor(
     server.writer.flush()?;
 
     let mut line_buf = String::new();
+    let mut stage_timings: Vec<(String, u64)> = Vec::new();
+    // Set once "starting" fires for the separation stage; polled once that
+    // stage's "timing" event confirms it ran long enough for the delayed
+    // sample to have fired (see `SEPARATION_SNAPSHOT_DELAY`).
+    let mut separation_snapshot_rx: Option<mpsc::Receiver<ContentionSnapshot>> = None;
+    let mut contention_snapshot: Option<ContentionSnapshot> = None;
     loop {
         if progress_hash.is_some_and(|hash| {
             let state = lock_unpoisoned(&ANALYZER);
@@ -1312,7 +1870,43 @@ fn send_and_monitor(
                     update_queue_status(hash, QueuedStatus::Analyzing(pct as usize));
                 }
             }
-            ServerEvent::Done => return Ok(SongResult::Done),
+            ServerEvent::Starting { stage } => {
+                if stage == "separation" {
+                    let (tx, rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(SEPARATION_SNAPSHOT_DELAY);
+                        let _ = tx.send(ContentionSnapshot {
+                            load_avg_1m: load_avg_1m(),
+                            macmon: macmon_snapshot(),
+                        });
+                    });
+                    separation_snapshot_rx = Some(rx);
+                }
+            }
+            ServerEvent::Timing { stage, ms } => {
+                match progress_hash {
+                    Some(hash) => info!("[analyzer:timing] hash={hash} stage={stage} ms={ms}"),
+                    None => info!("[analyzer:timing] stage={stage} ms={ms}"),
+                }
+                if stage == "separation" {
+                    // Only collect the sample if separation actually ran
+                    // long enough for it to have fired; otherwise leave the
+                    // row's contention fields empty rather than reading a
+                    // snapshot taken after separation already finished. By
+                    // this point the delay has already elapsed in real time,
+                    // so the recv is just picking up an already-sent value
+                    // -- the timeout is a safety net, not an expected wait.
+                    if let Some(rx) = separation_snapshot_rx.take()
+                        && ms >= SEPARATION_SNAPSHOT_DELAY.as_millis() as u64
+                    {
+                        contention_snapshot = rx.recv_timeout(Duration::from_secs(5)).ok();
+                    }
+                }
+                stage_timings.push((stage, ms));
+            }
+            ServerEvent::Done => {
+                return Ok(SongResult::Done(stage_timings, contention_snapshot));
+            }
             ServerEvent::Error { kind, msg } => {
                 let kind_s = kind.as_deref().unwrap_or("generic");
                 if kind_s == "oom" {

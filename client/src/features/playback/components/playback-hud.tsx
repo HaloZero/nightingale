@@ -16,6 +16,7 @@ import {
 import { computeLyricGapCaption, findCurrentSegment } from '@/features/playback/utils/lyrics-gap';
 import { playerDisplayName } from '@/features/playback/utils/player-display-name';
 import { t, useTranslation } from '@/i18n';
+import { useIsMobileWeb } from '@/shared/hooks/use-is-mobile';
 import { playerColorOption } from '@/shared/player-colors';
 import type { AppConfig } from '@/types/AppConfig';
 
@@ -102,6 +103,24 @@ function TouchButton({
   );
 }
 
+function ThemeHint({
+  theme,
+  videoFlavor,
+  showShortcuts,
+}: {
+  theme: PlaybackTheme;
+  videoFlavor: VideoFlavor;
+  showShortcuts: boolean;
+}) {
+  return (
+    <HintText>
+      {showShortcuts
+        ? formatThemeText(theme, videoFlavor)
+        : t('playback.hud.theme', { theme: themeName(theme, videoFlavor) })}
+    </HintText>
+  );
+}
+
 function SettingsInfo({
   guideVolume,
   guideAvailable,
@@ -112,6 +131,7 @@ function SettingsInfo({
   theme,
   videoFlavor,
   showShortcuts,
+  showTheme,
 }: {
   guideVolume: number;
   guideAvailable: boolean;
@@ -122,6 +142,7 @@ function SettingsInfo({
   theme: PlaybackTheme;
   videoFlavor: VideoFlavor;
   showShortcuts: boolean;
+  showTheme: boolean;
 }) {
   return (
     <div className="flex flex-col items-end">
@@ -146,11 +167,9 @@ function SettingsInfo({
           shortcut: showShortcuts ? ' [R]' : '',
         })}
       </HintText>
-      <HintText>
-        {showShortcuts
-          ? formatThemeText(theme, videoFlavor)
-          : t('playback.hud.theme', { theme: themeName(theme, videoFlavor) })}
-      </HintText>
+      {showTheme && (
+        <ThemeHint theme={theme} videoFlavor={videoFlavor} showShortcuts={showShortcuts} />
+      )}
       {showShortcuts && <HintText>{t('playback.playbackHud.escBack')}</HintText>}
     </div>
   );
@@ -173,6 +192,7 @@ function TouchControls({
   const { theme, videoFlavor } = usePlaybackThemeState();
   const { cycleTheme, cycleFlavor } = usePlaybackThemeActions();
   const persistConfig = usePlaybackConfigPersist(config);
+  const isMobileWeb = useIsMobileWeb();
 
   const setPersistedGuideVolume = useCallback(
     (volume: number) => {
@@ -202,6 +222,7 @@ function TouchControls({
           theme={theme}
           videoFlavor={videoFlavor}
           showShortcuts={false}
+          showTheme={!isMobileWeb}
         />
       </div>
 
@@ -218,20 +239,10 @@ function TouchControls({
         <div className="grid w-full grid-cols-3 gap-2 text-center">
           <TouchButton label={t('common.actions.pause')} onClick={handlePause} />
           {guideAvailable && (
-            <>
-              <TouchButton
-                label={t(guideVolume === 0 ? 'playback.hud.guideOn' : 'playback.hud.guideOff')}
-                onClick={() => setPersistedGuideVolume(guideVolume > 0 ? 0 : 0.3)}
-              />
-              <TouchButton
-                label={t('playback.playbackHud.guide')}
-                onClick={() => setPersistedGuideVolume(guideVolume + 0.1)}
-              />
-              <TouchButton
-                label={t('playback.playbackHud.guide2')}
-                onClick={() => setPersistedGuideVolume(guideVolume - 0.1)}
-              />
-            </>
+            <GuideTouchButtons
+              guideVolume={guideVolume}
+              setPersistedGuideVolume={setPersistedGuideVolume}
+            />
           )}
           {!multiplayer && (
             <>
@@ -246,15 +257,58 @@ function TouchControls({
             label={t(micMonitorUserEnabled ? 'playback.hud.monitorOff' : 'playback.hud.monitorOn')}
             onClick={handleToggleMicMonitor}
           />
-          <TouchButton label={t('playback.playbackHud.theme')} onClick={cycleTheme} />
-          <TouchButton
-            label={t('playback.playbackHud.flavor')}
-            onClick={cycleFlavor}
-            disabled={!isPixabayTheme(theme)}
-          />
+          {!isMobileWeb && (
+            <ThemeTouchButtons theme={theme} cycleTheme={cycleTheme} cycleFlavor={cycleFlavor} />
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+function GuideTouchButtons({
+  guideVolume,
+  setPersistedGuideVolume,
+}: {
+  guideVolume: number;
+  setPersistedGuideVolume: (volume: number) => void;
+}) {
+  return (
+    <>
+      <TouchButton
+        label={t(guideVolume === 0 ? 'playback.hud.guideOn' : 'playback.hud.guideOff')}
+        onClick={() => setPersistedGuideVolume(guideVolume > 0 ? 0 : 0.3)}
+      />
+      <TouchButton
+        label={t('playback.playbackHud.guide')}
+        onClick={() => setPersistedGuideVolume(guideVolume + 0.1)}
+      />
+      <TouchButton
+        label={t('playback.playbackHud.guide2')}
+        onClick={() => setPersistedGuideVolume(guideVolume - 0.1)}
+      />
+    </>
+  );
+}
+
+function ThemeTouchButtons({
+  theme,
+  cycleTheme,
+  cycleFlavor,
+}: {
+  theme: PlaybackTheme;
+  cycleTheme: () => void;
+  cycleFlavor: () => void;
+}) {
+  return (
+    <>
+      <TouchButton label={t('playback.playbackHud.theme')} onClick={cycleTheme} />
+      <TouchButton
+        label={t('playback.playbackHud.flavor')}
+        onClick={cycleFlavor}
+        disabled={!isPixabayTheme(theme)}
+      />
+    </>
   );
 }
 
@@ -403,7 +457,8 @@ function PlaybackHudImpl({
   const gapCaptionRef = useRef<HTMLOutputElement>(null);
   const gapHintRef = useRef(0);
 
-  const showPixabayCredit = isPixabayTheme(theme);
+  const isMobileWeb = useIsMobileWeb();
+  const showPixabayCredit = isPixabayTheme(theme) && !isMobileWeb;
   const hasTouch = useHasTouchInput();
 
   // Update playback text without triggering React renders every frame.
@@ -504,6 +559,7 @@ function PlaybackHudImpl({
               theme={theme}
               videoFlavor={videoFlavor}
               showShortcuts={!hasTouch}
+              showTheme={!isMobileWeb}
             />
           </div>
           <TouchControls config={config} hasTouch={hasTouch} position={position} />

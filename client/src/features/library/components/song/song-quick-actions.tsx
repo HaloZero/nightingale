@@ -1,4 +1,5 @@
 import {
+  AlignLeftIcon,
   ArrowDownToLineIcon,
   ArrowUpToLineIcon,
   AudioLinesIcon,
@@ -12,6 +13,7 @@ import { ContextMenu as ContextMenuPrimitive } from 'radix-ui';
 
 import { t } from '@/i18n';
 import { Button } from '@/shared/components/ui/button';
+import { cn } from '@/shared/utils/cn';
 import type { QueuedStatus } from '@/types/QueuedStatus';
 import type { Song } from '@/types/Song';
 
@@ -26,12 +28,20 @@ type SongQuickActionsProps = {
   onPlay: (song: Song) => void;
   onPlayMultiplayer: (song: Song) => void;
   onProvideLyrics: (song: Song) => void;
+  onRealign: (song: Song) => void;
 };
 
 const menuContentClassName =
   'z-50 min-w-36 rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95';
 const menuItemClassName =
   'flex min-h-7 cursor-pointer items-center gap-2 rounded-md px-2 py-1 outline-none select-none focus:bg-accent focus:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0';
+
+// Realign rebuilds timing from an AI-produced transcript/alignment backend,
+// so it only applies to AI-aligned ('Lyrics') and plain-transcribed (`null`)
+// sources -- LRC-provided and USDX songs already have their timing from
+// elsewhere and have no AI backend to rerun.
+const supportsRealign = (song: Song): boolean =>
+  song.transcript_source !== 'Lrc' && song.transcript_source !== 'Usdx';
 
 export function SongQuickActions({
   song,
@@ -42,10 +52,12 @@ export function SongQuickActions({
   onPlay,
   onPlayMultiplayer,
   onProvideLyrics,
+  onRealign,
 }: SongQuickActionsProps) {
   const status = getSongStatusInfo(song.is_analyzed, queueStatus);
   const analysisBusy = queueStatus === 'Queued' || status.isAnalyzing === true;
   const disabled = status.isReady !== true;
+  const showRealign = status.isReady === true && supportsRealign(song);
 
   if (!song.is_analyzed) {
     return (
@@ -150,7 +162,7 @@ export function SongQuickActions({
         <ContextMenuPrimitive.Trigger asChild>
           <Button
             size="icon-sm"
-            className="rounded-l-none hover:bg-primary/70"
+            className={cn('rounded-none hover:bg-primary/70', !showRealign && 'rounded-r-sm')}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -182,6 +194,22 @@ export function SongQuickActions({
           </ContextMenuPrimitive.Content>
         </ContextMenuPrimitive.Portal>
       </ContextMenuPrimitive.Root>
+
+      {showRealign && (
+        <Button
+          variant="secondary"
+          size="icon-sm"
+          className="rounded-l-none hover:bg-primary/20 hover:text-primary"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRealign(song);
+          }}
+          aria-label={t('library.quickActions.realignLabel', { title: song.title })}
+          title={t('library.song.songQuickActions.realign')}
+        >
+          <AlignLeftIcon />
+        </Button>
+      )}
     </fieldset>
   );
 }

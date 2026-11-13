@@ -313,6 +313,13 @@ impl JellyfinSource {
             "Unknown Artist",
         );
         let album = pick_string(item.album.as_deref(), "Unknown Album");
+        let genre = pick_string(
+            item.genres
+                .as_ref()
+                .and_then(|g| g.first())
+                .map(|s| s.as_str()),
+            "Unknown Genre",
+        );
 
         let duration_secs = item
             .run_time_ticks
@@ -349,11 +356,13 @@ impl JellyfinSource {
             title,
             artist,
             album,
+            genre,
             duration_secs,
             album_art_path,
             is_analyzed: false,
             language: None,
             transcript_source: None,
+            align_backend: None,
             key: None,
             override_key: None,
             tempo: 1.0,
@@ -366,6 +375,10 @@ impl JellyfinSource {
                 cover_tag,
             },
             no_stems: false,
+            // Remote-sourced: bytes aren't local at listing time, so there's
+            // nothing to scan for a sidecar/embedded lyrics source yet.
+            has_lrc_file: false,
+            has_embedded_lyrics: false,
         })
     }
 
@@ -796,6 +809,8 @@ struct JellyfinItem {
     album_artist: Option<String>,
     #[serde(rename = "Artists", default)]
     artists: Option<Vec<String>>,
+    #[serde(rename = "Genres", default)]
+    genres: Option<Vec<String>>,
     #[serde(rename = "RunTimeTicks", default)]
     run_time_ticks: Option<u64>,
     #[serde(rename = "Container", default)]

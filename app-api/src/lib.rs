@@ -398,6 +398,18 @@ pub async fn dispatch(state: CommandState, name: &str, payload: Value) -> CmdRes
             store.add_score(&args.song_hash, args.score, args.profile.as_deref());
             Ok(Value::Null)
         }
+        "mark_played" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                song_hash: String,
+                profile: Option<String>,
+            }
+            let args: Args = deserialize(payload)?;
+            let mut store = ProfileStore::load();
+            store.add_play(&args.song_hash, args.profile.as_deref());
+            Ok(Value::Null)
+        }
 
         // ── Playback queue ───────────────────────────────────────────────
         "load_playback_queue" => {
@@ -935,7 +947,7 @@ fn save_config_cmd(events: EventEmitter, payload: Value) -> CmdResult {
     events.0.set_monitor_gain(config.mic_monitor_gain());
     if config.auto_analyze() && !was_auto_analyze {
         let _ = app_core::enqueue(SongTarget::Filter {
-            filters: app_core::LibraryMenuFilters::default(),
+            filters: Box::new(app_core::LibraryMenuFilters::default()),
         });
     }
     serde_json::to_value(config).map_err(serde_err)

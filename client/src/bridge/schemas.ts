@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { PLAYER_COLOR_VALUES } from '@/shared/player-colors';
 import type { AppConfig } from '@/types/AppConfig';
 import type { CachePaths } from '@/types/CachePaths';
+import type { ChromecastConfig } from '@/types/ChromecastConfig';
 import type { LibrarySource } from '@/types/LibrarySource';
 import type { Song } from '@/types/Song';
 import type { SongOrigin } from '@/types/SongOrigin';
@@ -18,6 +19,12 @@ const cachePathsSchema: z.ZodType<CachePaths> = z.object({
   videos: nullableString,
   models: nullableString,
   vendor: nullableString,
+});
+
+const chromecastConfigSchema: z.ZodType<ChromecastConfig> = z.object({
+  host: z.string(),
+  port: z.number(),
+  server_base_url: nullableString,
 });
 
 const backgroundSelectionSchema = z.discriminatedUnion('kind', [
@@ -154,6 +161,7 @@ export const appConfigSchema: z.ZodType<AppConfig> = z.object({
   beam_size: nullableNumber,
   batch_size: nullableNumber,
   last_video_flavor: nullableNumber,
+  pixabay_video_rotation: nullableBoolean,
   lyrics_vertical_position: nullableString,
   lyrics_horizontal_position: nullableString,
   lyrics_scale: nullableNumber,
@@ -162,8 +170,13 @@ export const appConfigSchema: z.ZodType<AppConfig> = z.object({
   separator: nullableString,
   asr_engine: nullableString,
   align_backend: nullableString,
+  alt_align_backend: nullableString,
   vocal_detection_threshold_pct: nullableNumber,
+  use_external_lyrics: nullableBoolean,
   auto_analyze: nullableBoolean,
+  restore_analyze: nullableBoolean,
+  track_analysis_timings: nullableBoolean,
+  refresh_lyrics_on_scan: nullableBoolean,
   auto_continue_queue: nullableBoolean,
   song_list_view: nullableString,
   song_list_sort: z
@@ -176,6 +189,8 @@ export const appConfigSchema: z.ZodType<AppConfig> = z.object({
     .nullable(),
   language: nullableString,
   language_overrides: z.record(z.string(), z.string()).nullable(),
+  chromecast: chromecastConfigSchema.nullable(),
+  debug_mode: nullableBoolean,
 });
 
 export const songsMetaSchema: z.ZodType<SongsMeta> = z.object({
@@ -224,11 +239,13 @@ export const songSchema: z.ZodType<Song> = z.object({
   title: z.string(),
   artist: z.string(),
   album: z.string(),
+  genre: z.string(),
   duration_secs: z.number(),
   album_art_path: nullableString,
   is_analyzed: z.boolean(),
   language: nullableString,
   transcript_source: z.enum(['Lyrics', 'Generated', 'Usdx', 'Lrc']).nullable(),
+  align_backend: nullableString,
   key: nullableString,
   override_key: nullableString,
   tempo: z.number(),
@@ -237,6 +254,8 @@ export const songSchema: z.ZodType<Song> = z.object({
   usdx: usdxBundleSchema.nullable(),
   origin: songOriginSchema,
   no_stems: z.boolean(),
+  has_lrc_file: z.boolean(),
+  has_embedded_lyrics: z.boolean(),
 });
 
 export const webBootstrapSchema = z.object({

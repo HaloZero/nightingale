@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
+use std::time::Instant;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -231,7 +232,15 @@ fn resolve_within_allowed_roots(input: &Path) -> Option<PathBuf> {
 /// Nothing under the model or vendor caches is requested through these media
 /// routes, so they are not listed.
 pub fn local_media_roots() -> Vec<PathBuf> {
+    let started = Instant::now();
     let config = AppConfig::load();
+    let elapsed = started.elapsed();
+    if elapsed.as_millis() > 250 {
+        warn!(
+            "[media_server] AppConfig::load() took {}ms while resolving allowed roots",
+            elapsed.as_millis()
+        );
+    }
     let mut roots = vec![
         crate::cache::nightingale_dir(),
         // Default location, kept even when `data_path` points elsewhere.

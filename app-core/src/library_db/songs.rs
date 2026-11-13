@@ -22,12 +22,15 @@ struct NewSongRow {
     title: String,
     artist: String,
     album: String,
+    genre: String,
     duration_secs: f64,
     album_art_path: Option<String>,
     is_analyzed: bool,
     language: Option<String>,
     transcript_source: Option<String>,
     is_video: bool,
+    has_lrc_file: bool,
+    has_embedded_lyrics: bool,
     payload: String,
 }
 
@@ -39,6 +42,7 @@ impl NewSongRow {
             title: song.title.clone(),
             artist: song.artist.clone(),
             album: song.album.clone(),
+            genre: song.genre.clone(),
             duration_secs: song.duration_secs,
             album_art_path: song
                 .album_art_path
@@ -48,6 +52,8 @@ impl NewSongRow {
             language: song.language.clone(),
             transcript_source: transcript_source_to_db(song.transcript_source),
             is_video: song.is_video,
+            has_lrc_file: song.has_lrc_file,
+            has_embedded_lyrics: song.has_embedded_lyrics,
             payload: song_to_payload(song)?,
         })
     }
@@ -177,14 +183,23 @@ pub(crate) fn replace_all_songs_sorted(input: &[Song]) -> Result<(), Nightingale
     })
 }
 
-pub(crate) fn delete_songs_not_in_paths(paths: &[String]) -> Result<(), NightingaleError> {
+pub(crate) fn delete_songs_not_in_paths(paths: &[String]) -> Result<Vec<String>, NightingaleError> {
     with_conn_mut(|conn| {
-        if paths.is_empty() {
-            diesel::delete(songs::table).execute(conn)?;
-        } else {
-            diesel::delete(songs::table.filter(songs::path.ne_all(paths))).execute(conn)?;
-        }
-        Ok(())
+        conn.transaction::<_, NightingaleError, _>(|conn| {
+            let removed = if paths.is_empty() {
+                let removed = songs::table.select(songs::file_hash).load(conn)?;
+                diesel::delete(songs::table).execute(conn)?;
+                removed
+            } else {
+                let removed = songs::table
+                    .filter(songs::path.ne_all(paths))
+                    .select(songs::file_hash)
+                    .load(conn)?;
+                diesel::delete(songs::table.filter(songs::path.ne_all(paths))).execute(conn)?;
+                removed
+            };
+            Ok(removed)
+        })
     })
 }
 
@@ -231,11 +246,14 @@ pub(crate) fn rekey_song(
                     songs::title.eq(&row.title),
                     songs::artist.eq(&row.artist),
                     songs::album.eq(&row.album),
+                    songs::genre.eq(&row.genre),
                     songs::duration_secs.eq(row.duration_secs),
                     songs::is_analyzed.eq(row.is_analyzed),
                     songs::language.eq(&row.language),
                     songs::transcript_source.eq(&row.transcript_source),
                     songs::is_video.eq(row.is_video),
+                    songs::has_lrc_file.eq(row.has_lrc_file),
+                    songs::has_embedded_lyrics.eq(row.has_embedded_lyrics),
                 ))
                 .execute(conn)?;
             diesel::delete(analysis_queue::table.filter(analysis_queue::file_hash.eq(new_hash)))
@@ -256,12 +274,15 @@ pub(crate) fn update_song_fields(file_hash: &str, song: &Song) -> Result<(), Nig
                 songs::title.eq(&row.title),
                 songs::artist.eq(&row.artist),
                 songs::album.eq(&row.album),
+                songs::genre.eq(&row.genre),
                 songs::duration_secs.eq(row.duration_secs),
                 songs::album_art_path.eq(&row.album_art_path),
                 songs::is_analyzed.eq(row.is_analyzed),
                 songs::language.eq(&row.language),
                 songs::transcript_source.eq(&row.transcript_source),
                 songs::is_video.eq(row.is_video),
+                songs::has_lrc_file.eq(row.has_lrc_file),
+                songs::has_embedded_lyrics.eq(row.has_embedded_lyrics),
                 songs::payload.eq(&row.payload),
             ))
             .execute(conn)?;

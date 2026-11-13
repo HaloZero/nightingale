@@ -170,6 +170,27 @@ impl LibrarySource {
     }
 }
 
+/// Chromecast device to cast matched songs to (see `crate::chromecast`).
+/// Persisted in `config.json`; the app has no discovery UI for this yet, so
+/// the host/port are hand-entered by the operator.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChromecastConfig {
+    pub host: String,
+    #[serde(default = "default_chromecast_port")]
+    pub port: u16,
+    /// Overrides LAN-IP auto-detection for the base URL the Chromecast uses
+    /// to fetch media from this server (e.g. "http://192.168.1.50:8080").
+    /// Needed when auto-detection picks the wrong network interface on a
+    /// multi-homed host.
+    #[serde(default)]
+    pub server_base_url: Option<String>,
+}
+
+fn default_chromecast_port() -> u16 {
+    8009
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct AppConfig {
@@ -214,6 +235,12 @@ pub struct AppConfig {
     pub beam_size: Option<u32>,
     pub batch_size: Option<u32>,
     pub last_video_flavor: Option<usize>,
+    /// Whether the Pixabay background cycles to a different clip each time
+    /// the active one finishes playing. `None`/`false` (the default) loops
+    /// a single clip for the whole song instead -- was unconditional
+    /// rotation before this setting existed; changed to default off since
+    /// constantly cutting to a new clip was distracting during playback.
+    pub pixabay_video_rotation: Option<bool>,
     pub lyrics_vertical_position: Option<String>,
     pub lyrics_horizontal_position: Option<String>,
     pub lyrics_scale: Option<f64>,
@@ -222,8 +249,37 @@ pub struct AppConfig {
     pub separator: Option<String>,
     pub asr_engine: Option<String>,
     pub align_backend: Option<String>,
+    /// Alternative alignment backend, used only for a one-off "Realign
+    /// (alternative backend)" song action (see `FORCE_ALIGN_BACKEND` in
+    /// analyzer.rs) rather than the default `align_backend` used for every
+    /// other analysis/realign.
+    pub alt_align_backend: Option<String>,
     pub vocal_detection_threshold_pct: Option<f64>,
+    /// Whether analysis prefers a song's local lyrics source (a `.lrc`
+    /// sidecar, else an embedded tag -- see `Song::has_external_lyrics`)
+    /// over ASR transcription when one is available: forced-align that text
+    /// to the separated vocals instead of transcribing. Off by default --
+    /// this silently changes what analysis output a song gets, so it's
+    /// opt-in rather than a surprise for existing installs. When off,
+    /// analysis behaves exactly as before this setting existed (LRCLIB
+    /// lookup, then ASR).
+    pub use_external_lyrics: Option<bool>,
     pub auto_analyze: Option<bool>,
+    /// Whether startup restores the on-disk analysis queue instead of
+    /// wiping it. When on, every song that was `queued`/`analyzing`/`failed`
+    /// before shutdown is cleanly re-enqueued (see `enqueue_one`) so work
+    /// resumes; unlike `auto_analyze` it does not sweep the whole library
+    /// for anything else unanalyzed. Off by default to preserve existing
+    /// behavior (clear-on-startup).
+    pub restore_analyze: Option<bool>,
+    pub track_analysis_timings: Option<bool>,
+    /// Whether a library scan/rescan re-checks `has_lrc_file`/
+    /// `has_embedded_lyrics` for every already-known local song, not just
+    /// brand-new ones (see `source::folder::refresh_lyrics_flags`). Off by
+    /// default: it's a real per-song I/O cost (a stat + a tag read) added to
+    /// every rescan, scaling with library size, so it's opt-in rather than
+    /// silently changing rescan behavior/performance for every install.
+    pub refresh_lyrics_on_scan: Option<bool>,
     /// When `true`, the results screen starts the next queued song by itself
     /// after a short countdown.
     pub auto_continue_queue: Option<bool>,
@@ -234,6 +290,16 @@ pub struct AppConfig {
     /// `zh-cn`). `None` follows the system language.
     pub language: Option<String>,
     pub language_overrides: Option<HashMap<String, String>>,
+    /// Chromecast device the `/api/cast` endpoint casts matched songs to.
+    /// `None` means casting is disabled.
+    #[serde(default)]
+    pub chromecast: Option<ChromecastConfig>,
+    /// Developer-only flag that exposes debug-oriented UI not meant for
+    /// normal end users (e.g. a scrub/seek bar on the playback screen for
+    /// visually/aurally checking lyric-alignment quality). Off by default;
+    /// toggled by hand-editing `config.json` -- there is no settings-UI
+    /// control for it.
+    pub debug_mode: Option<bool>,
 }
 
 fn default_data_path_option() -> Option<PathBuf> {
@@ -288,6 +354,7 @@ impl Default for AppConfig {
             beam_size: None,
             batch_size: None,
             last_video_flavor: None,
+            pixabay_video_rotation: None,
             lyrics_vertical_position: None,
             lyrics_horizontal_position: None,
             lyrics_scale: None,
@@ -296,13 +363,20 @@ impl Default for AppConfig {
             separator: None,
             asr_engine: None,
             align_backend: None,
+            alt_align_backend: None,
             vocal_detection_threshold_pct: None,
+            use_external_lyrics: None,
             auto_analyze: None,
+            restore_analyze: None,
+            track_analysis_timings: None,
+            refresh_lyrics_on_scan: None,
             auto_continue_queue: None,
             song_list_view: None,
             song_list_sort: None,
             language: None,
             language_overrides: None,
+            chromecast: None,
+            debug_mode: None,
         }
     }
 }
@@ -457,14 +531,34 @@ impl AppConfig {
         self.align_backend.as_deref().unwrap_or("whisperx")
     }
 
+    pub fn alt_align_backend(&self) -> &str {
+        self.alt_align_backend.as_deref().unwrap_or("whisperx")
+    }
+
     pub fn vocal_detection_threshold_pct(&self) -> f64 {
         self.vocal_detection_threshold_pct
             .unwrap_or(0.15)
             .clamp(0.0, 1.0)
     }
 
+    pub fn use_external_lyrics(&self) -> bool {
+        self.use_external_lyrics.unwrap_or(false)
+    }
+
     pub fn auto_analyze(&self) -> bool {
         self.auto_analyze.unwrap_or(false)
+    }
+
+    pub fn restore_analyze(&self) -> bool {
+        self.restore_analyze.unwrap_or(false)
+    }
+
+    pub fn track_analysis_timings(&self) -> bool {
+        self.track_analysis_timings.unwrap_or(true)
+    }
+
+    pub fn refresh_lyrics_on_scan(&self) -> bool {
+        self.refresh_lyrics_on_scan.unwrap_or(false)
     }
 
     pub fn mic_monitor_gain(&self) -> f32 {
@@ -492,6 +586,10 @@ impl AppConfig {
         self.language_overrides
             .get_or_insert_with(HashMap::new)
             .insert(file_hash, lang);
+    }
+
+    pub fn debug_mode(&self) -> bool {
+        self.debug_mode.unwrap_or(false)
     }
 }
 

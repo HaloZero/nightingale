@@ -1,6 +1,7 @@
 mod analyzer;
 mod backgrounds;
 mod cache;
+mod chromecast;
 mod config;
 mod error;
 mod library_db;
@@ -16,6 +17,7 @@ mod playback_session;
 mod profile;
 mod remote_control;
 mod scanner;
+mod search;
 mod secret;
 mod song;
 mod song_export;
@@ -25,8 +27,10 @@ mod vendor;
 mod vendor_scripts;
 
 pub use analyzer::{
-    AnalysisQueue, cancel_analysis, delete_cache, enqueue, realign, reanalyze_force_transcribe,
-    reanalyze_full, reanalyze_transcript, refresh_metadata, shutdown_server,
+    AnalysisQueue, FailureKind, acknowledge_failures, cancel_analysis, delete_cache, enqueue,
+    enqueue_all, enqueue_one, realign, realign_with_alt_backend, realign_with_backend,
+    reanalyze_force_transcribe, reanalyze_full, reanalyze_transcript, refresh_metadata,
+    remove_from_queue, remove_from_queue_one, set_song_language, shutdown_server,
 };
 pub use backgrounds::{
     BackgroundSelection, CustomBackground, CustomBackgroundKind, CustomBackgroundSource,
@@ -39,7 +43,8 @@ pub use cache::{
     clear_videos, default_nightingale_dir, nightingale_dir, normalized_target_path, same_path,
     set_default_data_path,
 };
-pub use config::{AppConfig, LibrarySource, WindowState};
+pub use chromecast::cast_song_to_configured_device;
+pub use config::{AppConfig, ChromecastConfig, LibrarySource, WindowState};
 pub use library_db::{init_library, library_db_path};
 pub use library_menu::{LibraryMenuItem, LibraryMenuItems, load_library_menu_items};
 pub use library_model::{
@@ -64,6 +69,9 @@ pub use playback_session::{PlaybackPlayer, PlaybackSession, PlaybackSessionStore
 pub use profile::ProfileStore;
 pub use remote_control::{REMOTE_PORT, RemoteControl, RemoteInfo, lan_base, lan_ip};
 pub use scanner::{CacheReconcileSummary, reconcile_cache, start_scan};
+pub use search::{
+    find_alternative_analyzed_songs, find_best_matching_local_song, find_song_by_hash,
+};
 pub use song::{Song, SongOrigin};
 pub use song_export::{export_song_nge, exports_dir};
 pub use source::{
@@ -93,7 +101,25 @@ pub use vendor::{
 pub fn startup() -> Result<(), String> {
     init_library().map_err(|e| e.to_string())?;
 
+    let config = AppConfig::load();
+
+    // The worker that owned any persisted rows died with the last process --
+    // nothing is actually "analyzing" or dequeued right now. Snapshot the
+    // hashes before wiping so `restore_analyze` can re-enqueue them through
+    // the normal clean path afterward, rather than trusting the stale
+    // status/percentage left behind. This also resets any `analyzing` rows
+    // back to `queued`, since a stale `analyzing` row is excluded from the
+    // "Remove from queue" bulk action (it assumes a live worker will revisit
+    // it).
+    let restore_hashes: Vec<String> = if config.restore_analyze() {
+        AnalysisQueue::load().entries.into_keys().collect()
+    } else {
+        Vec::new()
+    };
+
     AnalysisQueue::clear();
+
+    analyzer::enqueue_many(&restore_hashes);
 
     let cache = CacheDir::new();
 
@@ -105,10 +131,8 @@ pub fn startup() -> Result<(), String> {
         tracing::warn!("Failed to refresh analyzer scripts: {e}");
     }
 
-    if AppConfig::load().auto_analyze() {
-        let _ = enqueue(SongTarget::Filter {
-            filters: LibraryMenuFilters::default(),
-        });
+    if config.auto_analyze() {
+        enqueue_all(&LibraryMenuFilters::default());
     }
 
     Ok(())

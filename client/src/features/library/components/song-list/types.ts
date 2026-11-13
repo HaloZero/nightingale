@@ -17,4 +17,5 @@ export type SongListActions = {
   onPlay: (song: Song) => void;
   onPlayMultiplayer: (song: Song) => void;
   onProvideLyrics: (song: Song) => void;
+  onRealign: (song: Song) => void;
 };

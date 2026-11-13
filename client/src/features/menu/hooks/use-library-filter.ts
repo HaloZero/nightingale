@@ -11,12 +11,14 @@ export const useLibraryFilter = () => {
   return {
     artist: filter.artist,
     album: filter.album,
+    genre: filter.genre,
     playlist: filter.playlist,
     folder: filter.folder,
     query: filter.query,
     status: filter.status,
     transcript_source: filter.transcript_source,
     search: filter.search,
+    language: filter.language,
     setLibraryFilter,
   };
 };
