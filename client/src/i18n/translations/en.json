@@ -391,7 +391,6 @@
   "playback.playbackHud.theme": "Theme",
   "playback.playbackHud.videosByPixabay": "Videos by Pixabay",
   "playback.playbackMicContext.message": "{{value1}}: {{value2}}",
-  "playback.playbackTransportContext.markPlayedFailed": "Couldn't record this play",
   "playback.playbackTransportContext.stemConversionFailed": "Stem conversion failed: {{value1}}",
   "playback.playbackTransportControls.jump1SecondBack": "Jump 1 second back",
   "playback.playbackTransportControls.jump1SecondForward": "Jump 1 second forward",

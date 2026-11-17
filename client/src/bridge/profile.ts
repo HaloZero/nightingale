@@ -25,7 +25,3 @@ export const addScore = async (
 ): Promise<void> => {
   return await invoke<void>('add_score', { songHash, score, profile });
 };
-
-export const markPlayed = async (songHash: string, profile?: string): Promise<void> => {
-  return await invoke<void>('mark_played', { songHash, profile });
-};

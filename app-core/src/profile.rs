@@ -12,20 +12,6 @@ pub struct ScoreRecord {
     pub played_at: u64,
 }
 
-/// Records that a profile played a song, independent of whether it was ever
-/// scored. Title/artist are a point-in-time snapshot for making the
-/// `profiles.json` file readable by eye -- `song_hash` remains the real
-/// identity.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct PlayRecord {
-    pub profile: String,
-    pub song_hash: String,
-    pub title: String,
-    pub artist: String,
-    pub played_at: u64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[ts(export)]
 pub struct ProfileStore {
@@ -33,8 +19,6 @@ pub struct ProfileStore {
     pub profiles: Vec<String>,
     #[serde(default)]
     pub scores: Vec<ScoreRecord>,
-    #[serde(default)]
-    pub plays: Vec<PlayRecord>,
 }
 
 impl ProfileStore {
@@ -86,8 +70,6 @@ impl ProfileStore {
 
         self.scores.retain(|r| r.profile != name);
 
-        self.plays.retain(|r| r.profile != name);
-
         if self.active.as_deref() == Some(name) {
             self.active = self.profiles.first().cloned();
         }
@@ -110,32 +92,6 @@ impl ProfileStore {
             profile,
             song_hash: song_hash.to_string(),
             score,
-            played_at,
-        });
-        self.save();
-    }
-
-    pub fn add_play(&mut self, song_hash: &str, profile: Option<&str>) {
-        let profile = match profile.or(self.active.as_deref()) {
-            Some(profile) if self.profiles.iter().any(|candidate| candidate == profile) => {
-                profile.to_string()
-            }
-            _ => return,
-        };
-        let played_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let (title, artist) = crate::library_db::load_song_by_hash(song_hash)
-            .ok()
-            .flatten()
-            .map(|song| (song.title, song.artist))
-            .unwrap_or_default();
-        self.plays.push(PlayRecord {
-            profile,
-            song_hash: song_hash.to_string(),
-            title,
-            artist,
             played_at,
         });
         self.save();

@@ -25,10 +25,7 @@ md-5 = "0.10"
 zip = { version = "4", default-features = false }
 unicode-normalization = "0.1"
 qrcode = { version = "0.14", default-features = false }
-rust_cast = "0.21"
-rustls = "0.23"
 strsim = "0.11"
-mime_guess = "2"
 
 [build-dependencies]
 dotenvy = "0.15"

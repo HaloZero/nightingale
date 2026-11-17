@@ -391,7 +391,6 @@
   "playback.playbackHud.theme": "主题",
   "playback.playbackHud.videosByPixabay": "视频来自 Pixabay",
   "playback.playbackMicContext.message": "{{value1}}：{{value2}}",
-  "playback.playbackTransportContext.markPlayedFailed": "无法记录此次播放",
   "playback.playbackTransportContext.stemConversionFailed": "音轨转换失败：{{value1}}",
   "playback.playbackTransportControls.jump1SecondBack": "后退 1 秒",
   "playback.playbackTransportControls.jump1SecondForward": "前进 1 秒",

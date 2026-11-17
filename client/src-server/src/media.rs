@@ -1,6 +1,5 @@
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use axum::{
     body::{Body, Bytes},
@@ -24,28 +23,9 @@ struct ResolvedPath(PathBuf);
 
 impl ResolvedPath {
     fn resolve(input: &Path) -> Option<Self> {
-        let started = Instant::now();
         let canonical_input = std::fs::canonicalize(input).ok()?;
-        let elapsed = started.elapsed();
-        if elapsed.as_millis() > 250 {
-            tracing::warn!(
-                "media: canonicalizing input path took {}ms: {}",
-                elapsed.as_millis(),
-                input.display()
-            );
-        }
         for root in app_core::local_media_roots() {
-            let root_started = Instant::now();
-            let canon_root = std::fs::canonicalize(&root);
-            let root_elapsed = root_started.elapsed();
-            if root_elapsed.as_millis() > 250 {
-                tracing::warn!(
-                    "media: canonicalizing allowed root took {}ms: {}",
-                    root_elapsed.as_millis(),
-                    root.display()
-                );
-            }
-            if let Ok(canon_root) = canon_root {
+            if let Ok(canon_root) = std::fs::canonicalize(&root) {
                 if canonical_input.starts_with(&canon_root) {
                     return Some(Self(canonical_input));
                 }

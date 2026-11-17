@@ -1,7 +1,6 @@
 mod analyzer;
 mod backgrounds;
 mod cache;
-mod chromecast;
 mod config;
 mod error;
 mod library_db;
@@ -17,7 +16,6 @@ mod playback_session;
 mod profile;
 mod remote_control;
 mod scanner;
-mod search;
 mod secret;
 mod song;
 mod song_export;
@@ -43,8 +41,7 @@ pub use cache::{
     clear_videos, default_nightingale_dir, nightingale_dir, normalized_target_path, same_path,
     set_default_data_path,
 };
-pub use chromecast::cast_song_to_configured_device;
-pub use config::{AppConfig, ChromecastConfig, LibrarySource, WindowState};
+pub use config::{AppConfig, LibrarySource, WindowState};
 pub use library_db::{init_library, library_db_path};
 pub use library_menu::{LibraryMenuItem, LibraryMenuItems, load_library_menu_items};
 pub use library_model::{
@@ -69,9 +66,6 @@ pub use playback_session::{PlaybackPlayer, PlaybackSession, PlaybackSessionStore
 pub use profile::ProfileStore;
 pub use remote_control::{REMOTE_PORT, RemoteControl, RemoteInfo, lan_base, lan_ip};
 pub use scanner::{CacheReconcileSummary, reconcile_cache, start_scan};
-pub use search::{
-    find_alternative_analyzed_songs, find_best_matching_local_song, find_song_by_hash,
-};
 pub use song::{Song, SongOrigin};
 pub use song_export::{export_song_nge, exports_dir};
 pub use source::{

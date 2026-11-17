@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { PLAYER_COLOR_VALUES } from '@/shared/player-colors';
 import type { AppConfig } from '@/types/AppConfig';
 import type { CachePaths } from '@/types/CachePaths';
-import type { ChromecastConfig } from '@/types/ChromecastConfig';
 import type { LibrarySource } from '@/types/LibrarySource';
 import type { Song } from '@/types/Song';
 import type { SongOrigin } from '@/types/SongOrigin';
@@ -19,12 +18,6 @@ const cachePathsSchema: z.ZodType<CachePaths> = z.object({
   videos: nullableString,
   models: nullableString,
   vendor: nullableString,
-});
-
-const chromecastConfigSchema: z.ZodType<ChromecastConfig> = z.object({
-  host: z.string(),
-  port: z.number(),
-  server_base_url: nullableString,
 });
 
 const backgroundSelectionSchema = z.discriminatedUnion('kind', [
@@ -189,7 +182,6 @@ export const appConfigSchema: z.ZodType<AppConfig> = z.object({
     .nullable(),
   language: nullableString,
   language_overrides: z.record(z.string(), z.string()).nullable(),
-  chromecast: chromecastConfigSchema.nullable(),
   debug_mode: nullableBoolean,
 });
 

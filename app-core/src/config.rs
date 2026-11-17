@@ -170,27 +170,6 @@ impl LibrarySource {
     }
 }
 
-/// Chromecast device to cast matched songs to (see `crate::chromecast`).
-/// Persisted in `config.json`; the app has no discovery UI for this yet, so
-/// the host/port are hand-entered by the operator.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct ChromecastConfig {
-    pub host: String,
-    #[serde(default = "default_chromecast_port")]
-    pub port: u16,
-    /// Overrides LAN-IP auto-detection for the base URL the Chromecast uses
-    /// to fetch media from this server (e.g. "http://192.168.1.50:8080").
-    /// Needed when auto-detection picks the wrong network interface on a
-    /// multi-homed host.
-    #[serde(default)]
-    pub server_base_url: Option<String>,
-}
-
-fn default_chromecast_port() -> u16 {
-    8009
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct AppConfig {
@@ -290,10 +269,6 @@ pub struct AppConfig {
     /// `zh-cn`). `None` follows the system language.
     pub language: Option<String>,
     pub language_overrides: Option<HashMap<String, String>>,
-    /// Chromecast device the `/api/cast` endpoint casts matched songs to.
-    /// `None` means casting is disabled.
-    #[serde(default)]
-    pub chromecast: Option<ChromecastConfig>,
     /// Developer-only flag that exposes debug-oriented UI not meant for
     /// normal end users (e.g. a scrub/seek bar on the playback screen for
     /// visually/aurally checking lyric-alignment quality). Off by default;
@@ -375,7 +350,6 @@ impl Default for AppConfig {
             song_list_sort: None,
             language: None,
             language_overrides: None,
-            chromecast: None,
             debug_mode: None,
         }
     }

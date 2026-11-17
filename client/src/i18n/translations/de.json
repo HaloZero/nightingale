@@ -391,7 +391,6 @@
   "playback.playbackHud.theme": "Design",
   "playback.playbackHud.videosByPixabay": "Videos von Pixabay",
   "playback.playbackMicContext.message": "{{value1}}: {{value2}}",
-  "playback.playbackTransportContext.markPlayedFailed": "Diese Wiedergabe konnte nicht erfasst werden",
   "playback.playbackTransportContext.stemConversionFailed": "Stem-Konvertierung fehlgeschlagen: {{value1}}",
   "playback.playbackTransportControls.jump1SecondBack": "1 Sekunde zurück",
   "playback.playbackTransportControls.jump1SecondForward": "1 Sekunde vor",

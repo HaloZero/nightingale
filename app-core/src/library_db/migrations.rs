@@ -21,7 +21,7 @@ use super::schema::songs;
 use super::songs::{append_songs, update_library_meta};
 use super::sql_functions::json_extract_text;
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 5;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 static MIGRATION_TOTAL: AtomicUsize = AtomicUsize::new(0);
@@ -167,6 +167,24 @@ pub(super) fn run_migrations(conn: &mut SqliteConnection) -> Result<(), Nighting
             );
             CREATE INDEX IF NOT EXISTS idx_analysis_timings_file_hash
                 ON analysis_timings(file_hash);
+        ",
+        )?;
+    }
+    if version < 5 {
+        // A DB carried over from a pre-fork-rebuild build may still have
+        // tables owned by features that are no longer part of the app
+        // (karaoke-video rendering, parallel-analysis/peer offload). They're
+        // otherwise inert -- nothing in this codebase references them -- but
+        // drop them so the file doesn't keep carrying dead schema forward.
+        conn.batch_execute(
+            "
+            DROP TABLE IF EXISTS karaoke_video_status;
+            DROP TABLE IF EXISTS karaoke_video_runs;
+            DROP TABLE IF EXISTS video_processing_queue;
+            DROP TABLE IF EXISTS youtube_video_lookups;
+            DROP TABLE IF EXISTS youtube_video_sync;
+            DROP TABLE IF EXISTS parallel_analysis_mismatches;
+            DROP TABLE IF EXISTS parallel_analysis_timings;
         ",
         )?;
     }

@@ -14,7 +14,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -23,7 +22,6 @@ import { toast } from 'sonner';
 
 import { ensureMp3Stems, onStemsReady } from '@/bridge/playback';
 import { isSessionPlayback } from '@/bridge/playback-session';
-import { markPlayed } from '@/bridge/profile';
 import { setWakeLockDesired } from '@/bridge/wake-lock';
 import { closePlaybackWindow } from '@/bridge/window';
 import {
@@ -141,18 +139,6 @@ export function PlaybackTransportProvider({
     setWakeLockDesired(audio.isPlaying);
     return () => setWakeLockDesired(false);
   }, [audio.isPlaying]);
-
-  const markedPlayedRef = useRef(false);
-
-  useEffect(() => {
-    if (!audio.isReady || markedPlayedRef.current) {
-      return;
-    }
-    markedPlayedRef.current = true;
-    void markPlayed(fileHash).catch(() => {
-      toast.error(t('playback.playbackTransportContext.markPlayedFailed'));
-    });
-  }, [audio.isReady, fileHash]);
 
   const handlePause = useCallback(() => {
     audio.pause();

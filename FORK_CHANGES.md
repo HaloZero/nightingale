@@ -7,8 +7,9 @@ instead of buried in history. Upstream's own features are documented in
 `CHANGELOG.md` as usual; this file only covers fork-specific additions.
 
 Dropped: this fork does not carry upstream's karaoke-video rendering
-(reel-background and YouTube-background video generation, their DB tables,
-and the related Chromecast casting option). Plain video playback (a song's
+(reel-background and YouTube-background video generation and their DB
+tables), Chromecast casting, play-history tracking, or the self-hosted
+media server's slow-path diagnostic logging. Plain video playback (a song's
 own bundled video, USDX bundled video) is unaffected.
 
 ## Alignment backends
@@ -40,20 +41,6 @@ filter (has/no sidecar `.lrc` or tag-embedded lyrics) so a library with mixed
 sourcing is easy to audit, distinct from upstream's on-demand sidecar-LRC
 lookup.
 
-## Chromecast
-
-Casting to Chromecast-compatible devices and TVs via `rust_cast`, with voice
-"play X" matching against the local library (`app-core/src/search.rs`).
-
-## Play history
-
-The active profile records a `PlayRecord` (profile, song hash, title, artist,
-timestamp) the moment a song's audio becomes ready to play, independent of
-whether it's ever scored. Persisted alongside score history in the same
-profile store. Title/artist are a point-in-time snapshot for making the file
-readable by eye — song hash remains the real identity. No viewer UI yet; this
-is backend groundwork for a future play-history view.
-
 ## Playback
 
 - **Screen wake lock**: the display is kept from dimming/locking while a song
@@ -72,3 +59,15 @@ is backend groundwork for a future play-history view.
 The self-hosted media server logs a warning when resolving a media path
 (canonicalizing the input or an allowed root, or loading `AppConfig`) takes
 longer than 250ms, to help diagnose slow storage or network mounts.
+
+## Database migration from the pre-rebuild fork
+
+A library DB created by this fork before it was rebuilt on fresh upstream may
+still carry tables from removed features (karaoke-video rendering,
+parallel-analysis/peer offload). `SCHEMA_VERSION` is bumped to 5 with a
+`version < 5` migration that drops those orphaned tables
+(`karaoke_video_status`, `karaoke_video_runs`, `video_processing_queue`,
+`youtube_video_lookups`, `youtube_video_sync`, `parallel_analysis_mismatches`,
+`parallel_analysis_timings`) on first open. Verified against a real backup
+copy of a pre-rebuild database: migrates cleanly, all library data and row
+counts preserved, only the dead tables removed.
