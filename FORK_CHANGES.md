@@ -8,9 +8,10 @@ instead of buried in history. Upstream's own features are documented in
 
 Dropped: this fork does not carry upstream's karaoke-video rendering
 (reel-background and YouTube-background video generation and their DB
-tables), Chromecast casting, play-history tracking, or the self-hosted
-media server's slow-path diagnostic logging. Plain video playback (a song's
-own bundled video, USDX bundled video) is unaffected.
+tables), Chromecast casting, play-history tracking, the self-hosted media
+server's slow-path diagnostic logging, or an MLX-backed Whisper transcription
+backend for Apple Silicon. Plain video playback (a song's own bundled video,
+USDX bundled video) is unaffected.
 
 ## Alignment backends
 
@@ -22,9 +23,6 @@ via the existing align-backend setting:
   timing around detected pauses.
 - `mms_align.py` — Meta MMS-based forced alignment.
 - `echora_align.py` — Echora-based alignment.
-- `whisper_mlx.py` — an MLX-backed Whisper transcription backend for Apple
-  Silicon, with its own model-cache lifecycle (released when the local
-  analysis queue goes idle, via the existing `idle_cleanup` protocol message).
 
 ## Genre browsing
 
