@@ -5,8 +5,8 @@
 Alternative acoustic model to the default wav2vec2-base WhisperX/CTC path:
 same per-segment ``transcript``/``audio``/``device`` call shape and
 ``{"segments": [...], "word_segments": [...]}`` output contract as
-:func:`ctc_align.ctc_align` and :func:`mms_align.mms_align`, so callers
-don't need to know which ran. Reuses :func:`ctc_align.add_wildcard_column`
+:func:`ctc_align.ctc_align`, so callers don't need to know which ran.
+Reuses :func:`ctc_align.add_wildcard_column`
 and :func:`ctc_align.forced_align_segment` for the actual forced-align step
 -- only model loading and feature extraction differ, since Wav2Vec2-BERT
 takes log-mel ``input_features`` (via its own processor) rather than the raw
@@ -49,9 +49,9 @@ def load_model(device: str) -> dict:
 def wav2vec2_bert_align(transcript, model_state: dict, audio, device: str) -> dict:
     """Align a known (English) transcript to audio using Wav2Vec2-BERT CTC.
 
-    Mirrors :func:`mms_align.mms_align`'s signature and return shape:
-    ``{"segments": [...], "word_segments": [...]}`` where each segment carries
-    a ``words`` list of ``{"word", "start"?, "end"?, "score"?}`` entries.
+    Returns ``{"segments": [...], "word_segments": [...]}`` where each
+    segment carries a ``words`` list of
+    ``{"word", "start"?, "end"?, "score"?}`` entries.
     """
     if not torch.is_tensor(audio):
         if isinstance(audio, str):

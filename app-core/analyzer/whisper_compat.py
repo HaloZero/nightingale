@@ -81,31 +81,24 @@ def set_align_backend(name):
 
     - ``"whisperx"`` (default): pure-Python CTC Viterbi.
     - ``"ctc"``: torchaudio ``forced_align`` C++/CUDA kernel, wav2vec2-base model.
-    - ``"mms"``: Meta's MMS_FA model (English only; falls through to the
-      wav2vec2 path below for any other language).
     - ``"wav2vec2_bert"``: an English Wav2Vec2-BERT CTC fine-tune
       (English only; falls through to the wav2vec2 path below for any other
-      language, same as ``"mms"``).
+      language).
     - ``"wav2vec2_bert_2pass"``: handled directly by ``align.py``, same as
       ``"qwen"`` below -- a cheap WhisperX pass locates natural pauses'
       line boundaries, then Wav2Vec2-BERT refines each pause-bounded chunk.
       Falls back to the plain WhisperX pass alone (never attempts the
       Wav2Vec2-BERT pass) when no chunk-safe pause structure is found; see
       ``wav2vec2_bert_2pass.py``.
-    - ``"echora"``: a multilingual MMS CTC fine-tune, currently scoped to
-      English only here (same as ``"mms"``/``"wav2vec2_bert"``) pending
-      verification of its Japanese/Korean text-preparation conventions; see
-      ``echora_align.py``.
     - ``"qwen"``: Qwen3-ForcedAligner token-classification model. Handled
       directly by the transcribe/align callers (see ``qwen_align``); when a song
       falls outside its support (unsupported language, over-length audio, or any
       failure) the callers fall through to the wav2vec2 path, where ``_run_align``
-      treats any backend other than ``"ctc"``/``"mms"``/``"wav2vec2_bert"``/
-      ``"echora"`` as ``whisperx``.
+      treats any backend other than ``"ctc"``/``"wav2vec2_bert"`` as ``whisperx``.
     """
     global _align_backend
     _align_backend = name if name in (
-        "whisperx", "ctc", "qwen", "mms", "wav2vec2_bert", "wav2vec2_bert_2pass", "echora",
+        "whisperx", "ctc", "qwen", "wav2vec2_bert", "wav2vec2_bert_2pass",
     ) else "whisperx"
 
 
@@ -188,32 +181,6 @@ def free_gpu():
 def _run_align(raw_segments, audio, language, device, model_name=None):
     import whisperx
 
-    if get_align_backend() == "mms" and language == "en":
-        try:
-            import mms_align
-            print(
-                f"[nightingale:LOG] Aligning with MMS_FA forced alignment on {device}",
-                flush=True,
-            )
-            with gpu_model(f"mms-fa:{device}") as held:
-                model_state = mms_align.load_model(device)
-                held.append(model_state["model"])
-                result = mms_align.mms_align(raw_segments, model_state, audio, device)
-            _set_effective_align_backend("mms")
-            return result
-        except Exception as e:
-            if is_oom(e):
-                # Same contract as the "ctc" backend: let align_with_fallback's
-                # OOM handling retry (re-enters _run_align, keeping the "mms"
-                # backend, and finally drops to CPU) instead of silently
-                # switching to the slower whisperx path.
-                raise
-            print(
-                f"[nightingale:LOG] mms align backend failed ({e}); "
-                f"falling back to whisperx.align",
-                flush=True,
-            )
-
     if get_align_backend() == "wav2vec2_bert" and language == "en":
         try:
             import wav2vec2_bert_align
@@ -229,40 +196,13 @@ def _run_align(raw_segments, audio, language, device, model_name=None):
             return result
         except Exception as e:
             if is_oom(e):
-                # Same contract as "ctc"/"mms": let align_with_fallback's OOM
+                # Same contract as "ctc": let align_with_fallback's OOM
                 # handling retry (re-enters _run_align, keeping the
                 # "wav2vec2_bert" backend, and finally drops to CPU) instead of
                 # silently switching to the slower whisperx path.
                 raise
             print(
                 f"[nightingale:LOG] wav2vec2_bert align backend failed ({e}); "
-                f"falling back to whisperx.align",
-                flush=True,
-            )
-
-    if get_align_backend() == "echora" and language == "en":
-        try:
-            import echora_align
-            print(
-                f"[nightingale:LOG] Aligning with Echora MMS CTC on {device}",
-                flush=True,
-            )
-            with gpu_model(f"echora:{device}") as held:
-                model_state = echora_align.load_model(device)
-                held.append(model_state["model"])
-                result = echora_align.echora_align(raw_segments, model_state, audio, device)
-            _set_effective_align_backend("echora")
-            return result
-        except Exception as e:
-            if is_oom(e):
-                # Same contract as "ctc"/"mms"/"wav2vec2_bert": let
-                # align_with_fallback's OOM handling retry (re-enters
-                # _run_align, keeping the "echora" backend, and finally drops
-                # to CPU) instead of silently switching to the slower
-                # whisperx path.
-                raise
-            print(
-                f"[nightingale:LOG] echora align backend failed ({e}); "
                 f"falling back to whisperx.align",
                 flush=True,
             )

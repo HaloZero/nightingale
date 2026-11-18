@@ -9,20 +9,19 @@ instead of buried in history. Upstream's own features are documented in
 Dropped: this fork does not carry upstream's karaoke-video rendering
 (reel-background and YouTube-background video generation and their DB
 tables), Chromecast casting, play-history tracking, the self-hosted media
-server's slow-path diagnostic logging, or an MLX-backed Whisper transcription
-backend for Apple Silicon. Plain video playback (a song's own bundled video,
-USDX bundled video) is unaffected.
+server's slow-path diagnostic logging, an MLX-backed Whisper transcription
+backend for Apple Silicon, or the MMS/Echora forced-alignment backends.
+Plain video playback (a song's own bundled video, USDX bundled video) is
+unaffected.
 
 ## Alignment backends
 
-Additional lyric-alignment backends alongside upstream's defaults, selectable
-via the existing align-backend setting:
+An additional lyric-alignment backend alongside upstream's defaults,
+selectable via the existing align-backend setting:
 
 - `wav2vec2_bert_align.py` / `wav2vec2_bert_2pass.py` — a two-pass Wav2Vec2-BERT
   aligner; pass one aligns against the full lyric block, pass two refines
   timing around detected pauses.
-- `mms_align.py` — Meta MMS-based forced alignment.
-- `echora_align.py` — Echora-based alignment.
 
 ## Genre browsing
 
@@ -51,12 +50,6 @@ lookup.
 - **Row action buttons**: each song row offers a direct play button, plus a
   realign button for AI-aligned songs (re-run alignment without re-queuing a
   full analysis) and an align button for unanalyzed songs.
-
-## Server diagnostics
-
-The self-hosted media server logs a warning when resolving a media path
-(canonicalizing the input or an allowed root, or loading `AppConfig`) takes
-longer than 250ms, to help diagnose slow storage or network mounts.
 
 ## Database migration from the pre-rebuild fork
 

@@ -6,7 +6,7 @@ import type { UsdxBundle } from "./UsdxBundle";
 export type Song = { path: string, file_hash: string, title: string, artist: string, album: string, genre: string, duration_secs: number, album_art_path: string | null, is_analyzed: boolean, language: string | null, transcript_source: TranscriptSource | null, 
 /**
  * Which forced-alignment backend actually produced this song's current
- * timing (`"whisperx"`, `"ctc"`, `"qwen"`, `"mms"`, `"wav2vec2_bert"`, or
+ * timing (`"whisperx"`, `"ctc"`, `"qwen"`, `"wav2vec2_bert"`, or
  * `"wav2vec2_bert_2pass"` -- see `read_transcript_meta`). `None` for
  * `Lrc`/`Usdx` sources (no aligner runs for those) and for songs
  * analyzed before this field existed, until they're realigned.
