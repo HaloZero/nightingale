@@ -212,7 +212,8 @@
   }
 
   .song-table-actions {
-    width: 4.5rem;
+    min-width: 4rem;
+    max-width: none;
   }
 
   .song-table-header {
@@ -263,6 +264,11 @@
 
     .song-table-status {
       width: 7.5rem;
+    }
+
+    /* Never collapsed below fitting both buttons, same guarantee as Status. */
+    .song-table-actions {
+      min-width: 4rem;
     }
   }
 }
