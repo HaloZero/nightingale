@@ -96,10 +96,9 @@ export const SONG_COLUMNS: SongColumn[] = [
   },
   {
     id: 'actions',
-    header: 'common.actions.label',
-    headerClassName: 'sr-only',
+    header: 'library.columns.actions',
     thClassName: 'song-table-actions px-2 py-2',
-    tdClassName: 'song-table-actions px-2 py-2 text-right',
+    tdClassName: 'song-table-actions px-2 py-2 text-left',
     cell: (song, queueStatus, _bestScore, actions) =>
       actions === undefined ? null : (
         <SongQuickActions song={song} queueStatus={queueStatus} {...actions} />
