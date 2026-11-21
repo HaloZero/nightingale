@@ -19,6 +19,10 @@ below.
 - Playback on mobile web no longer loads or renders decorative backgrounds (shaders, Pixabay clips, custom backgrounds, or a video song's own bundled video), so a phone browser only has to load audio and lyrics. Desktop and the Tauri app are unaffected. The theme/flavor touch controls and their status text are hidden on mobile web accordingly.
 - Play is now the leftmost quick-action button on each song, ahead of Queue, and the actions column in the song table always has enough room for both buttons so they no longer look squeezed together. The quick-action Realign shortcut was removed; realigning a song is still available from its song details and from the library's bulk actions menu.
 
+### Fixes
+
+- Fixes a bug where Apple Silicon Macs would not release memory after a song was analyzed.
+
 ## [1.4.1] - 2026-11-09
 
 ### Fixes
