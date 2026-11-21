@@ -67,6 +67,7 @@
   "library.columns.artist": "Interpret",
   "library.columns.duration": "Dauer",
   "library.columns.song": "Lied",
+  "library.columns.actions": "Aktionen",
   "library.emptyLibrary.connectJellyfin": "Jellyfin verbinden",
   "library.emptyLibrary.connectNavidrome": "Navidrome verbinden",
   "library.emptyLibrary.connectPlex": "Plex verbinden",

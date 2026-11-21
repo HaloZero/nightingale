@@ -67,6 +67,7 @@
   "library.columns.artist": "歌手",
   "library.columns.duration": "时长",
   "library.columns.song": "歌曲",
+  "library.columns.actions": "操作",
   "library.emptyLibrary.connectJellyfin": "连接 Jellyfin",
   "library.emptyLibrary.connectNavidrome": "连接 Navidrome",
   "library.emptyLibrary.connectPlex": "连接 Plex",
