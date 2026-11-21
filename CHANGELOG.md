@@ -20,6 +20,7 @@ below.
 ### Fixes
 
 - The phone queue link now keeps the same address across launches, so a QR code scanned earlier keeps working. A phone that scans a new code is also no longer turned away as "remote link is not valid" because of a cookie left from an earlier code.
+- Fixes a bug where Apple Silicon Macs would not release memory after a song was analyzed.
 
 ## [1.4.1] - 2026-11-09
 
