@@ -18,6 +18,7 @@ below.
 - Playback now requests a screen wake lock while a song is actively playing, so mobile and desktop browsers stop dimming or locking the screen mid-song. The lock releases on pause, on song end, and when the tab is backgrounded, and is re-requested automatically once the tab is visible again while still playing. No effect where the browser doesn't support the Wake Lock API.
 - Playback on mobile web no longer loads or renders decorative backgrounds (shaders, Pixabay clips, custom backgrounds, or a video song's own bundled video), so a phone browser only has to load audio and lyrics. Desktop and the Tauri app are unaffected. The theme/flavor touch controls and their status text are hidden on mobile web accordingly.
 - Play is now the leftmost quick-action button on each song, ahead of Queue, and the actions column in the song table always has enough room for both buttons so they no longer look squeezed together. The quick-action Realign shortcut was removed; realigning a song is still available from its song details and from the library's bulk actions menu.
+- Added an experimental "Wav2Vec2-BERT Two-Pass Alignment" lyric timing option for English songs. It splits each song at natural pauses and re-times each chunk with a singing-tuned Wav2Vec2-BERT model, falling back to the usual WhisperX timing wherever that model isn't confident or a song has no safe pause structure.
 
 ### Fixes
 
