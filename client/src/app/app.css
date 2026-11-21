@@ -212,8 +212,8 @@
   }
 
   .song-table-actions {
-    min-width: 4rem;
-    max-width: none;
+    width: auto;
+    max-width: 2rem;
   }
 
   .song-table-header {
