@@ -20,6 +20,8 @@ Wire protocol (NDJSON over TCP, one JSON object per line):
     {"type":"timing","stage":"key_detect"|"separation"|"transcribe"|"align","ms":N}
     {"type":"done","hash":"..."}
     {"type":"error","kind":"oom"|"generic","msg":"..."}
+
+Stdin is not a command channel: the server exits when the parent closes it.
 """
 
 import json
@@ -27,6 +29,7 @@ import os
 import secrets
 import socket
 import sys
+import threading
 
 if os.name == "nt":
     import huggingface_hub.file_download as _hf_dl
@@ -101,9 +104,18 @@ def _send(wfile, payload):
         wfile.flush()
     except (BrokenPipeError, OSError) as e:
         print(f"[nightingale:LOG] Failed to send message: {e}", file=sys.stderr, flush=True)
+        os._exit(1)
+
+
+def _exit_with_parent():
+    try:
+        sys.stdin.buffer.read()
+    finally:
+        os._exit(0)
 
 
 def main():
+    threading.Thread(target=_exit_with_parent, daemon=True).start()
     device = detect_device()
     token = secrets.token_hex(16)
 

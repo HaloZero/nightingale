@@ -21,7 +21,7 @@ use super::schema::songs;
 use super::songs::{append_songs, update_library_meta};
 use super::sql_functions::json_extract_text;
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 static MIGRATION_TOTAL: AtomicUsize = AtomicUsize::new(0);
@@ -134,7 +134,7 @@ pub(super) fn run_migrations(conn: &mut SqliteConnection) -> Result<(), Nighting
     if version < 3 {
         conn.batch_execute(
             "
-            ALTER TABLE songs ADD COLUMN genre TEXT NOT NULL DEFAULT 'Unknown Genre';
+            ALTER TABLE songs ADD COLUMN genre TEXT;
             ALTER TABLE songs ADD COLUMN has_lrc_file INTEGER NOT NULL DEFAULT 0;
             ALTER TABLE songs ADD COLUMN has_embedded_lyrics INTEGER NOT NULL DEFAULT 0;
             ALTER TABLE analysis_queue ADD COLUMN failed_kind TEXT;
@@ -185,6 +185,19 @@ pub(super) fn run_migrations(conn: &mut SqliteConnection) -> Result<(), Nighting
             DROP TABLE IF EXISTS youtube_video_sync;
             DROP TABLE IF EXISTS parallel_analysis_mismatches;
             DROP TABLE IF EXISTS parallel_analysis_timings;
+        ",
+        )?;
+    }
+    if version < 6 {
+        // Versions 3 and 4 of this fork's schema added `genre` as `NOT NULL
+        // DEFAULT 'Unknown Genre'`, baking a sentinel into storage. Upstream
+        // instead leaves `genre` nullable and renders the sentinel only at
+        // the menu/label layer (see `UNKNOWN_GENRE` in `queries.rs`). Any row
+        // already carrying the old literal string is normalized back to
+        // `NULL` so it's treated the same as a song that was never tagged.
+        conn.batch_execute(
+            "
+            UPDATE songs SET genre = NULL WHERE genre = 'Unknown Genre';
         ",
         )?;
     }

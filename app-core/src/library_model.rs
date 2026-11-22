@@ -34,10 +34,6 @@ pub struct SongSort {
 pub struct LibraryMenuFilters {
     pub artist: Option<String>,
     pub album: Option<String>,
-    /// File/source-tagged genre, exact match against `Song.genre` (a real
-    /// column, always populated -- untagged songs read as `"Unknown
-    /// Genre"`). Unlike `language` below, this is scanned metadata, not
-    /// analysis-derived.
     #[serde(default)]
     pub genre: Option<String>,
     pub playlist: Option<String>,

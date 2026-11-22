@@ -4,4 +4,4 @@
  * Mono PCM frame streamed from Rust to JS. JS owns all DSP (pitch, reactive
  * analysis) and runs it on a sliding window built from these frames.
  */
-export type MicSampleFrame = { sample_rate: number; samples: Array<number> };
+export type MicSampleFrame = { sample_rate: number, samples: Array<number>, };

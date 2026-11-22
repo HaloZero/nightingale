@@ -22,6 +22,8 @@ use super::sql_functions::{
 };
 type SongQuery = songs::BoxedQuery<'static, Sqlite>;
 
+const UNKNOWN_GENRE: &str = "unknown_genre";
+
 #[derive(Clone, Copy)]
 enum ExtraFilter {
     None,
@@ -174,7 +176,11 @@ fn filtered_songs(
         query = query.filter(instr(songs::path, folder.to_string()).eq(1));
     }
     if let Some(genre) = filters.genre.as_deref().filter(|value| !value.is_empty()) {
-        query = query.filter(songs::genre.eq(genre.to_string()));
+        if genre == UNKNOWN_GENRE {
+            query = query.filter(songs::genre.is_null());
+        } else {
+            query = query.filter(songs::genre.eq(genre.to_string()));
+        }
     }
     if let Some(language) = filters
         .language
@@ -605,7 +611,7 @@ pub(crate) fn query_library_menu_items() -> Result<LibraryMenuItems, Nightingale
                 String,
                 String,
                 String,
-                String,
+                Option<String>,
                 bool,
                 bool,
                 Option<String>,
@@ -661,11 +667,14 @@ pub(crate) fn query_library_menu_items() -> Result<LibraryMenuItems, Nightingale
             } else {
                 no_external_lyrics.add(analyzed, status.as_deref());
             }
-            if !genre_counts.contains_key(&genre) {
-                genre_order.push(genre.clone());
+            let genre_key = genre
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| UNKNOWN_GENRE.to_string());
+            if !genre_counts.contains_key(&genre_key) {
+                genre_order.push(genre_key.clone());
             }
             genre_counts
-                .entry(genre)
+                .entry(genre_key)
                 .or_default()
                 .add(analyzed, status.as_deref());
             let language_key = language
@@ -791,10 +800,15 @@ pub(crate) fn query_library_menu_items() -> Result<LibraryMenuItems, Nightingale
         let genres = genre_order
             .into_iter()
             .map(|genre| {
+                let label = if genre == UNKNOWN_GENRE {
+                    "Unknown Genre".to_string()
+                } else {
+                    genre.clone()
+                };
                 genre_counts
                     .remove(&genre)
                     .unwrap_or_default()
-                    .item(genre.clone(), genre)
+                    .item(genre, label)
             })
             .collect();
 

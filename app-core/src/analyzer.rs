@@ -3,8 +3,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError, mpsc};
+use std::sync::{LazyLock, Mutex, MutexGuard, Once, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +17,7 @@ use crate::library_db;
 use crate::library_model::{LibraryMenuFilters, SongTarget};
 use crate::lyrics::{fetch_lrclib_lyrics, local_lyrics_path, write_lyrics_file};
 use crate::song::{Song, SongOrigin, TranscriptSource, compute_file_hash, read_transcript_meta};
-use crate::source::active_source;
+use crate::source::{MediaSource, active_source};
 
 // ─── Analysis queue (persisted to disk) ──────────────────────────────
 
@@ -160,8 +159,6 @@ use crate::vendor::{analyzer_dir, ffmpeg_path, python_path, silent_command};
 
 // ─── Server process ──────────────────────────────────────────────────
 
-static SERVER_PID: AtomicU32 = AtomicU32::new(0);
-
 /// Device string from the most recent server handshake (e.g. "cuda", "mps",
 /// "cpu"); recorded for the analysis-timing log.
 static LAST_DEVICE: Mutex<Option<String>> = Mutex::new(None);
@@ -253,6 +250,15 @@ const SEPARATION_SNAPSHOT_DELAY: Duration = Duration::from_secs(120);
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long the analyzer server may sit unused before it is stopped, so an idle
+/// Python process (and its CUDA context) does not stay resident all session.
+const SERVER_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+const SERVER_IDLE_POLL: Duration = Duration::from_secs(30);
+
+/// Longest silence from the analyzer before the current request is treated as
+/// stalled.
+const SERVER_EVENT_TIMEOUT: Duration = Duration::from_secs(3600);
+
 struct ServerProcess {
     child: Child,
     reader: BufReader<TcpStream>,
@@ -263,7 +269,6 @@ impl Drop for ServerProcess {
     fn drop(&mut self) {
         let pid = self.child.id();
         info!("[analyzer] Killing server process (pid={pid})");
-        SERVER_PID.store(0, Ordering::SeqCst);
         lock_unpoisoned(&SERVER_INTERRUPT).take();
         if let Ok(stream) = self.writer.get_ref().try_clone() {
             let _ = stream.shutdown(Shutdown::Both);
@@ -371,8 +376,12 @@ fn connect_and_authenticate(
         )));
     }
 
-    reader.get_ref().set_read_timeout(None)?;
-    reader.get_ref().set_write_timeout(None)?;
+    reader
+        .get_ref()
+        .set_read_timeout(Some(SERVER_EVENT_TIMEOUT))?;
+    reader
+        .get_ref()
+        .set_write_timeout(Some(SERVER_EVENT_TIMEOUT))?;
 
     Ok((reader, writer))
 }
@@ -405,7 +414,7 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
         .env("NEMO_CACHE_DIR", models.join("nemo"))
         .env("ONNX_ASR_CACHE_DIR", models.join("onnx_asr"))
         .arg(&script)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -413,7 +422,6 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
         .spawn()
         .map_err(|e| NightingaleError::Other(format!("Failed to start analyzer server: {e}")))?;
     let pid = child.id();
-    SERVER_PID.store(pid, Ordering::SeqCst);
     info!("[analyzer] Server process spawned (pid={pid})");
 
     let stdout = match child.stdout.take() {
@@ -421,7 +429,6 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
         None => {
             let _ = child.kill();
             let _ = child.wait();
-            SERVER_PID.store(0, Ordering::SeqCst);
             return Err(NightingaleError::Other(
                 "Failed to capture server stdout".into(),
             ));
@@ -434,7 +441,6 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
         Err(e) => {
             let _ = child.kill();
             let _ = child.wait();
-            SERVER_PID.store(0, Ordering::SeqCst);
             return Err(e);
         }
     };
@@ -453,7 +459,6 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
         Err(e) => {
             let _ = child.kill();
             let _ = child.wait();
-            SERVER_PID.store(0, Ordering::SeqCst);
             return Err(e);
         }
     };
@@ -463,7 +468,6 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            SERVER_PID.store(0, Ordering::SeqCst);
             return Err(error.into());
         }
     };
@@ -484,12 +488,61 @@ fn spawn_server() -> Result<ServerProcess, NightingaleError> {
 fn ensure_server(
     guard: &mut MutexGuard<'_, Option<ServerProcess>>,
 ) -> Result<(), NightingaleError> {
+    spawn_idle_watchdog();
     if guard.is_some() {
         return Ok(());
     }
     let server = spawn_server()?;
     **guard = Some(server);
     Ok(())
+}
+
+fn spawn_idle_watchdog() {
+    static STARTED: Once = Once::new();
+    STARTED.call_once(|| {
+        std::thread::spawn(|| {
+            let mut idle_since: Option<Instant> = None;
+
+            loop {
+                std::thread::sleep(SERVER_IDLE_POLL);
+
+                let busy = {
+                    let state = lock_unpoisoned(&ANALYZER);
+                    state.worker_running || state.active_hash.is_some()
+                };
+                if busy {
+                    idle_since = None;
+                    continue;
+                }
+
+                let idle = idle_since.get_or_insert_with(Instant::now);
+                if idle.elapsed() < SERVER_IDLE_TIMEOUT {
+                    continue;
+                }
+                idle_since = None;
+
+                if let Some(pid) = stop_idle_server() {
+                    info!("[analyzer] Stopped idle server (pid={pid})");
+                }
+            }
+        });
+    });
+}
+
+fn stop_idle_server() -> Option<u32> {
+    // Both analysis paths hold this lock while talking to the server, so a
+    // failed `try_lock` means real work is in flight.
+    let mut guard = ANALYZER_SERVER.try_lock().ok()?;
+    let pid = {
+        let state = lock_unpoisoned(&ANALYZER);
+        if state.worker_running || state.active_hash.is_some() {
+            return None;
+        }
+        guard.as_ref()?.child.id()
+    };
+
+    guard.take();
+    Some(pid)
 }
 
 // ─── Queue state ─────────────────────────────────────────────────────
@@ -855,20 +908,14 @@ pub fn enqueue_all(filters: &LibraryMenuFilters) {
 }
 
 pub fn shutdown_server() {
-    let pid = SERVER_PID.swap(0, Ordering::SeqCst);
-    if pid != 0 {
-        info!("[analyzer] Graceful shutdown of server (pid={pid})");
-        if let Ok(mut guard) = ANALYZER_SERVER.try_lock()
-            && let Some(server) = guard.as_mut()
-        {
-            let _ = server.writer.write_all(b"{\"type\":\"quit\"}\n");
-            let _ = server.writer.flush();
-        }
-        std::thread::spawn(move || {
-            let _ = Command::new("kill").args([&pid.to_string()]).status();
-            std::thread::sleep(Duration::from_secs(3));
-            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
-        });
+    // `ServerProcess::drop` kills the child on every platform, which the old
+    // Unix-only `kill` shell-out could not do on Windows.
+    let Ok(mut guard) = ANALYZER_SERVER.try_lock() else {
+        warn!("[analyzer] Server busy during shutdown; child will exit with the app");
+        return;
+    };
+    if let Some(pid) = guard.take().map(|server| server.child.id()) {
+        info!("[analyzer] Stopped server (pid={pid})");
     }
 }
 
@@ -1074,35 +1121,38 @@ pub fn remove_from_queue(target: SongTarget) -> Result<usize, String> {
 }
 
 /// Bulk-capable "Refresh metadata": re-reads title/artist/album/duration/
-/// album art/lyrics-source-flags straight from each matched song's file
-/// (see `Song::refresh_metadata`) without touching anything
+/// album art/lyrics-source-flags straight from each matched song's source
+/// (local files via `Song::refresh_metadata`; remote sources via their own
+/// `MediaSource::refresh_metadata`) without touching anything
 /// analysis-derived -- unlike every other action in this file, it never
 /// calls `enqueue_one` or marks a song unanalyzed. Exists mainly to recover
 /// from a cover-art (or similar) cache file being deleted outside the app: a
 /// normal rescan only ever re-derives these fields for brand-new paths (see
 /// `source::folder::scan`'s `already_processed` filter), so an
 /// already-known song's stale, now-broken `album_art_path` would otherwise
-/// never get fixed. No-ops per song for remote-source/USDX songs (nothing
-/// local to re-read); see `iter_file_hashes_filtered_refreshable`. The
-/// caller is expected to run this off the async runtime (it blocks on file
-/// I/O per song).
+/// never get fixed. No-ops per song for NGE/USDX songs; see
+/// `iter_file_hashes_filtered_refreshable`. The caller is expected to run
+/// this off the async runtime (it blocks on file I/O per song).
 pub fn refresh_metadata(target: SongTarget) -> Result<usize, String> {
+    let source = active_source()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no active library source".to_string())?;
+    let cache = CacheDir::new();
     let hashes = resolve_target(target, library_db::iter_file_hashes_filtered_refreshable)?;
     for hash in &hashes {
-        refresh_metadata_one(hash);
+        refresh_metadata_one(hash, source.as_ref(), &cache);
     }
     Ok(hashes.len())
 }
 
-fn refresh_metadata_one(file_hash: &str) {
+fn refresh_metadata_one(file_hash: &str, source: &dyn MediaSource, cache: &CacheDir) {
     let Some(mut song) = library_db::load_song_by_hash(file_hash).ok().flatten() else {
         return;
     };
-    if !matches!(song.origin, SongOrigin::LocalFile) || song.usdx.is_some() {
+    if song.usdx.is_some() || crate::playback::song_is_nge(&song) {
         return;
     }
-    let cache = CacheDir::new();
-    if let Err(e) = song.refresh_metadata(&cache) {
+    if let Err(e) = source.refresh_metadata(&mut song, cache) {
         warn!("[analyzer] Failed to refresh metadata for {file_hash}: {e}");
         return;
     }

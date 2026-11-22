@@ -14,22 +14,31 @@ import type { SongsMeta } from '@/types/SongsMeta';
 const PAGE_SIZE = 25;
 const DEFAULT_REFETCH_INTERVAL = 2500;
 
-type RawLibraryFilter = ReturnType<typeof useLibraryFilter>;
+type RawLibraryFilter = Pick<
+  ReturnType<typeof useLibraryFilter>,
+  | 'artist'
+  | 'album'
+  | 'genre'
+  | 'playlist'
+  | 'folder'
+  | 'query'
+  | 'status'
+  | 'transcript_source'
+  | 'language'
+>;
 
-function buildLibraryMenuFilters(filter: RawLibraryFilter): LibraryMenuFilters {
-  return {
-    artist: filter.artist ?? null,
-    album: filter.album ?? null,
-    genre: filter.genre ?? null,
-    playlist: filter.playlist ?? null,
-    folder: filter.folder,
-    query: filter.query ?? null,
-    status: filter.status ?? null,
-    transcript_source: filter.transcript_source ?? null,
-    search: null,
-    language: filter.language ?? null,
-  };
-}
+const buildLibraryMenuFilters = (filter: RawLibraryFilter): LibraryMenuFilters => ({
+  artist: filter.artist ?? null,
+  album: filter.album ?? null,
+  genre: filter.genre ?? null,
+  playlist: filter.playlist ?? null,
+  folder: filter.folder,
+  query: filter.query ?? null,
+  status: filter.status ?? null,
+  transcript_source: filter.transcript_source ?? null,
+  search: null,
+  language: filter.language ?? null,
+});
 
 export const useSongsMeta = () => {
   const queryClient = useQueryClient();

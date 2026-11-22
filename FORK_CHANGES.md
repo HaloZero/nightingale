@@ -38,6 +38,12 @@ filter (has/no sidecar `.lrc` or tag-embedded lyrics) so a library with mixed
 sourcing is easy to audit, distinct from upstream's on-demand sidecar-LRC
 lookup.
 
+## Self-hosted server
+
+The self-hosted web server's default bind address is `0.0.0.0:8591` instead
+of upstream's `0.0.0.0:8080` (`client/src-server/src/main.rs`, overridable via
+`--bind`/`NIGHTINGALE_BIND` either way).
+
 ## Playback
 
 - **Screen wake lock**: the display is kept from dimming/locking while a song
