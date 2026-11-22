@@ -23,12 +23,12 @@ selectable via the existing align-backend setting:
   aligner; pass one aligns against the full lyric block, pass two refines
   timing around detected pauses.
 
-## Genre browsing
+## Language browsing
 
-Songs carry a `genre` field (read from Jellyfin/Navidrome/Plex tags where the
-source provides one, otherwise `"Unknown Genre"`). The library sidebar gets a
-**Genres** section alongside Artists/Albums/Playlists, and genre is a first-class
-library filter.
+The library sidebar gets a **Languages** section alongside Artists/Albums/
+Genres/Playlists, grouping songs by their detected (post-analysis) language;
+unanalyzed songs group under "unknown". Language is a first-class library
+filter alongside artist/album/genre.
 
 ## Local-lyrics preference
 
@@ -46,25 +46,27 @@ of upstream's `0.0.0.0:8080` (`client/src-server/src/main.rs`, overridable via
 
 ## Playback
 
-- **Screen wake lock**: the display is kept from dimming/locking while a song
-  is actively playing (`client/src/bridge/wake-lock.ts`), released on pause,
-  song end, or when the tab is backgrounded.
 - **Mobile web skips decorative backgrounds**: on mobile web (not the Tauri
   app), shaders, Pixabay clips, custom backgrounds, and a video song's own
   bundled video are never fetched or mounted, so a phone browser only has to
   load audio and lyrics. Theme/flavor controls are hidden accordingly.
-- **Row action buttons**: each song row offers a direct play button, plus a
-  realign button for AI-aligned songs (re-run alignment without re-queuing a
-  full analysis) and an align button for unanalyzed songs.
 
-## Database migration from the pre-rebuild fork
+## Database migrations from the pre-rebuild fork
 
 A library DB created by this fork before it was rebuilt on fresh upstream may
-still carry tables from removed features (karaoke-video rendering,
-parallel-analysis/peer offload). `SCHEMA_VERSION` is bumped to 5 with a
-`version < 5` migration that drops those orphaned tables
-(`karaoke_video_status`, `karaoke_video_runs`, `video_processing_queue`,
-`youtube_video_lookups`, `youtube_video_sync`, `parallel_analysis_mismatches`,
-`parallel_analysis_timings`) on first open. Verified against a real backup
-copy of a pre-rebuild database: migrates cleanly, all library data and row
-counts preserved, only the dead tables removed.
+carry schema from two since-removed states:
+
+- Tables from removed features (karaoke-video rendering, parallel-analysis/
+  peer offload): `version < 5` drops the orphaned tables
+  (`karaoke_video_status`, `karaoke_video_runs`, `video_processing_queue`,
+  `youtube_video_lookups`, `youtube_video_sync`, `parallel_analysis_mismatches`,
+  `parallel_analysis_timings`) on first open. Verified against a real backup
+  copy of a pre-rebuild database: migrates cleanly, all library data and row
+  counts preserved, only the dead tables removed.
+- A `genre` column written `NOT NULL DEFAULT 'Unknown Genre'` by this fork's
+  own earlier genre implementation, before upstream's own (nullable) genre
+  support was merged in: `version < 6` rewrites any row still carrying that
+  literal string back to `NULL`, so it's indistinguishable from a song that
+  was simply never tagged.
+
+`SCHEMA_VERSION` is bumped to 6.

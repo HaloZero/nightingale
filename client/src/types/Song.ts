@@ -3,52 +3,33 @@ import type { SongOrigin } from "./SongOrigin";
 import type { TranscriptSource } from "./TranscriptSource";
 import type { UsdxBundle } from "./UsdxBundle";
 
-export type Song = {
-  path: string;
-  file_hash: string;
-  title: string;
-  artist: string;
-  album: string;
-  genre: string | null;
-  duration_secs: number;
-  album_art_path: string | null;
-  is_analyzed: boolean;
-  language: string | null;
-  transcript_source: TranscriptSource | null;
-  /**
-   * Which forced-alignment backend actually produced this song's current
-   * timing (`"whisperx"`, `"ctc"`, `"qwen"`, `"wav2vec2_bert"`, or
-   * `"wav2vec2_bert_2pass"` -- see `read_transcript_meta`). `None` for
-   * `Lrc`/`Usdx` sources (no aligner runs for those) and for songs
-   * analyzed before this field existed, until they're realigned.
-   */
-  align_backend: string | null;
-  key: string | null;
-  override_key: string | null;
-  tempo: number;
-  key_offset: number;
-  is_video: boolean;
-  usdx: UsdxBundle | null;
-  origin: SongOrigin;
-  /**
-   * True when the song was made playable from provided LRC without stem
-   * separation: playback uses the original mix and the guide control is
-   * hidden. Defaults to `false` for stem-separated songs.
-   */
-  no_stems: boolean;
-  /**
-   * True when a `.lrc` sidecar sits next to the audio file (same
-   * directory, same basename, `.lrc` extension). Always `false` for
-   * remote-source songs (Jellyfin/Navidrome/Plex) -- their bytes aren't
-   * local at scan time.
-   */
-  has_lrc_file: boolean;
-  /**
-   * True when the audio file's own tags carry non-empty lyrics (ID3
-   * `USLT` via lofty's `ItemKey::UnsyncLyrics`, or MP4's lyrics atom via
-   * `ItemKey::Lyrics` -- ID3v2 doesn't map to `Lyrics` at all, see
-   * `tag_has_lyrics`). Always `false` for video files (no tag read
-   * attempted) and remote-source songs.
-   */
-  has_embedded_lyrics: boolean;
-};
+export type Song = { path: string, file_hash: string, title: string, artist: string, album: string, genre: string | null, duration_secs: number, album_art_path: string | null, is_analyzed: boolean, language: string | null, transcript_source: TranscriptSource | null, 
+/**
+ * Which forced-alignment backend actually produced this song's current
+ * timing (`"whisperx"`, `"ctc"`, `"qwen"`, `"wav2vec2_bert"`, or
+ * `"wav2vec2_bert_2pass"` -- see `read_transcript_meta`). `None` for
+ * `Lrc`/`Usdx` sources (no aligner runs for those) and for songs
+ * analyzed before this field existed, until they're realigned.
+ */
+align_backend: string | null, key: string | null, override_key: string | null, tempo: number, key_offset: number, is_video: boolean, usdx: UsdxBundle | null, origin: SongOrigin, 
+/**
+ * True when the song was made playable from provided LRC without stem
+ * separation: playback uses the original mix and the guide control is
+ * hidden. Defaults to `false` for stem-separated songs.
+ */
+no_stems: boolean, 
+/**
+ * True when a `.lrc` sidecar sits next to the audio file (same
+ * directory, same basename, `.lrc` extension). Always `false` for
+ * remote-source songs (Jellyfin/Navidrome/Plex) -- their bytes aren't
+ * local at scan time.
+ */
+has_lrc_file: boolean, 
+/**
+ * True when the audio file's own tags carry non-empty lyrics (ID3
+ * `USLT` via lofty's `ItemKey::UnsyncLyrics`, or MP4's lyrics atom via
+ * `ItemKey::Lyrics` -- ID3v2 doesn't map to `Lyrics` at all, see
+ * `tag_has_lyrics`). Always `false` for video files (no tag read
+ * attempted) and remote-source songs.
+ */
+has_embedded_lyrics: boolean, };

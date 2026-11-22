@@ -30,6 +30,7 @@ below.
 - The phone queue link now keeps the same address across launches, so a QR code scanned earlier keeps working. A phone that scans a new code is also no longer turned away as "remote link is not valid" because of a cookie left from an earlier code.
 - The Python analyzer now stops itself after a few idle minutes instead of staying in memory until Nightingale closes. It also exits with Nightingale, even when a song is still being analyzed or the app closes unexpectedly, so no analyzer process is left behind. A stalled analysis is reported as a failure instead of waiting forever.
 - Apple Silicon Macs now release analyzer memory after each song instead of holding it until Nightingale closes.
+- "Refresh metadata" now works for Jellyfin, Navidrome, and Plex libraries again, not just local folders. A leftover `"Unknown Genre"` value from an earlier build is also cleaned up automatically, so it no longer shows as its own genre alongside actually-untagged songs.
 
 ## [1.4.1] - 2026-11-09
 
