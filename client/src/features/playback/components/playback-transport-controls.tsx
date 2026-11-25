@@ -133,11 +133,14 @@ export function TransportControls({
       className={cn('mt-1.5 w-full max-w-[340px]', className)}
       aria-label={t('playback.playbackTransportControls.playbackPosition')}
     >
-      <div className="flex h-[28px] items-center justify-between gap-3 [@media(any-pointer:coarse)]:h-[44px]">
-        <p ref={timerRef} className="text-[16px] text-white/60 tabular-nums">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p
+          ref={timerRef}
+          className="flex h-[28px] items-center whitespace-nowrap text-[16px] text-white/60 tabular-nums [@media(any-pointer:coarse)]:h-[44px]"
+        >
           0:00 / {formatSeconds(duration)}
         </p>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex h-[28px] shrink-0 items-center gap-0.5 [@media(any-pointer:coarse)]:h-[44px]">
           <TransportButton
             icon={SkipBackIcon}
             label={t('playback.playbackTransportControls.previousLyricLine')}
