@@ -192,12 +192,56 @@ pub(super) fn run_migrations(conn: &mut SqliteConnection) -> Result<(), Nighting
         // Versions 3 and 4 of this fork's schema added `genre` as `NOT NULL
         // DEFAULT 'Unknown Genre'`, baking a sentinel into storage. Upstream
         // instead leaves `genre` nullable and renders the sentinel only at
-        // the menu/label layer (see `UNKNOWN_GENRE` in `queries.rs`). Any row
-        // already carrying the old literal string is normalized back to
-        // `NULL` so it's treated the same as a song that was never tagged.
+        // the menu/label layer (see `UNKNOWN_GENRE` in `queries.rs`). SQLite
+        // enforces a column's `NOT NULL` at the engine level regardless of
+        // what the Diesel model now declares, so clearing the sentinel back
+        // to `NULL` requires rebuilding the table without that constraint,
+        // not a plain `UPDATE` (which SQLite rejects outright). `id` values
+        // are preserved so `playlist_songs.song_id`'s foreign key and the
+        // `songs_fts` external-content index (keyed on `songs`' rowid) stay
+        // valid without a rebuild of their own.
         conn.batch_execute(
             "
-            UPDATE songs SET genre = NULL WHERE genre = 'Unknown Genre';
+            PRAGMA foreign_keys = OFF;
+
+            CREATE TABLE songs_new (
+                id INTEGER PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                file_hash TEXT NOT NULL,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                album TEXT NOT NULL,
+                duration_secs REAL NOT NULL,
+                album_art_path TEXT,
+                is_analyzed INTEGER NOT NULL,
+                language TEXT,
+                transcript_source TEXT,
+                is_video INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                has_lrc_file INTEGER NOT NULL DEFAULT 0,
+                has_embedded_lyrics INTEGER NOT NULL DEFAULT 0,
+                genre TEXT
+            );
+
+            INSERT INTO songs_new (
+                id, path, file_hash, title, artist, album, duration_secs, album_art_path,
+                is_analyzed, language, transcript_source, is_video, payload,
+                has_lrc_file, has_embedded_lyrics, genre
+            )
+            SELECT
+                id, path, file_hash, title, artist, album, duration_secs, album_art_path,
+                is_analyzed, language, transcript_source, is_video, payload,
+                has_lrc_file, has_embedded_lyrics, NULLIF(genre, 'Unknown Genre')
+            FROM songs;
+
+            DROP TABLE songs;
+            ALTER TABLE songs_new RENAME TO songs;
+
+            CREATE INDEX idx_songs_file_hash ON songs(file_hash);
+            CREATE INDEX idx_songs_artist_title ON songs(artist COLLATE NOCASE, title COLLATE NOCASE);
+            CREATE INDEX idx_songs_album ON songs(album COLLATE NOCASE);
+
+            PRAGMA foreign_keys = ON;
         ",
         )?;
     }

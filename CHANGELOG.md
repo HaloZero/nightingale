@@ -32,6 +32,7 @@ below.
 - Apple Silicon Macs now release analyzer memory after each song instead of holding it until Nightingale closes.
 - "Refresh metadata" now works for Jellyfin, Navidrome, and Plex libraries again, not just local folders. A leftover `"Unknown Genre"` value from an earlier build is also cleaned up automatically, so it no longer shows as its own genre alongside actually-untagged songs.
 - The playback timer and transport buttons no longer overlap other controls on narrow windows; they now stack onto their own line when there's not enough room side by side.
+- Fixed a startup failure on libraries upgraded from an older build, where the genre cleanup migration could be rejected by the database.
 
 ## [1.4.1] - 2026-11-09
 
